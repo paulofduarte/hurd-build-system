@@ -1,0 +1,335 @@
+# hurd-build-system
+
+A reproducible, Nix-based cross-build environment for **GNU/Hurd**,
+targeting **aarch64-gnu**, **x86_64-gnu** and **i686-gnu**. Build the
+GNU/Hurd stack from macOS, Linux, or Windows (via WSL 2) without
+polluting your host with cross-toolchains.
+
+Today the build covers the **GNU Mach** microkernel and **GNU MIG**
+(its RPC stub generator). The Hurd userland — glibc and the core
+servers — is on the roadmap, to land target-by-target once Mach is
+stable on each. The aarch64 port is the current focus: the kernel
+builds end-to-end and starts booting under QEMU (see [Status](#status)
+for the in-progress runtime issue). x86_64 and i686 are wired into the
+build system and will be validated against current upstream once
+aarch64 is stable (see [Roadmap](#roadmap)).
+
+**Why Nix + git submodules?** Reproducibility is the founding constraint
+of this repo. Nix pins every host-side tool — cross-compiler, autotools,
+MIG, GNU Make, even the shell — to exact `/nix/store` paths via
+`flake.lock`, so two developers on the same commit get bit-identical
+build environments. Submodules pin each upstream Hurd source tree (gnumach
+and MIG today; glibc and the Hurd servers when they land) to an exact
+commit hash recorded in the parent repo, so neither a branch moving
+nor a tag being re-tagged can silently change what we build.
+Together they make the commit hash of this repo a complete description
+of the build inputs. Background reading:
+[nix.dev](https://nix.dev/),
+[Nix flakes](https://nix.dev/concepts/flakes.html),
+[git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules),
+and the broader [reproducible-builds.org](https://reproducible-builds.org/)
+effort.
+
+## Status
+
+| Target | Cross-toolchain | Kernel builds? | Boots? |
+|---|---|---|---|
+| `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | partially — boots, executes ~1500 instructions, then hits a synchronous exception during DTB parsing (open issue) |
+| `x86_64` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
+| `x86_64-xen` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
+| `i686` | i686-unknown-elf-gcc | not yet validated against current master | — |
+| `i686-xen` | i686-unknown-elf-gcc | not yet validated against current master | — |
+
+The `-xen` variants of each x86 target build the same kernel sources with
+gnumach's `--enable-platform=xen`, producing a paravirtualised Xen-domU
+image instead of the default PC-AT (`at`) build. Both share the same
+cross-toolchain and MIG binary as their non-Xen sibling.
+
+The aarch64 port draws from **Sergey Bugaev's `wip-aarch64` branch** of
+`github.com/bugaevc/gnumach`, patched on top of current
+`git.savannah.gnu.org/git/hurd/gnumach.git` master with build-system fixes
+needed for modern GCC 15 and Automake 1.18.
+
+## Roadmap
+
+1. **Stabilise aarch64.** Resolve the in-progress synchronous-exception
+   during DTB parsing so the kernel reaches userland.
+2. **Validate `x86_64-gnu` and `i686-gnu` against current upstream.** The
+   cross-toolchains, MIG, and Makefile dispatch are already in place;
+   the next step is to confirm the kernel builds and boots end-to-end on
+   each, bringing both to the same maturity as aarch64.
+3. **Add the Hurd userland.** Once gnumach is stable on a target, build
+   glibc and the core Hurd servers on top.
+4. **Docker-based build path (coming soon).** A containerised entry point
+   for hosts where Nix isn't an option — same Makefile, same outputs,
+   just a thinner prerequisite list.
+
+Support for other architectures (e.g. `arm`, `riscv64`) isn't on the
+roadmap, but the `targets` attrset in `flake.nix` is open to extension —
+adding a new architecture is a few lines (see
+[Adding a new target](#adding-a-new-target)).
+
+## Prerequisites
+
+The build system is designed so that **Nix provides everything else**. The
+host only needs:
+
+| Tool | Required version | Notes |
+|---|---|---|
+| **Nix** | any with flakes support (2.4+, Dec 2021) | provides every other tool, including the cross-toolchain |
+| **git** | any | needed to clone the parent repo and fetch submodules |
+| **GNU Make** *(recommended)* | 3.81+ | only for the convenience of running `make` from your host shell; if missing, use `nix develop` and run `make` *inside* the dev shell |
+
+macOS and most Linux distros ship git and a sufficiently new make by
+default. The only thing you may need to install is Nix itself — see
+[nix.dev/install-nix](https://nix.dev/install-nix).
+
+**Windows users**: build via **WSL 2** (Windows Subsystem for Linux,
+version 2). Once inside a WSL distro (Ubuntu, Debian, etc.) the same Nix
++ git workflow applies — from Nix's perspective it's just a Linux host.
+WSL 1 isn't supported because its translation layer doesn't handle the
+file-system features Nix relies on. Make sure the repo is cloned into
+the WSL filesystem (e.g. `~/projects/...`), not a Windows-mounted path
+(`/mnt/c/...`) — the latter is slow and has case-insensitivity issues.
+
+Nix's flakes and the `nix-command` experimental feature are enabled
+per-invocation by the build system, so you don't need any global Nix
+configuration.
+
+## Onboarding (3 steps)
+
+### 1. Clone with submodules
+
+```sh
+git clone --recurse-submodules https://github.com/paulofduarte/hurd-build-system.git
+cd hurd-build-system
+```
+
+If you cloned without `--recurse-submodules`, pull them in after:
+
+```sh
+git submodule update --init --recursive
+```
+
+### 2. Build
+
+```sh
+make                    # builds for the host's native arch
+make TARGET=x86_64      # cross-build for a specific target
+make help               # lists all targets (no nix needed for this one)
+```
+
+Standard make flags forward into the dispatched inner make:
+
+```sh
+make -j                 # parallel build, unlimited jobs
+make -j8                # parallel build, capped at 8
+make -k                 # keep going on errors
+```
+
+If your host doesn't have GNU Make, enter the dev shell first — it
+includes a recent make:
+
+```sh
+nix develop             # picks the target matching your host CPU
+make                    # now uses the make inside the shell
+```
+
+### 3. Run (aarch64 only, for now)
+
+```sh
+make dist                                            # stage outputs into dist/aarch64/
+nix develop -i .#aarch64 --command \
+  qemu-system-aarch64 -machine virt,accel=tcg -cpu cortex-a53 -m 1G -nographic \
+    -kernel dist/aarch64/boot/gnumach \
+    -append "gnumach cmdline goes here"
+```
+
+## Working with the submodules
+
+The submodule URLs in `.gitmodules`:
+
+| Submodule | URL | Tracked branch |
+|---|---|---|
+| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port) | `aarch64-port` |
+| `src/mig` | `https://github.com/paulofduarte/mig.git` (fork carrying the cross-build / test-harness fix) | `cross-build-fixes` |
+
+To advance a submodule to its branch's latest commit:
+
+```sh
+git submodule update --remote src/gnumach           # follow aarch64-port
+git submodule update --remote src/mig               # follow cross-build-fixes
+```
+
+Then `git add src/gnumach src/mig` from the project root and commit to
+record the new pin.
+
+Each submodule has extra remotes wired in locally for development
+(`bugaevc`, `savannah`, `upstream`). Those aren't in `.gitmodules` —
+fresh clones get only `origin`.
+
+## Targets
+
+| Target | Action |
+|---|---|
+| `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
+| `prepare` | `autoreconf -i` on both source trees |
+| `dist-headers` | install gnumach public headers into `dist/$(TARGET)/include` |
+| `toolchain` | `dist-headers` + build & install MIG into `toolchain/` |
+| `mach` | build the gnumach kernel binary |
+| `dist-mach` | install gnumach into `dist/$(TARGET)/` |
+| `dist` | install everything (currently `dist-mach`; will grow) |
+| `clean` | per-subdir `make clean` — preserves configure state |
+| `clean-dist` | `rm -rf dist/$(TARGET)/` (current target only) |
+| `mrproper` | `rm -rf work/ toolchain/ dist/` + `git clean -fdX` on src trees |
+
+## Directory layout
+
+```
+.
+├── flake.nix              # Nix dev shells (per-target)
+├── flake.lock             # pinned nixpkgs (nixos-25.11)
+├── Makefile               # orchestration: dispatches through nix develop
+├── src/
+│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-port
+│   └── mig/               # submodule → paulofduarte/mig @ cross-build-fixes
+├── work/                  # build directories  (gitignored)
+│   ├── gnumach/<target>/
+│   └── mig/<target>/
+├── toolchain/             # installed cross-MIG  (gitignored)
+│   └── bin/<target>-gnu-mig
+├── dist/<target>/         # final install prefix (gitignored)
+│   ├── boot/gnumach
+│   ├── include/
+│   └── .{headers,mach}-installed       # our staleness stamps
+└── LICENSE                # GPL-2.0
+```
+
+## How it works
+
+### Dev shell
+
+The flake defines three named dev shells, one per target:
+
+```sh
+nix develop                   # picks the target whose CPU matches the host
+nix develop .#aarch64         # explicit
+nix develop .#x86_64
+nix develop .#x86_64-xen      # x86_64, --enable-platform=xen
+nix develop .#i686
+nix develop .#i686-xen        # i686,   --enable-platform=xen
+```
+
+Each shell exports:
+
+- `CC`, `LD`, `AR`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY` — the cross binutils
+- `TARGET_CC` — same as `CC`, used by MIG's `cpu.sym` build
+- `MIG` — the cross MIG binary name (e.g. `aarch64-gnu-mig`)
+- `TARGET`, `GNUMACH_HOST` — target identity for the Makefile
+- `CFLAGS="-std=gnu17 -g -O2"` — pin pre-C23 semantics for older Mach code
+
+### Transparent dispatch
+
+The top-level `Makefile` is the single entry point. When invoked outside
+the Nix shell — or inside the *wrong* target's shell — it re-enters
+`nix develop -i .#<target>` and re-runs itself. So you never need to type
+`nix develop` manually; just `make`.
+
+Targets that don't need the cross-toolchain (`clean`, `clean-dist`,
+`mrproper`, `help`) run at the top level without spawning a shell.
+
+### Mtime-based short-circuit
+
+If every requested goal's sentinel artefact already exists and no
+**tracked** source (per `git ls-files`) is newer than its sentinel, the
+Makefile prints `Nothing to be done` and exits — without spawning Nix.
+Autoreconf outputs, build artefacts, and editor backups are excluded
+automatically because they're gitignored.
+
+### Multi-target builds coexist
+
+Build directories, install prefixes, and stamps are per-target:
+
+```sh
+make TARGET=aarch64    dist  # → dist/aarch64/
+make TARGET=x86_64     dist  # → dist/x86_64/      (PC-AT)
+make TARGET=x86_64-xen dist  # → dist/x86_64-xen/  (Xen domU)
+make TARGET=i686       dist  # → dist/i686/        (PC-AT)
+make TARGET=i686-xen   dist  # → dist/i686-xen/    (Xen domU)
+```
+
+The shared `toolchain/` directory holds all MIG variants side by side
+(`aarch64-gnu-mig`, `x86_64-gnu-mig`, `i686-gnu-mig`). Xen targets reuse
+their sibling's MIG binary — Xen vs PC-AT is a kernel build configuration,
+not a different CPU ABI.
+
+## QEMU notes (aarch64)
+
+After `make dist`, the kernel is at `dist/aarch64/boot/gnumach`. The QEMU
+invocation under [Onboarding §3](#3-run-aarch64-only-for-now) uses these
+deliberately:
+
+- The **flat binary** (`gnumach`), not `gnumach.elf` — QEMU's `-kernel`
+  expects the Linux AArch64 boot-protocol format on the `virt` machine.
+- `accel=tcg` — required on macOS / aarch64 hosts; the default HVF fails
+  to start execution for this kernel.
+- For a full GNU/Hurd boot with userland modules, see Bugaev's
+  `src/gnumach/aarch64/BOOTING`, which describes loading modules via
+  QEMU's `guest-loader` device.
+
+## Resource footprint
+
+| What | Amount |
+|---|---|
+| Nix store after first build | ~5 GB |
+| RAM headroom for parallel build | ~2 GB |
+| Wall time, `make -j` cold from `mrproper` | ~40s on a modern laptop |
+
+## Hacking notes
+
+### Patches we carry over upstream
+
+**gnumach.** The aarch64 port from `bugaevc/wip-aarch64` ships with one
+latent bug we fixed locally: the boot stack lived inside the BSS clear
+region, and modern GCC's compiled `memset` was zeroing its own saved
+return address mid-call (see `src/gnumach/aarch64/aarch64/boot.S` +
+`aarch64/ldscript` on this fork). Bugaev's GCC 13 likely inlined
+`memset` and masked the issue; GCC 15 doesn't.
+
+**mig.** Stock savannah `tests/test_lib.sh` hardcodes
+`CFLAGS="-I$TEST_DIR/includes"`, overwriting any externally-supplied
+value. That works on Hurd developer boxes (system Mach headers in
+the default search path) but breaks `make check` on every other host.
+Our fork's `cross-build-fixes` branch appends `${CFLAGS:-}` so the
+target's installed Mach headers can be supplied via the standard
+env var (`make check CFLAGS=-I/path/to/include`). Suitable for an
+upstream submission; carrying it locally for now.
+
+### When you edit source
+
+`make` detects mtime changes via `git ls-files` — only **tracked** files
+trigger a rebuild. Touching `configure`, `Makefile.in`, etc. (autoreconf
+outputs, gitignored) is correctly ignored.
+
+### Adding a new target
+
+Add an entry to `targets` in `flake.nix`:
+
+```nix
+arm = {
+  crossSystem = "arm-none-eabi";
+  migTarget   = "arm-gnu";
+};
+```
+
+Everything else (env exports, banner, Makefile dispatch) follows
+automatically.
+
+## License
+
+GPL-2.0 — see [LICENSE](LICENSE). Matches the licensing of the GNU/Hurd
+components this build system orchestrates.
+
+The build glue here (`flake.nix`, `Makefile`) is original work licensed
+under GPL-2.0. The source trees under `src/` retain their own upstream
+licensing.
