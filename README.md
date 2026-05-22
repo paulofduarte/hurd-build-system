@@ -58,9 +58,19 @@ needed for modern GCC 15 and Automake 1.18.
    cross-toolchains, MIG, and Makefile dispatch are already in place;
    the next step is to confirm the kernel builds and boots end-to-end on
    each, bringing both to the same maturity as aarch64.
-3. **Add the Hurd userland.** Once gnumach is stable on a target, build
+3. **Restore upstream test coverage.** `make check-toolchain` already
+   runs all 12 MIG tests across every target via our mig fork's
+   `cross-build-fixes` branch. `make check-mach`, however, is currently
+   gated to an empty allowlist: gnumach's kernel test infrastructure
+   (`tests/Makefrag.am`, `tests/user-qemu.mk`) is hardcoded x86-multiboot,
+   the aarch64 port didn't extend it, and Xen platforms disable the
+   block entirely. Two follow-ups: (a) re-enable `check-mach` on
+   x86_64 / i686 as their kernel builds graduate to validated status,
+   (b) port the test harness to aarch64 — separate runner driving
+   `qemu-system-aarch64`, direct `-kernel` boot, no grub-mkrescue.
+4. **Add the Hurd userland.** Once gnumach is stable on a target, build
    glibc and the core Hurd servers on top.
-4. **Docker-based build path (coming soon).** A containerised entry point
+5. **Docker-based build path (coming soon).** A containerised entry point
    for hosts where Nix isn't an option — same Makefile, same outputs,
    just a thinner prerequisite list.
 
@@ -304,6 +314,22 @@ Our fork's `cross-build-fixes` branch appends `${CFLAGS:-}` so the
 target's installed Mach headers can be supplied via the standard
 env var (`make check CFLAGS=-I/path/to/include`). Suitable for an
 upstream submission; carrying it locally for now.
+
+### Upstream gaps we work around
+
+**gnumach kernel test suite.** `make check-mach` is gated to an
+allowlist of TARGETs (currently empty). The kernel-side tests in
+`src/gnumach/tests/` are hardcoded x86-multiboot: they build via
+`grub-mkrescue` and run under `qemu-system-i386` / `qemu-system-x86_64`,
+with `HOST_ix86` / `HOST_x86_64` conditionals around every binary
+rule. Bugaev's `wip-aarch64` added the kernel port but didn't extend
+`tests/Makefrag.am` or `tests/user-qemu.mk`, so on aarch64 the test
+binary rules don't fire and `make check` dies with `No rule to make
+target tests/test-hello`. On Xen targets, the entire tests block is
+guarded by `if !PLATFORM_xen` and the check is intentionally empty.
+For now `check-mach` prints a skip notice on any TARGET not in
+`_MACH_TESTS_SUPPORTED` (in the Makefile); add a target to that list
+once its kernel test infrastructure is validated end-to-end.
 
 ### When you edit source
 

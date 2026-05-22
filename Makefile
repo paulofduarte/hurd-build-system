@@ -437,9 +437,31 @@ check-toolchain: toolchain
 	@# headers via CFLAGS.
 	cd $(MIG_BUILD) && $(MAKE) check CFLAGS="-I$(DIST)/include"
 
+# Per-target gate for the kernel test suite. Reasons targets are NOT in
+# the allowlist by default:
+#   aarch64       Bugaev's wip-aarch64 added the port but not the tests.
+#                 tests/Makefrag.am and tests/user-qemu.mk are entirely
+#                 x86-multiboot (HOST_ix86 / HOST_x86_64 gating, hardcoded
+#                 grub-mkrescue + qemu-system-i386/x86_64). No HOST_aarch64
+#                 block exists, so test binary rules don't fire.
+#   *-xen         tests/Makefrag.am wraps the whole tests block in
+#                 `if !PLATFORM_xen` — make check is a no-op by design.
+#   x86_64, i686  PC-AT kernel build itself not yet validated against
+#                 current upstream; will graduate to this list once it is.
+#
+# Append a TARGET name here as it's validated end-to-end.
+_MACH_TESTS_SUPPORTED :=
+
+ifeq ($(filter $(TARGET),$(_MACH_TESTS_SUPPORTED)),)
+check-mach:
+	@echo "==> check-mach ($(TARGET)): SKIP — upstream test harness not"
+	@echo "    yet supported for this target. See 'Patches we carry' in"
+	@echo "    README.md for the upstream gap."
+else
 check-mach: mach
 	@echo "==> check-mach ($(TARGET)): running gnumach 'make check' in $(GNUMACH_BUILD)"
 	cd $(GNUMACH_BUILD) && $(MAKE) check
+endif
 
 check: check-toolchain check-mach
 
