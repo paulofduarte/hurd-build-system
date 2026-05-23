@@ -172,13 +172,13 @@ The submodule URLs in `.gitmodules`:
 
 | Submodule | URL | Tracked branch |
 |---|---|---|
-| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port) | `aarch64-port-v2` |
+| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port) | `aarch64-port` |
 | `src/mig` | `https://github.com/paulofduarte/mig.git` (fork carrying the cross-build / test-harness fix) | `cross-build-fixes` |
 
 To advance a submodule to its branch's latest commit:
 
 ```sh
-git submodule update --remote src/gnumach           # follow aarch64-port-v2
+git submodule update --remote src/gnumach           # follow aarch64-port
 git submodule update --remote src/mig               # follow cross-build-fixes
 ```
 
@@ -212,7 +212,7 @@ fresh clones get only `origin`.
 ├── flake.lock             # pinned nixpkgs (nixos-25.11)
 ├── Makefile               # orchestration: dispatches through nix develop
 ├── src/
-│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-port-v2
+│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-port
 │   └── mig/               # submodule → paulofduarte/mig @ cross-build-fixes
 ├── work/                  # build directories  (gitignored)
 │   ├── gnumach/<target>/
@@ -310,7 +310,7 @@ deliberately:
 
 ### Patches we carry over upstream
 
-**gnumach.** The `aarch64-port-v2` branch applies Bugaev's
+**gnumach.** The `aarch64-port` branch applies Bugaev's
 `wip-aarch64` work as five upstream-shaped commits on top of current
 savannah master, plus three aarch64 boot-path fixes:
 
