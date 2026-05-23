@@ -47,9 +47,16 @@ image instead of the default PC-AT (`at`) build. Both share the same
 cross-toolchain and MIG binary as their non-Xen sibling.
 
 The aarch64 port draws from **Sergey Bugaev's `wip-aarch64` branch** of
-`github.com/bugaevc/gnumach`, patched on top of current
-`git.savannah.gnu.org/git/hurd/gnumach.git` master with build-system fixes
-needed for modern GCC 15 and Automake 1.18.
+`github.com/bugaevc/gnumach`, applied as five small, upstream-shaped
+commits on top of current `git.savannah.gnu.org/git/hurd/gnumach.git`
+master. The port stays inside `aarch64/` for everything new and limits
+its footprint outside that directory to 4 shared files / ~22 lines of
+strictly-additive changes (a new `EM_AARCH64` constant, cross-arch
+`copyinmsg/copyoutmsg` declarations, the matching include in
+`kern/exception.c`, and an extension of the linker-symbol filter for
+the PIE kernel) — `device/intr.c`, `device/intr.h`, `kern/bootstrap.c`,
+and `kern/lock.h` remain bit-identical to upstream master so x86_64
+and i686 builds are unaffected.
 
 ## Roadmap
 
@@ -165,13 +172,13 @@ The submodule URLs in `.gitmodules`:
 
 | Submodule | URL | Tracked branch |
 |---|---|---|
-| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port) | `aarch64-port` |
+| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port) | `aarch64-port-v2` |
 | `src/mig` | `https://github.com/paulofduarte/mig.git` (fork carrying the cross-build / test-harness fix) | `cross-build-fixes` |
 
 To advance a submodule to its branch's latest commit:
 
 ```sh
-git submodule update --remote src/gnumach           # follow aarch64-port
+git submodule update --remote src/gnumach           # follow aarch64-port-v2
 git submodule update --remote src/mig               # follow cross-build-fixes
 ```
 
@@ -205,7 +212,7 @@ fresh clones get only `origin`.
 ├── flake.lock             # pinned nixpkgs (nixos-25.11)
 ├── Makefile               # orchestration: dispatches through nix develop
 ├── src/
-│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-port
+│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-port-v2
 │   └── mig/               # submodule → paulofduarte/mig @ cross-build-fixes
 ├── work/                  # build directories  (gitignored)
 │   ├── gnumach/<target>/
@@ -303,7 +310,9 @@ deliberately:
 
 ### Patches we carry over upstream
 
-**gnumach.** Two aarch64 boot-path fixes on top of `bugaevc/wip-aarch64`:
+**gnumach.** The `aarch64-port-v2` branch applies Bugaev's
+`wip-aarch64` work as five upstream-shaped commits on top of current
+savannah master, plus three aarch64 boot-path fixes:
 
 - *Boot stack outside the BSS clear range.* The boot stack lived inside
   the BSS clear region, and modern GCC's compiled `memset` was zeroing
@@ -319,6 +328,14 @@ deliberately:
   no vector table installed yet, the abort vectors to `VBAR_EL1+0x200`
   = physical 0x200 and the CPU loops forever on `udf #0`. Replaced
   with two explicit 4-byte big-endian reads.
+- *Bootstrap modules through `kern/bootstrap.c` unchanged.* Rather
+  than carry Bugaev's parallel `machine_exec_boot_script()` walker
+  (which forks `kern/bootstrap.c` and `device/intr.{c,h}` and is
+  aarch64-only), `aarch64/aarch64/model_dep.c` now synthesises a
+  multiboot-shaped `boot_info` from the DTB's `/chosen/multiboot,module`
+  nodes during `c_boot_entry`.  Upstream `bootstrap_create()` then
+  consumes those modules through the same `boot_info.mods_addr`
+  pathway it already uses on i386/x86_64.
 
 **mig.** Stock savannah `tests/test_lib.sh` hardcodes
 `CFLAGS="-I$TEST_DIR/includes"`, overwriting any externally-supplied
