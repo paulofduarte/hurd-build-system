@@ -95,26 +95,18 @@
             pkgs.starship      # nicer prompt inside the dev shell
             pkgs.bash-completion
           ]
-          # gnumach's kernel-side `make check` (i.e. `make check-mach`)
-          # builds a bootable ISO with grub-mkrescue (which itself needs
-          # xorriso + mtools) and boots it under qemu-system-<arch>.  All
-          # three targets we cross-build for use this path:
-          #   x86_64 / i686 — grub-mkrescue's i386-pc target, multiboot1
-          #   aarch64       — grub-mkrescue's arm64-efi target,
-          #                   linux+initrd via the standard arm64 boot
-          #                   protocol (gnumach reads
-          #                   /chosen/linux,initrd-* from the DTB)
-          # Pull these tools in only on Linux hosts — nixpkgs's grub2
-          # has meta.platforms = linux-only; the upstream GRUB build
-          # doesn't compile cleanly on darwin and nobody has packaged a
-          # cross-build for it.  On a darwin host, `make check` errors
-          # out at the Makefile level (see Makefile's check-mach rule);
-          # use a Linux host (orbstack, docker, native) to run the full
-          # test suite.
+          # gnumach's kernel-side `make check` on x86 builds a multiboot
+          # ISO with grub-mkrescue (which itself needs xorriso + mtools)
+          # and boots it under qemu-system-{i386,x86_64} -cdrom.  Pull
+          # those tools in only for x86 targets and only on Linux hosts —
+          # nixpkgs's grub2 has meta.platforms = linux-only (GRUB doesn't
+          # compile cleanly on darwin).  aarch64 doesn't use GRUB: qemu's
+          # -kernel + -initrd + -append drives the arm64 Linux boot
+          # protocol directly into gnumach (which reads
+          # /chosen/linux,initrd-* + /chosen/bootargs from the DTB) — no
+          # grub-mkrescue needed.
           ++ nixpkgs.lib.optionals
-               ((target.crossSystem == "x86_64-elf"
-                  || target.crossSystem == "i686-elf"
-                  || target.crossSystem == "aarch64-none-elf")
+               ((target.crossSystem == "x86_64-elf" || target.crossSystem == "i686-elf")
                 && nixpkgs.lib.hasSuffix "-linux" system)
                [ pkgs.grub2 pkgs.xorriso pkgs.mtools ];
 
