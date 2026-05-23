@@ -36,9 +36,9 @@ effort.
 | Target | Cross-toolchain | Kernel builds? | Boots? |
 |---|---|---|---|
 | `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | ✅ kernel boots through DTB / pmap / machine_init; reaches `machine_exec_boot_script` (panics for lack of bootstrap modules, as expected without a userland) |
-| `x86_64` | x86_64-unknown-elf-gcc | ✅ | ✅ check-mach runs via QEMU `-kernel`/`-initrd` direct boot (no GRUB), works on any host with `qemu-system-x86_64` |
+| `x86_64` | x86_64-unknown-elf-gcc | ✅ | ⚠️ check-mach wired (USER_MIG + grub2 in flake.nix on Linux hosts); needs Linux host to exercise the GRUB-mkrescue ISO step |
 | `x86_64-xen` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
-| `i686` | i686-unknown-elf-gcc | ✅ | ✅ check-mach runs via QEMU `-kernel`/`-initrd` direct boot (no GRUB), works on any host with `qemu-system-i386` |
+| `i686` | i686-unknown-elf-gcc | ✅ | ⚠️ check-mach wired (same harness as x86_64: `qemu-system-i386` + `pentium3-v1`); needs Linux host to exercise the GRUB-mkrescue ISO step |
 | `i686-xen` | i686-unknown-elf-gcc | not yet validated against current master | — |
 
 The `-xen` variants of each x86 target build the same kernel sources with
@@ -362,32 +362,26 @@ upstream submission; carrying it locally for now.
 
 ### Upstream gaps we work around
 
-**gnumach kernel test suite.** `make check-mach` is implemented in
-this repo's `Makefile` + `scripts/run-mach-test.sh` rather than by
-delegating to gnumach's upstream `make check`.  The reason: gnumach's
-own `tests/user-qemu.mk` assembles a GRUB-bootable ISO via
-`grub-mkrescue` and boots it under `qemu-system-i386 / x86_64`.  That
-adds three host-side dependencies (`grub2`, `xorriso`, `mtools`),
-none of which nixpkgs builds on darwin, and nixpkgs' `grub2` on
-aarch64-linux ships only the `arm64-efi` target — so the produced
-ISO has no x86 BIOS boot record and SeaBIOS refuses it.  We bypass
-GRUB entirely: the parent Makefile builds the kernel and each
-`tests/module-X` via gnumach's standard build rules, then loads
-them directly via QEMU's native multiboot1 path (`-kernel KERNEL
--initrd "MODULE ARGS"` on x86; `-kernel KERNEL -device
-guest-loader,file=MODULE,bootargs=ARGS` on aarch64).  The kernel
-boots into the test module exactly the same way the GRUB path
-would deliver it.  Side benefits: fewer host dependencies, faster
-boot (no BIOS+GRUB chain), works on every host where QEMU does,
-and the same path naturally extends to aarch64 once the userland
-test stubs exist.  *Bumping the timeout:* x86_64-on-aarch64-linux
-via TCG is slow; set `MACH_TEST_TIMEOUT=300` (seconds) on the
-command line if the default 60 s isn't enough.  *aarch64:*
-`tests/start.S` and `tests/syscalls.S` still have only `__i386__`
-/ `__x86_64__` arms, and there's no `aarch64-gnu` userland
-toolchain — that's the gating issue for aarch64 tests, not the
-boot path.  *Xen targets:* the whole tests block is guarded by
-`if !PLATFORM_xen` and the check is intentionally empty.
+**gnumach kernel test suite.** `make check-mach` forwards into
+gnumach's own `make check` only for TARGETs in
+`_MACH_TESTS_SUPPORTED`. Today that list is `x86_64`. The harness
+builds a GRUB-bootable ISO via `grub-mkrescue` and runs it under
+`qemu-system-i386 / x86_64`; both are pulled into the dev shell for
+x86 targets, and the parent Makefile passes `USER_MIG=$(TOOLCHAIN)/bin/
+$(MIG_TARGET)-mig` to gnumach's configure so its userland test
+binaries link against our cross MIG. *Caveat on darwin hosts:*
+`grub-mkrescue` only builds on Linux in nixpkgs, so on macOS the
+check-mach pipeline runs all the way through userland-stub generation
++ test-binary linking and then fails at the ISO step; use a Linux
+host (or a Linux container) to exercise the kernel tests themselves.
+*aarch64:* `tests/start.S` and `tests/syscalls.S` have only
+`__i386__` / `__x86_64__` arms (no aarch64 `_start` or `SVC`-based
+syscall stubs), `tests/user-qemu.mk` hard-codes
+`qemu-system-i386 / x86_64` plus the grub-mkrescue ISO pipeline,
+and we don't yet have an `aarch64-gnu` userland cross-toolchain
+(today's `aarch64-unknown-none-elf` is bare-metal). *Xen targets:*
+the whole tests block is guarded by `if !PLATFORM_xen` and the check
+is intentionally empty.
 
 ### When you edit source
 

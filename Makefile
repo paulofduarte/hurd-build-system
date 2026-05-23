@@ -96,9 +96,9 @@ help:
 	@echo "  mach             build gnumach kernel"
 	@echo "  dist-mach        install gnumach into ./dist/$(TARGET)/"
 	@echo "  dist             install everything (== dist-mach for now)"
-	@echo "  check            run all test suites (== check-toolchain + check-mach)"
+	@echo "  check            run all upstream test suites (== check-toolchain + check-mach)"
 	@echo "  check-toolchain  run MIG's 'make check' (host-side codegen tests)"
-	@echo "  check-mach       run gnumach kernel tests via qemu '-kernel'/'-initrd' (no GRUB)"
+	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(TARGET)/ (just this target)"
 	@echo "  mrproper         rm -rf work/ + toolchain/ + all dist/ + all gitignored files"
@@ -464,28 +464,20 @@ check-toolchain: toolchain
 #                 cross-toolchain.
 #   *-xen         tests/Makefrag.am wraps the whole tests block in
 #                 `if !PLATFORM_xen` — make check is a no-op by design.
-#   x86_64, i686  Both allowlisted. Kernel builds cleanly against
-#                 current upstream master; tests are dispatched
-#                 through scripts/run-mach-test.sh via QEMU's native
-#                 -kernel/-initrd multiboot path (no GRUB, no ISO).
-#                 Works on macOS, Linux/x86_64, and Linux/aarch64
-#                 (the last via TCG; bump MACH_TEST_TIMEOUT if needed).
+#   x86_64, i686  Both allowlisted. The kernel builds cleanly against
+#                 current upstream master and the test harness is the
+#                 same for both (qemu-system-i386 + pentium3-v1 for
+#                 i686, qemu-system-x86_64 + core2duo-v1 for x86_64).
+#                 NOTE: the harness builds a GRUB-bootable ISO via
+#                 grub-mkrescue, which nixpkgs only packages on Linux
+#                 hosts. On a darwin host, check-mach gets all the way
+#                 through userland stub generation and test linking
+#                 but then fails at the grub-mkrescue step. Run on
+#                 Linux (or a Linux container) to exercise the actual
+#                 test.
 #
-# Append a TARGET name here as it's validated end-to-end.  aarch64
-# will join the list once tests/start.S and tests/syscalls.S grow
-# aarch64 arms upstream and we have an aarch64-gnu userland toolchain.
+# Append a TARGET name here as it's validated end-to-end.
 _MACH_TESTS_SUPPORTED := x86_64 i686
-
-# List of kernel tests to run.  Mirrors src/gnumach/tests/test-*.c except
-# for test-multiboot, which is a host-side ELF-header validator that needs
-# grub-file (and therefore grub2) — we skip it because the same coverage
-# is implicitly exercised every time qemu boots the kernel below.
-GNUMACH_QEMU_TESTS := hello mach_host mach_port machmsg vm syscalls \
-                      task threads thread-state thread-state-fp gsync
-
-# Per-test wall-clock cap.  Overridable for slow hosts (e.g. x86_64 emulation
-# under TCG on an aarch64 host commonly needs 120-300s per test).
-MACH_TEST_TIMEOUT ?= 60
 
 ifeq ($(filter $(TARGET),$(_MACH_TESTS_SUPPORTED)),)
 check-mach:
@@ -494,24 +486,8 @@ check-mach:
 	@echo "    README.md for the upstream gap."
 else
 check-mach: mach
-	@echo "==> check-mach ($(TARGET)): building $(words $(GNUMACH_QEMU_TESTS)) test modules"
-	@cd $(GNUMACH_BUILD) && for t in $(GNUMACH_QEMU_TESTS); do \
-	  $(MAKE) -s tests/module-$$t \
-	    || { echo "FAIL: tests/module-$$t did not build" >&2; exit 1; }; \
-	done
-	@echo "==> check-mach ($(TARGET)): running tests in qemu via -kernel/-initrd (bypassing grub)"
-	@pass=0; fail=0; failed=""; \
-	for t in $(GNUMACH_QEMU_TESTS); do \
-	  if GNUMACH_BUILD=$(GNUMACH_BUILD) \
-	     $(PROJ)/scripts/run-mach-test.sh "$$t" "$(TARGET)" "$(MACH_TEST_TIMEOUT)"; then \
-	    printf "  PASS test-%s\n" "$$t"; pass=$$((pass+1)); \
-	  else \
-	    printf "  FAIL test-%s\n" "$$t"; fail=$$((fail+1)); failed="$$failed $$t"; \
-	  fi; \
-	done; \
-	echo ""; \
-	echo "==> mach tests ($(TARGET)): $$pass passed, $$fail failed (of $(words $(GNUMACH_QEMU_TESTS)))"; \
-	if [ -n "$$failed" ]; then echo "    failed:$$failed"; exit 1; fi
+	@echo "==> check-mach ($(TARGET)): running gnumach 'make check' in $(GNUMACH_BUILD)"
+	cd $(GNUMACH_BUILD) && $(MAKE) check
 endif
 
 check: check-toolchain check-mach
