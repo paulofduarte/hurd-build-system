@@ -36,7 +36,7 @@ effort.
 | Target | Cross-toolchain | Kernel builds? | Boots? |
 |---|---|---|---|
 | `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | ✅ kernel boots through DTB / pmap / machine_init; reaches `machine_exec_boot_script` (panics for lack of bootstrap modules, as expected without a userland) |
-| `x86_64` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
+| `x86_64` | x86_64-unknown-elf-gcc | ✅ | ⚠️ check-mach wired (USER_MIG + grub2 in flake.nix on Linux hosts); needs Linux host to exercise the GRUB-mkrescue ISO step |
 | `x86_64-xen` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
 | `i686` | i686-unknown-elf-gcc | not yet validated against current master | — |
 | `i686-xen` | i686-unknown-elf-gcc | not yet validated against current master | — |
@@ -348,25 +348,26 @@ upstream submission; carrying it locally for now.
 
 ### Upstream gaps we work around
 
-**gnumach kernel test suite.** `make check-mach` is gated to an
-allowlist of TARGETs (currently empty). The kernel-side tests in
-`src/gnumach/tests/` are hardcoded x86-multiboot: they build via
-`grub-mkrescue` and run under `qemu-system-i386` / `qemu-system-x86_64`,
-with `HOST_ix86` / `HOST_x86_64` conditionals around every binary
-rule. On aarch64 the kernel itself is now bootable end-to-end —
-`machine_exec_boot_script` reads `multiboot,module` nodes from
-`/chosen`, which QEMU's `-device guest-loader` synthesizes — so the
-boot protocol is wired. The remaining gap is userland-side:
-`tests/start.S` and `tests/syscalls.S` have only `__i386__` /
-`__x86_64__` arms (no aarch64 `_start` or `SVC`-based syscall stubs),
-`tests/user-qemu.mk` hard-codes `qemu-system-i386 / x86_64` plus the
-grub-mkrescue ISO pipeline, and we don't yet have an `aarch64-gnu`
-userland cross-toolchain (today's `aarch64-unknown-none-elf` is
-bare-metal). On Xen targets the entire tests block is guarded by
-`if !PLATFORM_xen` and the check is intentionally empty. For now
-`check-mach` prints a skip notice on any TARGET not in
-`_MACH_TESTS_SUPPORTED` (in the Makefile); add a target to that list
-once its kernel test infrastructure is validated end-to-end.
+**gnumach kernel test suite.** `make check-mach` forwards into
+gnumach's own `make check` only for TARGETs in
+`_MACH_TESTS_SUPPORTED`. Today that list is `x86_64`. The harness
+builds a GRUB-bootable ISO via `grub-mkrescue` and runs it under
+`qemu-system-i386 / x86_64`; both are pulled into the dev shell for
+x86 targets, and the parent Makefile passes `USER_MIG=$(TOOLCHAIN)/bin/
+$(MIG_TARGET)-mig` to gnumach's configure so its userland test
+binaries link against our cross MIG. *Caveat on darwin hosts:*
+`grub-mkrescue` only builds on Linux in nixpkgs, so on macOS the
+check-mach pipeline runs all the way through userland-stub generation
++ test-binary linking and then fails at the ISO step; use a Linux
+host (or a Linux container) to exercise the kernel tests themselves.
+*aarch64:* `tests/start.S` and `tests/syscalls.S` have only
+`__i386__` / `__x86_64__` arms (no aarch64 `_start` or `SVC`-based
+syscall stubs), `tests/user-qemu.mk` hard-codes
+`qemu-system-i386 / x86_64` plus the grub-mkrescue ISO pipeline,
+and we don't yet have an `aarch64-gnu` userland cross-toolchain
+(today's `aarch64-unknown-none-elf` is bare-metal). *Xen targets:*
+the whole tests block is guarded by `if !PLATFORM_xen` and the check
+is intentionally empty.
 
 ### When you edit source
 

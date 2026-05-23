@@ -383,9 +383,19 @@ dist-headers: $(HEADERS_STAMP)
 
 # --enable-platform=$(GNUMACH_PLATFORM) is added only when the dev shell
 # set it (x86 targets use "at"/"xen"; aarch64 has no platform option).
+#
+# USER_MIG is pointed at the eventual install path of our cross MIG so
+# that gnumach's tests/configfrag.ac records the right path for the
+# userland MIG stub generator. MIG itself is built later in the pipeline
+# (the `toolchain` target depends on a configured gnumach for header
+# install), so the file at that path doesn't exist yet — but USER_MIG
+# is honoured as an env var override of AC_CHECK_PROG without a binary
+# existence check, and the path resolves correctly by the time `make
+# check-mach` actually exec's it.
 $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure
 	mkdir -p $(GNUMACH_BUILD)
 	cd $(GNUMACH_BUILD) && \
+	  USER_MIG=$(TOOLCHAIN)/bin/$(MIG_TARGET)-mig \
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
@@ -437,8 +447,11 @@ check-toolchain: toolchain
 	@# headers via CFLAGS.
 	cd $(MIG_BUILD) && $(MAKE) check CFLAGS="-I$(DIST)/include"
 
-# Per-target gate for the kernel test suite. Reasons targets are NOT in
-# the allowlist by default:
+# Per-target gate for the kernel test suite. The allowlist controls
+# which TARGETs forward `check-mach` into gnumach's `make check`;
+# anything else prints a friendly skip notice instead.
+#
+# Reasons targets are NOT in the allowlist by default:
 #   aarch64       Kernel itself is bootable end-to-end on QEMU virt and
 #                 machine_exec_boot_script consumes multiboot,module DTB
 #                 nodes that QEMU's -device guest-loader synthesizes, so
@@ -451,11 +464,17 @@ check-toolchain: toolchain
 #                 cross-toolchain.
 #   *-xen         tests/Makefrag.am wraps the whole tests block in
 #                 `if !PLATFORM_xen` — make check is a no-op by design.
-#   x86_64, i686  PC-AT kernel build itself not yet validated against
+#   i686          PC-AT kernel build itself not yet validated against
 #                 current upstream; will graduate to this list once it is.
+#   x86_64        Allowlisted. NOTE: the harness builds a GRUB-bootable
+#                 ISO via grub-mkrescue, which nixpkgs only packages on
+#                 Linux hosts. On a darwin host, check-mach gets all the
+#                 way through userland stub generation and test linking
+#                 but then fails at the grub-mkrescue step. Run on Linux
+#                 (or a Linux container) to exercise the actual test.
 #
 # Append a TARGET name here as it's validated end-to-end.
-_MACH_TESTS_SUPPORTED :=
+_MACH_TESTS_SUPPORTED := x86_64
 
 ifeq ($(filter $(TARGET),$(_MACH_TESTS_SUPPORTED)),)
 check-mach:
