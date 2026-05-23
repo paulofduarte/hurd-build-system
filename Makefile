@@ -439,11 +439,16 @@ check-toolchain: toolchain
 
 # Per-target gate for the kernel test suite. Reasons targets are NOT in
 # the allowlist by default:
-#   aarch64       Bugaev's wip-aarch64 added the port but not the tests.
-#                 tests/Makefrag.am and tests/user-qemu.mk are entirely
-#                 x86-multiboot (HOST_ix86 / HOST_x86_64 gating, hardcoded
-#                 grub-mkrescue + qemu-system-i386/x86_64). No HOST_aarch64
-#                 block exists, so test binary rules don't fire.
+#   aarch64       Kernel itself is bootable end-to-end on QEMU virt and
+#                 machine_exec_boot_script consumes multiboot,module DTB
+#                 nodes that QEMU's -device guest-loader synthesizes, so
+#                 the boot protocol is wired. The remaining gap is
+#                 userland-side: tests/start.S and tests/syscalls.S have
+#                 only __i386__ / __x86_64__ arms (no aarch64 _start or
+#                 SVC-based syscall stubs), tests/user-qemu.mk hardcodes
+#                 qemu-system-i386 / x86_64 plus the grub-mkrescue ISO
+#                 pipeline, and we don't yet have an aarch64-gnu userland
+#                 cross-toolchain.
 #   *-xen         tests/Makefrag.am wraps the whole tests block in
 #                 `if !PLATFORM_xen` — make check is a no-op by design.
 #   x86_64, i686  PC-AT kernel build itself not yet validated against

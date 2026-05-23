@@ -9,10 +9,11 @@ Today the build covers the **GNU Mach** microkernel and **GNU MIG**
 (its RPC stub generator). The Hurd userland — glibc and the core
 servers — is on the roadmap, to land target-by-target once Mach is
 stable on each. The aarch64 port is the current focus: the kernel
-builds end-to-end and starts booting under QEMU (see [Status](#status)
-for the in-progress runtime issue). x86_64 and i686 are wired into the
-build system and will be validated against current upstream once
-aarch64 is stable (see [Roadmap](#roadmap)).
+builds end-to-end and boots cleanly through DTB parsing, page-table
+setup, machine_init, and into bootstrap-module loading on QEMU `virt`
+(see [Status](#status)). x86_64 and i686 are wired into the build
+system and will be validated against current upstream next (see
+[Roadmap](#roadmap)).
 
 **Why Nix + git submodules?** Reproducibility is the founding constraint
 of this repo. Nix pins every host-side tool — cross-compiler, autotools,
@@ -34,7 +35,7 @@ effort.
 
 | Target | Cross-toolchain | Kernel builds? | Boots? |
 |---|---|---|---|
-| `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | partially — boots, executes ~1500 instructions, then hits a synchronous exception during DTB parsing (open issue) |
+| `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | ✅ kernel boots through DTB / pmap / machine_init; reaches `machine_exec_boot_script` (panics for lack of bootstrap modules, as expected without a userland) |
 | `x86_64` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
 | `x86_64-xen` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
 | `i686` | i686-unknown-elf-gcc | not yet validated against current master | — |
@@ -52,25 +53,28 @@ needed for modern GCC 15 and Automake 1.18.
 
 ## Roadmap
 
-1. **Stabilise aarch64.** Resolve the in-progress synchronous-exception
-   during DTB parsing so the kernel reaches userland.
-2. **Validate `x86_64-gnu` and `i686-gnu` against current upstream.** The
+1. **Validate `x86_64-gnu` and `i686-gnu` against current upstream.** The
    cross-toolchains, MIG, and Makefile dispatch are already in place;
    the next step is to confirm the kernel builds and boots end-to-end on
    each, bringing both to the same maturity as aarch64.
-3. **Restore upstream test coverage.** `make check-toolchain` already
+2. **Restore upstream test coverage.** `make check-toolchain` already
    runs all 12 MIG tests across every target via our mig fork's
-   `cross-build-fixes` branch. `make check-mach`, however, is currently
-   gated to an empty allowlist: gnumach's kernel test infrastructure
-   (`tests/Makefrag.am`, `tests/user-qemu.mk`) is hardcoded x86-multiboot,
-   the aarch64 port didn't extend it, and Xen platforms disable the
-   block entirely. Two follow-ups: (a) re-enable `check-mach` on
-   x86_64 / i686 as their kernel builds graduate to validated status,
-   (b) port the test harness to aarch64 — separate runner driving
-   `qemu-system-aarch64`, direct `-kernel` boot, no grub-mkrescue.
-4. **Add the Hurd userland.** Once gnumach is stable on a target, build
+   `cross-build-fixes` branch. `make check-mach` is gated to an empty
+   allowlist — the gap is now userland-side, not kernel-side. The
+   kernel boots and `machine_exec_boot_script` already consumes
+   `multiboot,module` nodes synthesized by QEMU's `-device guest-loader`,
+   so the boot protocol is wired. What's still missing on aarch64:
+   (a) `tests/start.S` and `tests/syscalls.S` have only `__i386__` /
+   `__x86_64__` arms — no aarch64 `_start` or `SVC`-based syscall stubs;
+   (b) `tests/user-qemu.mk` hard-codes `qemu-system-i386 / x86_64` and
+   the grub-mkrescue ISO pipeline; (c) a userland cross-toolchain
+   (`aarch64-gnu-gcc`, not the current bare-metal `aarch64-none-elf`)
+   plus a minimal libc/libmach build for the test binaries to link
+   against. On Xen targets, `tests/Makefrag.am` wraps the entire tests
+   block in `if !PLATFORM_xen` and the check is intentionally empty.
+3. **Add the Hurd userland.** Once gnumach is stable on a target, build
    glibc and the core Hurd servers on top.
-5. **Docker-based build path (coming soon).** A containerised entry point
+4. **Docker-based build path (coming soon).** A containerised entry point
    for hosts where Nix isn't an option — same Makefile, same outputs,
    just a thinner prerequisite list.
 
@@ -299,12 +303,22 @@ deliberately:
 
 ### Patches we carry over upstream
 
-**gnumach.** The aarch64 port from `bugaevc/wip-aarch64` ships with one
-latent bug we fixed locally: the boot stack lived inside the BSS clear
-region, and modern GCC's compiled `memset` was zeroing its own saved
-return address mid-call (see `src/gnumach/aarch64/aarch64/boot.S` +
-`aarch64/ldscript` on this fork). Bugaev's GCC 13 likely inlined
-`memset` and masked the issue; GCC 15 doesn't.
+**gnumach.** Two aarch64 boot-path fixes on top of `bugaevc/wip-aarch64`:
+
+- *Boot stack outside the BSS clear range.* The boot stack lived inside
+  the BSS clear region, and modern GCC's compiled `memset` was zeroing
+  its own saved return address mid-call (see
+  `src/gnumach/aarch64/aarch64/boot.S` + `aarch64/ldscript`). Bugaev's
+  GCC 13 likely inlined `memset` and masked the issue; GCC 15 doesn't.
+- *DTB cell reader avoids 8-byte unaligned load.* `read_cells()` in
+  `device/dtb.c` did `__builtin_memcpy(&tmp, addr, 8); bswap64(tmp)` to
+  read a 2-cell DTB property; at -O2 the compiler fuses that into a
+  single `LDR Xt`, which requires 8-byte alignment. DTB property data
+  is only 4-byte aligned, and with the MMU still off in early boot all
+  memory is Device-nGnRnE, so the load takes an alignment fault. With
+  no vector table installed yet, the abort vectors to `VBAR_EL1+0x200`
+  = physical 0x200 and the CPU loops forever on `udf #0`. Replaced
+  with two explicit 4-byte big-endian reads.
 
 **mig.** Stock savannah `tests/test_lib.sh` hardcodes
 `CFLAGS="-I$TEST_DIR/includes"`, overwriting any externally-supplied
@@ -322,12 +336,18 @@ allowlist of TARGETs (currently empty). The kernel-side tests in
 `src/gnumach/tests/` are hardcoded x86-multiboot: they build via
 `grub-mkrescue` and run under `qemu-system-i386` / `qemu-system-x86_64`,
 with `HOST_ix86` / `HOST_x86_64` conditionals around every binary
-rule. Bugaev's `wip-aarch64` added the kernel port but didn't extend
-`tests/Makefrag.am` or `tests/user-qemu.mk`, so on aarch64 the test
-binary rules don't fire and `make check` dies with `No rule to make
-target tests/test-hello`. On Xen targets, the entire tests block is
-guarded by `if !PLATFORM_xen` and the check is intentionally empty.
-For now `check-mach` prints a skip notice on any TARGET not in
+rule. On aarch64 the kernel itself is now bootable end-to-end —
+`machine_exec_boot_script` reads `multiboot,module` nodes from
+`/chosen`, which QEMU's `-device guest-loader` synthesizes — so the
+boot protocol is wired. The remaining gap is userland-side:
+`tests/start.S` and `tests/syscalls.S` have only `__i386__` /
+`__x86_64__` arms (no aarch64 `_start` or `SVC`-based syscall stubs),
+`tests/user-qemu.mk` hard-codes `qemu-system-i386 / x86_64` plus the
+grub-mkrescue ISO pipeline, and we don't yet have an `aarch64-gnu`
+userland cross-toolchain (today's `aarch64-unknown-none-elf` is
+bare-metal). On Xen targets the entire tests block is guarded by
+`if !PLATFORM_xen` and the check is intentionally empty. For now
+`check-mach` prints a skip notice on any TARGET not in
 `_MACH_TESTS_SUPPORTED` (in the Makefile); add a target to that list
 once its kernel test infrastructure is validated end-to-end.
 
