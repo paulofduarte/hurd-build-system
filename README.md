@@ -35,7 +35,7 @@ effort.
 
 | Target | Cross-toolchain | Kernel builds? | Boots? |
 |---|---|---|---|
-| `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | ✅ kernel boots through DTB / pmap / machine_init; reaches `machine_exec_boot_script` (panics for lack of bootstrap modules, as expected without a userland) |
+| `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | ✅ kernel boots, all 11 kernel tests pass under `qemu-system-aarch64 -M virt` via the guest-loader test harness |
 | `x86_64` | x86_64-unknown-elf-gcc | ✅ | ✅ all kernel tests pass under `qemu-system-x86_64 + KVM` on a Linux/x86_64 host |
 | `x86_64-xen` | x86_64-unknown-elf-gcc | ✅ | n/a — gnumach's `tests/Makefrag.am` disables the suite when `--enable-platform=xen` |
 | `i686` | i686-unknown-elf-gcc | ✅ | ✅ all kernel tests pass under `qemu-system-i386 + KVM` on a Linux/x86_64 host |
@@ -60,26 +60,18 @@ and i686 builds are unaffected.
 
 ## Roadmap
 
-1. **Extend kernel test coverage to aarch64.** `make check-toolchain`
-   already runs all 12 MIG tests on every target via our mig fork's
-   `cross-build-fixes` branch. `make check-mach` runs the upstream
-   gnumach kernel-test suite (all tests passing) for `x86_64` and
-   `i686` on a Linux/x86_64 host. aarch64 is the missing arch: the
-   kernel itself boots cleanly and `machine_exec_boot_script` already
-   consumes `multiboot,module` DTB nodes that QEMU's `-device
-   guest-loader` synthesises, so the boot protocol is wired. What's
-   still missing on aarch64: (a) `tests/start.S` and `tests/syscalls.S`
-   have only `__i386__` / `__x86_64__` arms — no aarch64 `_start` or
-   `SVC`-based syscall stubs; (b) `tests/user-qemu.mk` hard-codes
-   `qemu-system-i386 / x86_64` and the grub-mkrescue ISO pipeline;
-   (c) we don't yet have an `aarch64-gnu-gcc` userland cross-toolchain
-   (today's `aarch64-unknown-none-elf` is bare-metal), so even with
-   (a) and (b) resolved we'd have no way to build the test binaries.
-2. **Add the Hurd userland.** Once gnumach is stable on a target, build
-   glibc and the core Hurd servers on top.
-3. **Docker-based build path (coming soon).** A containerised entry point
-   for hosts where Nix isn't an option — same Makefile, same outputs,
-   just a thinner prerequisite list.
+1. **Submit aarch64-port + aarch64-tests upstream.** Fifteen
+   commits — nine kernel-side (the import + four follow-up Bugaev-port
+   fixes found by the test suite) and six test-side (start.S,
+   syscalls.S, testlib_thread_start.c, user-qemu.mk wiring +
+   guest-loader runner, plus per-test aarch64 arms).  Each commit is
+   one logical change, named `subsystem: terse description` per
+   savannah convention.  Patch series targeting `bug-hurd@gnu.org`.
+2. **Add the Hurd userland.** Once gnumach is upstream, build glibc
+   and the core Hurd servers on top.
+3. **Docker-based build path (coming soon).** A containerised entry
+   point for hosts where Nix isn't an option — same Makefile, same
+   outputs, just a thinner prerequisite list.
 
 Support for other architectures (e.g. `arm`, `riscv64`) isn't on the
 roadmap, but the `targets` attrset in `flake.nix` is open to extension —
@@ -168,13 +160,20 @@ The submodule URLs in `.gitmodules`:
 
 | Submodule | URL | Tracked branch |
 |---|---|---|
-| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port) | `aarch64-port` |
+| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port + its kernel test arms) | `aarch64-tests` |
 | `src/mig` | `https://github.com/paulofduarte/mig.git` (fork carrying the cross-build / test-harness fix) | `cross-build-fixes` |
+
+The `aarch64-tests` branch is `aarch64-port` (the kernel-side port,
+nine commits on top of savannah master) plus six commits adding the
+test-suite aarch64 arms.  Tracking it gives the parent build access
+to both the port and the validated test machinery in one go; if you
+only want the kernel port without the test work, point the submodule
+at `aarch64-port` instead.
 
 To advance a submodule to its branch's latest commit:
 
 ```sh
-git submodule update --remote src/gnumach           # follow aarch64-port
+git submodule update --remote src/gnumach           # follow aarch64-tests
 git submodule update --remote src/mig               # follow cross-build-fixes
 ```
 
@@ -208,7 +207,7 @@ fresh clones get only `origin`.
 ├── flake.lock             # pinned nixpkgs (nixos-25.11)
 ├── Makefile               # orchestration: dispatches through nix develop
 ├── src/
-│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-port
+│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-tests
 │   └── mig/               # submodule → paulofduarte/mig @ cross-build-fixes
 ├── work/                  # build directories  (gitignored)
 │   ├── gnumach/<target>/
@@ -320,9 +319,12 @@ build entirely.
 
 ### Patches we carry over upstream
 
-**gnumach.** The `aarch64-port` branch applies Bugaev's
-`wip-aarch64` work as five upstream-shaped commits on top of current
-savannah master, plus three aarch64 boot-path fixes:
+**gnumach.** We track `aarch64-tests`, which is `aarch64-port` (the
+kernel-side port of Bugaev's `wip-aarch64`, in nine upstream-shaped
+commits on top of savannah master) plus six commits that add the
+upstream test suite's aarch64 arms.  The kernel port carries Bugaev's
+import plus four follow-up fixes found while bringing up the test
+suite:
 
 - *Boot stack outside the BSS clear range.* The boot stack lived inside
   the BSS clear region, and modern GCC's compiled `memset` was zeroing
@@ -346,6 +348,30 @@ savannah master, plus three aarch64 boot-path fixes:
   nodes during `c_boot_entry`.  Upstream `bootstrap_create()` then
   consumes those modules through the same `boot_info.mods_addr`
   pathway it already uses on i386/x86_64.
+- *phystokv contract for synthesised boot modules.* `bootstrap_create`
+  calls `phystokv()` on `boot_info.mods_addr` and on each module's
+  `string` field, expecting both to hold *physical* addresses.  The
+  initial aarch64 synthesiser stored kernel-virtual pointers, which
+  then mapped to bogus split-half addresses after `phystokv` ran.
+  Convert with `kvtophys` at population time.
+- *Reserve module physical pages from the heap.* `free_bootstrap_pages`
+  asserts every page it releases is `VM_PT_RESERVED`.  On x86 biosmem
+  carves modules out of the heap range so vm_page_init defaults them
+  to reserved; the aarch64 path was handing all RAM to vm_page,
+  including module-occupied pages.  Add `pmap_reserve_phys_range`,
+  call it for each module during DTB walk, and cap `vm_page_load_heap`
+  below the lowest module so module pages stay registered but
+  reserved.
+- *`_fpu_save_state` / `_fpu_load_state` FPSR/FPCR field order.* The
+  asm read/wrote the two SPR fields swapped relative to
+  `struct aarch64_float_state`'s layout, silently corrupting them
+  across every `thread_get_state`/`thread_set_state` cycle.
+- *Strict-alignment check on `AARCH64_FLOAT_STATE` setstatus.* MIG
+  places the `new_state[]` array at an 8-byte-aligned offset from the
+  request message header, but `alignof(struct aarch64_float_state)`
+  is 16 (due to `__int128 v[32]`).  The kernel rejected every
+  legitimate write with `KERN_INVALID_ARGUMENT`; replace with a
+  copy-into-aligned-local before validating.
 
 **mig.** Stock savannah `tests/test_lib.sh` hardcodes
 `CFLAGS="-I$TEST_DIR/includes"`, overwriting any externally-supplied
@@ -366,20 +392,20 @@ x86_64`; both are pulled into the dev shell on Linux hosts (nixpkgs
 doesn't package GRUB on darwin), and the parent Makefile passes
 `USER_MIG=$(TOOLCHAIN)/bin/$(MIG_TARGET)-mig` to gnumach's configure
 so the userland test binaries link against our cross MIG.
-*Validation:* the full suite has been observed passing on a Linux
-x86_64 host with KVM acceleration. *Other hosts:* on macOS the
-pipeline runs as far as userland-stub generation and test-binary
-linking, then fails at the ISO step; on Linux/aarch64 the dev shell
-has `grub-mkrescue` but nixpkgs only ships its `arm64-efi` target,
-so the produced ISO can't be booted by SeaBIOS. Either way, the
-practical execution environment for the kernel tests today is a
-Linux/x86_64 host (or a container thereof). *aarch64:* still gated
-— `tests/start.S` and `tests/syscalls.S` have only `__i386__` /
-`__x86_64__` arms, `tests/user-qemu.mk` hard-codes
-`qemu-system-i386 / x86_64`, and we don't yet have an
-`aarch64-gnu` userland cross-toolchain. *Xen targets:* tests are
-intentionally empty — guarded by `if !PLATFORM_xen` in
-`tests/Makefrag.am`.
+*Validation:* the full x86_64 / i686 suite has been observed passing
+on a Linux/x86_64 host with KVM acceleration. *Other hosts for x86:*
+on macOS the pipeline runs as far as userland-stub generation and
+test-binary linking, then fails at the ISO step; on Linux/aarch64
+the dev shell has `grub-mkrescue` but nixpkgs only ships its
+`arm64-efi` target, so the produced ISO can't be booted by SeaBIOS.
+*aarch64:* the `aarch64-tests` branch routes the kernel tests
+through QEMU's `-device guest-loader` (no GRUB) so the same
+harness works on any host with `qemu-system-aarch64` — including
+darwin.  All 11 user-space tests pass under
+`qemu-system-aarch64 -M virt`.  On non-x86 hosts the run uses TCG
+and is slow; bump `MACH_TEST_TIMEOUT` if 60 s isn't enough.
+*Xen targets:* tests are intentionally empty — guarded by
+`if !PLATFORM_xen` in `tests/Makefrag.am`.
 
 ### When you edit source
 

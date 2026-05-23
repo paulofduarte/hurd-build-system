@@ -451,33 +451,24 @@ check-toolchain: toolchain
 # which TARGETs forward `check-mach` into gnumach's `make check`;
 # anything else prints a friendly skip notice instead.
 #
-# Reasons targets are NOT in the allowlist by default:
-#   aarch64       Kernel itself is bootable end-to-end on QEMU virt and
-#                 machine_exec_boot_script consumes multiboot,module DTB
-#                 nodes that QEMU's -device guest-loader synthesizes, so
-#                 the boot protocol is wired. The remaining gap is
-#                 userland-side: tests/start.S and tests/syscalls.S have
-#                 only __i386__ / __x86_64__ arms (no aarch64 _start or
-#                 SVC-based syscall stubs), tests/user-qemu.mk hardcodes
-#                 qemu-system-i386 / x86_64 plus the grub-mkrescue ISO
-#                 pipeline, and we don't yet have an aarch64-gnu userland
-#                 cross-toolchain.
+# Reasons targets are or aren't in the allowlist:
+#   x86_64, i686  Allowlisted. Kernel + full upstream test suite both
+#                 green on a Linux/x86_64 host with KVM. On macOS the
+#                 pipeline fails at the grub-mkrescue step (no nixpkgs
+#                 darwin package); on Linux/aarch64 nixpkgs only ships
+#                 grub-mkrescue's arm64-efi target so SeaBIOS can't
+#                 boot the produced ISO.
+#   aarch64       Allowlisted. The aarch64-tests branch wires the
+#                 test harness through QEMU's -device guest-loader
+#                 (no GRUB), so check-mach works on any host with
+#                 qemu-system-aarch64 — including darwin. On non-x86
+#                 hosts the run uses TCG and is slow; bump
+#                 MACH_TEST_TIMEOUT if 60s isn't enough.
 #   *-xen         tests/Makefrag.am wraps the whole tests block in
 #                 `if !PLATFORM_xen` — make check is a no-op by design.
-#   x86_64, i686  Both allowlisted. The kernel builds cleanly against
-#                 current upstream master and the test harness is the
-#                 same for both (qemu-system-i386 + pentium3-v1 for
-#                 i686, qemu-system-x86_64 + core2duo-v1 for x86_64).
-#                 NOTE: the harness builds a GRUB-bootable ISO via
-#                 grub-mkrescue, which nixpkgs only packages on Linux
-#                 hosts. On a darwin host, check-mach gets all the way
-#                 through userland stub generation and test linking
-#                 but then fails at the grub-mkrescue step. Run on
-#                 Linux (or a Linux container) to exercise the actual
-#                 test.
 #
 # Append a TARGET name here as it's validated end-to-end.
-_MACH_TESTS_SUPPORTED := x86_64 i686
+_MACH_TESTS_SUPPORTED := x86_64 i686 aarch64
 
 ifeq ($(filter $(TARGET),$(_MACH_TESTS_SUPPORTED)),)
 check-mach:

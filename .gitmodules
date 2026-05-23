@@ -1,7 +1,7 @@
 [submodule "src/gnumach"]
 	path = src/gnumach
 	url = https://github.com/paulofduarte/gnumach.git
-	branch = aarch64-port
+	branch = aarch64-tests
 [submodule "src/mig"]
 	path = src/mig
 	url = https://github.com/paulofduarte/mig.git
