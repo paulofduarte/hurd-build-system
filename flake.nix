@@ -95,17 +95,26 @@
             pkgs.starship      # nicer prompt inside the dev shell
             pkgs.bash-completion
           ]
-          # gnumach's kernel-side `make check` (i.e. `make check-mach`) is
-          # an x86-multiboot-only harness: it builds a bootable ISO with
-          # grub-mkrescue (which itself needs xorriso + mtools) and boots
-          # it under qemu-system-i386 / x86_64.  Pull those tools in only
-          # for x86 targets, and only on Linux hosts — nixpkgs doesn't
-          # build GRUB on darwin.  On a darwin host, `make check-mach`
-          # works as far as the userland test stubs being built, but the
-          # ISO-assembly step then fails with `grub-mkrescue: command not
-          # found`; use a Linux host (or container) to run the full test.
+          # gnumach's kernel-side `make check` (i.e. `make check-mach`)
+          # builds a bootable ISO with grub-mkrescue (which itself needs
+          # xorriso + mtools) and boots it under qemu-system-<arch>.  All
+          # three targets we cross-build for use this path:
+          #   x86_64 / i686 — grub-mkrescue's i386-pc target, multiboot1
+          #   aarch64       — grub-mkrescue's arm64-efi target,
+          #                   linux+initrd via the standard arm64 boot
+          #                   protocol (gnumach reads
+          #                   /chosen/linux,initrd-* from the DTB)
+          # Pull these tools in only on Linux hosts — nixpkgs's grub2
+          # has meta.platforms = linux-only; the upstream GRUB build
+          # doesn't compile cleanly on darwin and nobody has packaged a
+          # cross-build for it.  On a darwin host, `make check` errors
+          # out at the Makefile level (see Makefile's check-mach rule);
+          # use a Linux host (orbstack, docker, native) to run the full
+          # test suite.
           ++ nixpkgs.lib.optionals
-               ((target.crossSystem == "x86_64-elf" || target.crossSystem == "i686-elf")
+               ((target.crossSystem == "x86_64-elf"
+                  || target.crossSystem == "i686-elf"
+                  || target.crossSystem == "aarch64-none-elf")
                 && nixpkgs.lib.hasSuffix "-linux" system)
                [ pkgs.grub2 pkgs.xorriso pkgs.mtools ];
 

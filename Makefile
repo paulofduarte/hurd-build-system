@@ -447,34 +447,23 @@ check-toolchain: toolchain
 	@# headers via CFLAGS.
 	cd $(MIG_BUILD) && $(MAKE) check CFLAGS="-I$(DIST)/include"
 
-# Per-target gate for the kernel test suite. The allowlist controls
-# which TARGETs forward `check-mach` into gnumach's `make check`;
-# anything else prints a friendly skip notice instead.
+# The kernel test suite runs on every TARGET we support; xen variants
+# self-skip via gnumach's tests/Makefrag.am (`if !PLATFORM_xen` wraps
+# the whole tests block) so they no-op without our help.
 #
-# Reasons targets are or aren't in the allowlist:
-#   x86_64, i686  Allowlisted. Kernel + full upstream test suite both
-#                 green on a Linux/x86_64 host with KVM. On macOS the
-#                 pipeline fails at the grub-mkrescue step (no nixpkgs
-#                 darwin package); on Linux/aarch64 nixpkgs only ships
-#                 grub-mkrescue's arm64-efi target so SeaBIOS can't
-#                 boot the produced ISO.
-#   aarch64       Allowlisted. The aarch64-tests branch wires the
-#                 test harness through QEMU's -device guest-loader
-#                 (no GRUB), so check-mach works on any host with
-#                 qemu-system-aarch64 — including darwin. On non-x86
-#                 hosts the run uses TCG and is slow; bump
-#                 MACH_TEST_TIMEOUT if 60s isn't enough.
-#   *-xen         tests/Makefrag.am wraps the whole tests block in
-#                 `if !PLATFORM_xen` — make check is a no-op by design.
-#
-# Append a TARGET name here as it's validated end-to-end.
-_MACH_TESTS_SUPPORTED := x86_64 i686 aarch64
-
-ifeq ($(filter $(TARGET),$(_MACH_TESTS_SUPPORTED)),)
+# Darwin can't host check-mach: gnumach's `make check` invokes
+# grub-mkrescue to assemble the test ISO, and nixpkgs's grub2 has
+# meta.platforms = linux-only (upstream GRUB doesn't compile cleanly
+# on darwin).  Fail early with a clear message rather than letting
+# the run die mid-pipeline at `grub-mkrescue: command not found`.
+ifeq ($(shell uname -s),Darwin)
 check-mach:
-	@echo "==> check-mach ($(TARGET)): SKIP — upstream test harness not"
-	@echo "    yet supported for this target. See 'Patches we carry' in"
-	@echo "    README.md for the upstream gap."
+	@echo "==> check-mach: ERROR — darwin host is not supported." >&2
+	@echo "    gnumach's test harness invokes grub-mkrescue, which" >&2
+	@echo "    nixpkgs does not build for darwin (grub2's" >&2
+	@echo "    meta.platforms is linux-only).  Run the tests from a" >&2
+	@echo "    Linux host (orbstack, docker, native, CI)." >&2
+	@exit 1
 else
 check-mach: mach
 	@echo "==> check-mach ($(TARGET)): running gnumach 'make check' in $(GNUMACH_BUILD)"
