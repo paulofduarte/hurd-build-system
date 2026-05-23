@@ -108,14 +108,18 @@
           # aarch64 tests build a FAT image per test (gnumach + module
           # + u-boot boot.scr) and boot it through u-boot running under
           # qemu-system-aarch64, which then does the `fdt mknod` dance
-          # from aarch64/BOOTING.  Pull in u-boot, mkimage, mkfs.vfat,
-          # and mcopy on Linux aarch64 builds.  Same darwin caveat as
-          # above — nixpkgs's u-boot is also Linux-only.
+          # from aarch64/BOOTING.  u-boot's bootflow scanner expects a
+          # partitioned disk, so we add an MBR via sfdisk (util-linux)
+          # and create the FAT inside the partition via mtools' @@<off>
+          # notation.  Pull in u-boot, mkimage, sfdisk, mkfs.vfat, and
+          # mcopy on Linux aarch64 builds.  Same darwin caveat as the
+          # x86 grub2 conditional above — nixpkgs's u-boot is also
+          # Linux-only.
           ++ nixpkgs.lib.optionals
                (target.crossSystem == "aarch64-none-elf"
                 && nixpkgs.lib.hasSuffix "-linux" system)
                [ pkgs.ubootQemuAarch64 pkgs.ubootTools
-                 pkgs.dosfstools pkgs.mtools ];
+                 pkgs.util-linux pkgs.dosfstools pkgs.mtools ];
 
           shellHook = ''
             # GCC 15+ defaults to C23 mode, which is stricter about function
