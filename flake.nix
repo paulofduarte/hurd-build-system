@@ -100,15 +100,22 @@
           # and boots it under qemu-system-{i386,x86_64} -cdrom.  Pull
           # those tools in only for x86 targets and only on Linux hosts —
           # nixpkgs's grub2 has meta.platforms = linux-only (GRUB doesn't
-          # compile cleanly on darwin).  aarch64 doesn't use GRUB: qemu's
-          # -kernel + -initrd + -append drives the arm64 Linux boot
-          # protocol directly into gnumach (which reads
-          # /chosen/linux,initrd-* + /chosen/bootargs from the DTB) — no
-          # grub-mkrescue needed.
+          # compile cleanly on darwin).
           ++ nixpkgs.lib.optionals
                ((target.crossSystem == "x86_64-elf" || target.crossSystem == "i686-elf")
                 && nixpkgs.lib.hasSuffix "-linux" system)
-               [ pkgs.grub2 pkgs.xorriso pkgs.mtools ];
+               [ pkgs.grub2 pkgs.xorriso pkgs.mtools ]
+          # aarch64 tests build a FAT image per test (gnumach + module
+          # + u-boot boot.scr) and boot it through u-boot running under
+          # qemu-system-aarch64, which then does the `fdt mknod` dance
+          # from aarch64/BOOTING.  Pull in u-boot, mkimage, mkfs.vfat,
+          # and mcopy on Linux aarch64 builds.  Same darwin caveat as
+          # above — nixpkgs's u-boot is also Linux-only.
+          ++ nixpkgs.lib.optionals
+               (target.crossSystem == "aarch64-none-elf"
+                && nixpkgs.lib.hasSuffix "-linux" system)
+               [ pkgs.ubootQemuAarch64 pkgs.ubootTools
+                 pkgs.dosfstools pkgs.mtools ];
 
           shellHook = ''
             # GCC 15+ defaults to C23 mode, which is stricter about function
@@ -146,6 +153,15 @@
             ${if target.platform != null
               then "export GNUMACH_PLATFORM=${target.platform}"
               else "unset GNUMACH_PLATFORM"}
+
+            # aarch64 tests need an explicit u-boot binary path because
+            # qemu's -bios is resolved against qemu's own data dir, not
+            # the dev shell's PATH.  Point at nixpkgs's
+            # ubootQemuAarch64 output explicitly.
+            ${if target.crossSystem == "aarch64-none-elf"
+                && nixpkgs.lib.hasSuffix "-linux" system
+              then "export UBOOT_BIN=${pkgs.ubootQemuAarch64}/u-boot.bin"
+              else "unset UBOOT_BIN"}
 
             # nix develop -i isolates env vars but doesn't change IN_NIX_SHELL,
             # so starship still shows "impure" even in a sandboxed shell. Detect
