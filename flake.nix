@@ -91,6 +91,7 @@
             pkgs.git           # read-only ops + `git clean -fdX` for mrproper
             pkgs.nix           # so the Makefile can re-dispatch into a different target shell
             pkgs.qemu          # provides qemu-system-* for running the kernel
+            pkgs.which         # gnumach's run-qemu.sh test runner uses `which` to gate test execution
             pkgs.starship      # nicer prompt inside the dev shell
             pkgs.bash-completion
           ]
