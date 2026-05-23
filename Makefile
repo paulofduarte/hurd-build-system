@@ -451,18 +451,33 @@ check-toolchain: toolchain
 # self-skip via gnumach's tests/Makefrag.am (`if !PLATFORM_xen` wraps
 # the whole tests block) so they no-op without our help.
 #
-# Darwin can't host check-mach: gnumach's `make check` invokes
-# grub-mkrescue to assemble the test ISO, and nixpkgs's grub2 has
-# meta.platforms = linux-only (upstream GRUB doesn't compile cleanly
-# on darwin).  Fail early with a clear message rather than letting
-# the run die mid-pipeline at `grub-mkrescue: command not found`.
+# Darwin can't host check-mach for any target: each target's test
+# harness needs a real bootloader that nixpkgs can't build on darwin.
+#   - x86_64 / i686: grub-mkrescue / xorriso / mtools — grub2's
+#     meta.platforms = linux-only; upstream GRUB doesn't compile
+#     cleanly on darwin.
+#   - aarch64:       u-boot.bin + mkimage — ubootQemuAarch64 and
+#     ubootTools are linux-only in nixpkgs and upstream u-boot's
+#     envtools / scripts_dtc collide with darwin's <sys/types.h>
+#     (ino_t conflict).
+# Fail early with a clear message rather than letting the run die
+# mid-pipeline at `<tool>: command not found`.
 ifeq ($(shell uname -s),Darwin)
 check-mach:
-	@echo "==> check-mach: ERROR — darwin host is not supported." >&2
-	@echo "    gnumach's test harness invokes grub-mkrescue, which" >&2
-	@echo "    nixpkgs does not build for darwin (grub2's" >&2
-	@echo "    meta.platforms is linux-only).  Run the tests from a" >&2
-	@echo "    Linux host (orbstack, docker, native, CI)." >&2
+	@echo "==> check-mach ($(TARGET)): ERROR — darwin host is not supported." >&2
+ifeq ($(TARGET),aarch64)
+	@echo "    aarch64 tests boot through u-boot, which nixpkgs only" >&2
+	@echo "    builds on linux (ubootQemuAarch64 / ubootTools are" >&2
+	@echo "    linux-only; upstream u-boot doesn't compile cleanly" >&2
+	@echo "    on darwin)." >&2
+else
+	@echo "    x86 tests build a GRUB-bootable ISO via grub-mkrescue," >&2
+	@echo "    which nixpkgs only builds on linux (grub2's" >&2
+	@echo "    meta.platforms is linux-only; upstream GRUB doesn't" >&2
+	@echo "    compile cleanly on darwin)." >&2
+endif
+	@echo "    Run the tests from a Linux host (orbstack, docker," >&2
+	@echo "    native, CI)." >&2
 	@exit 1
 else
 check-mach: mach
