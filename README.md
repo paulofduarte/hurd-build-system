@@ -36,10 +36,10 @@ effort.
 | Target | Cross-toolchain | Kernel builds? | Boots? |
 |---|---|---|---|
 | `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | ✅ kernel boots through DTB / pmap / machine_init; reaches `machine_exec_boot_script` (panics for lack of bootstrap modules, as expected without a userland) |
-| `x86_64` | x86_64-unknown-elf-gcc | ✅ | ⚠️ check-mach wired (USER_MIG + grub2 in flake.nix on Linux hosts); needs Linux host to exercise the GRUB-mkrescue ISO step |
-| `x86_64-xen` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
-| `i686` | i686-unknown-elf-gcc | ✅ | ⚠️ check-mach wired (same harness as x86_64: `qemu-system-i386` + `pentium3-v1`); needs Linux host to exercise the GRUB-mkrescue ISO step |
-| `i686-xen` | i686-unknown-elf-gcc | not yet validated against current master | — |
+| `x86_64` | x86_64-unknown-elf-gcc | ✅ | ✅ all kernel tests pass under `qemu-system-x86_64 + KVM` on a Linux/x86_64 host |
+| `x86_64-xen` | x86_64-unknown-elf-gcc | ✅ | n/a — gnumach's `tests/Makefrag.am` disables the suite when `--enable-platform=xen` |
+| `i686` | i686-unknown-elf-gcc | ✅ | ✅ all kernel tests pass under `qemu-system-i386 + KVM` on a Linux/x86_64 host |
+| `i686-xen` | i686-unknown-elf-gcc | ✅ | n/a — same Xen-block guard as `x86_64-xen` |
 
 The `-xen` variants of each x86 target build the same kernel sources with
 gnumach's `--enable-platform=xen`, producing a paravirtualised Xen-domU
@@ -60,28 +60,24 @@ and i686 builds are unaffected.
 
 ## Roadmap
 
-1. **Validate `x86_64-gnu` and `i686-gnu` against current upstream.** The
-   cross-toolchains, MIG, and Makefile dispatch are already in place;
-   the next step is to confirm the kernel builds and boots end-to-end on
-   each, bringing both to the same maturity as aarch64.
-2. **Restore upstream test coverage.** `make check-toolchain` already
-   runs all 12 MIG tests across every target via our mig fork's
-   `cross-build-fixes` branch. `make check-mach` is gated to an empty
-   allowlist — the gap is now userland-side, not kernel-side. The
-   kernel boots and `machine_exec_boot_script` already consumes
-   `multiboot,module` nodes synthesized by QEMU's `-device guest-loader`,
-   so the boot protocol is wired. What's still missing on aarch64:
-   (a) `tests/start.S` and `tests/syscalls.S` have only `__i386__` /
-   `__x86_64__` arms — no aarch64 `_start` or `SVC`-based syscall stubs;
-   (b) `tests/user-qemu.mk` hard-codes `qemu-system-i386 / x86_64` and
-   the grub-mkrescue ISO pipeline; (c) a userland cross-toolchain
-   (`aarch64-gnu-gcc`, not the current bare-metal `aarch64-none-elf`)
-   plus a minimal libc/libmach build for the test binaries to link
-   against. On Xen targets, `tests/Makefrag.am` wraps the entire tests
-   block in `if !PLATFORM_xen` and the check is intentionally empty.
-3. **Add the Hurd userland.** Once gnumach is stable on a target, build
+1. **Extend kernel test coverage to aarch64.** `make check-toolchain`
+   already runs all 12 MIG tests on every target via our mig fork's
+   `cross-build-fixes` branch. `make check-mach` runs the upstream
+   gnumach kernel-test suite (all tests passing) for `x86_64` and
+   `i686` on a Linux/x86_64 host. aarch64 is the missing arch: the
+   kernel itself boots cleanly and `machine_exec_boot_script` already
+   consumes `multiboot,module` DTB nodes that QEMU's `-device
+   guest-loader` synthesises, so the boot protocol is wired. What's
+   still missing on aarch64: (a) `tests/start.S` and `tests/syscalls.S`
+   have only `__i386__` / `__x86_64__` arms — no aarch64 `_start` or
+   `SVC`-based syscall stubs; (b) `tests/user-qemu.mk` hard-codes
+   `qemu-system-i386 / x86_64` and the grub-mkrescue ISO pipeline;
+   (c) we don't yet have an `aarch64-gnu-gcc` userland cross-toolchain
+   (today's `aarch64-unknown-none-elf` is bare-metal), so even with
+   (a) and (b) resolved we'd have no way to build the test binaries.
+2. **Add the Hurd userland.** Once gnumach is stable on a target, build
    glibc and the core Hurd servers on top.
-4. **Docker-based build path (coming soon).** A containerised entry point
+3. **Docker-based build path (coming soon).** A containerised entry point
    for hosts where Nix isn't an option — same Makefile, same outputs,
    just a thinner prerequisite list.
 
@@ -363,25 +359,27 @@ upstream submission; carrying it locally for now.
 ### Upstream gaps we work around
 
 **gnumach kernel test suite.** `make check-mach` forwards into
-gnumach's own `make check` only for TARGETs in
-`_MACH_TESTS_SUPPORTED`. Today that list is `x86_64`. The harness
-builds a GRUB-bootable ISO via `grub-mkrescue` and runs it under
-`qemu-system-i386 / x86_64`; both are pulled into the dev shell for
-x86 targets, and the parent Makefile passes `USER_MIG=$(TOOLCHAIN)/bin/
-$(MIG_TARGET)-mig` to gnumach's configure so its userland test
-binaries link against our cross MIG. *Caveat on darwin hosts:*
-`grub-mkrescue` only builds on Linux in nixpkgs, so on macOS the
-check-mach pipeline runs all the way through userland-stub generation
-+ test-binary linking and then fails at the ISO step; use a Linux
-host (or a Linux container) to exercise the kernel tests themselves.
-*aarch64:* `tests/start.S` and `tests/syscalls.S` have only
-`__i386__` / `__x86_64__` arms (no aarch64 `_start` or `SVC`-based
-syscall stubs), `tests/user-qemu.mk` hard-codes
-`qemu-system-i386 / x86_64` plus the grub-mkrescue ISO pipeline,
-and we don't yet have an `aarch64-gnu` userland cross-toolchain
-(today's `aarch64-unknown-none-elf` is bare-metal). *Xen targets:*
-the whole tests block is guarded by `if !PLATFORM_xen` and the check
-is intentionally empty.
+gnumach's own `make check` for any TARGET in `_MACH_TESTS_SUPPORTED`
+— today, `x86_64` and `i686`. The harness builds a GRUB-bootable
+ISO via `grub-mkrescue` and runs it under `qemu-system-i386 /
+x86_64`; both are pulled into the dev shell on Linux hosts (nixpkgs
+doesn't package GRUB on darwin), and the parent Makefile passes
+`USER_MIG=$(TOOLCHAIN)/bin/$(MIG_TARGET)-mig` to gnumach's configure
+so the userland test binaries link against our cross MIG.
+*Validation:* the full suite has been observed passing on a Linux
+x86_64 host with KVM acceleration. *Other hosts:* on macOS the
+pipeline runs as far as userland-stub generation and test-binary
+linking, then fails at the ISO step; on Linux/aarch64 the dev shell
+has `grub-mkrescue` but nixpkgs only ships its `arm64-efi` target,
+so the produced ISO can't be booted by SeaBIOS. Either way, the
+practical execution environment for the kernel tests today is a
+Linux/x86_64 host (or a container thereof). *aarch64:* still gated
+— `tests/start.S` and `tests/syscalls.S` have only `__i386__` /
+`__x86_64__` arms, `tests/user-qemu.mk` hard-codes
+`qemu-system-i386 / x86_64`, and we don't yet have an
+`aarch64-gnu` userland cross-toolchain. *Xen targets:* tests are
+intentionally empty — guarded by `if !PLATFORM_xen` in
+`tests/Makefrag.am`.
 
 ### When you edit source
 
