@@ -90,24 +90,10 @@
             pkgs.texinfo
             pkgs.git           # read-only ops + `git clean -fdX` for mrproper
             pkgs.nix           # so the Makefile can re-dispatch into a different target shell
-            pkgs.qemu          # provides qemu-system-* for running the kernel
-            pkgs.which         # gnumach's run-qemu.sh test runner uses `which` to gate test execution
+            pkgs.qemu          # provides qemu-system-* for running the kernel under check-mach
             pkgs.starship      # nicer prompt inside the dev shell
             pkgs.bash-completion
-          ]
-          # gnumach's kernel-side `make check` (i.e. `make check-mach`) is
-          # an x86-multiboot-only harness: it builds a bootable ISO with
-          # grub-mkrescue (which itself needs xorriso + mtools) and boots
-          # it under qemu-system-i386 / x86_64.  Pull those tools in only
-          # for x86 targets, and only on Linux hosts — nixpkgs doesn't
-          # build GRUB on darwin.  On a darwin host, `make check-mach`
-          # works as far as the userland test stubs being built, but the
-          # ISO-assembly step then fails with `grub-mkrescue: command not
-          # found`; use a Linux host (or container) to run the full test.
-          ++ nixpkgs.lib.optionals
-               ((target.crossSystem == "x86_64-elf" || target.crossSystem == "i686-elf")
-                && nixpkgs.lib.hasSuffix "-linux" system)
-               [ pkgs.grub2 pkgs.xorriso pkgs.mtools ];
+          ];
 
           shellHook = ''
             # GCC 15+ defaults to C23 mode, which is stricter about function
