@@ -304,7 +304,20 @@ deliberately:
 |---|---|
 | Nix store after first build | ~5 GB |
 | RAM headroom for parallel build | ~2 GB |
-| Wall time, `make -j` cold from `mrproper` | ~40s on a modern laptop |
+| Wall time, `make -j` cold from `mrproper` | ~40 s on a modern laptop *(after the toolchain is in the Nix store — see below)* |
+
+**First-build caveat.** The cross-toolchain (binutils + GCC for each
+`<target>-none-elf` / `<target>-elf` triple) is not in nixpkgs' binary
+cache for our host/target matrix, so the *very first* `nix develop` on
+a given host compiles binutils and GCC from source. Verified across
+**Linux x86_64**, **Linux aarch64**, and **macOS aarch64** — all three
+paid the same one-time cost. Expect **30 min to 2 hours** of CPU time
+the first time, depending on host. After that the toolchain lives in
+`/nix/store` and subsequent builds reuse it — that's where the ~40 s
+incremental figure above comes from. Plan accordingly when bringing
+up a new machine. The roadmap item *"Docker-based build path"*
+(below) addresses this by shipping a prebuilt image so users without
+Nix can skip the cross-toolchain build entirely.
 
 ## Hacking notes
 
