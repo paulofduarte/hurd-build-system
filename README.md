@@ -38,7 +38,7 @@ effort.
 | `aarch64` | aarch64-unknown-none-elf-gcc 14+, GNU MIG (master), binutils 2.46 | ✅ | ✅ kernel boots through DTB / pmap / machine_init; reaches `machine_exec_boot_script` (panics for lack of bootstrap modules, as expected without a userland) |
 | `x86_64` | x86_64-unknown-elf-gcc | ✅ | ⚠️ check-mach wired (USER_MIG + grub2 in flake.nix on Linux hosts); needs Linux host to exercise the GRUB-mkrescue ISO step |
 | `x86_64-xen` | x86_64-unknown-elf-gcc | not yet validated against current master | — |
-| `i686` | i686-unknown-elf-gcc | not yet validated against current master | — |
+| `i686` | i686-unknown-elf-gcc | ✅ | ⚠️ check-mach wired (same harness as x86_64: `qemu-system-i386` + `pentium3-v1`); needs Linux host to exercise the GRUB-mkrescue ISO step |
 | `i686-xen` | i686-unknown-elf-gcc | not yet validated against current master | — |
 
 The `-xen` variants of each x86 target build the same kernel sources with

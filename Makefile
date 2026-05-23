@@ -464,17 +464,20 @@ check-toolchain: toolchain
 #                 cross-toolchain.
 #   *-xen         tests/Makefrag.am wraps the whole tests block in
 #                 `if !PLATFORM_xen` — make check is a no-op by design.
-#   i686          PC-AT kernel build itself not yet validated against
-#                 current upstream; will graduate to this list once it is.
-#   x86_64        Allowlisted. NOTE: the harness builds a GRUB-bootable
-#                 ISO via grub-mkrescue, which nixpkgs only packages on
-#                 Linux hosts. On a darwin host, check-mach gets all the
-#                 way through userland stub generation and test linking
-#                 but then fails at the grub-mkrescue step. Run on Linux
-#                 (or a Linux container) to exercise the actual test.
+#   x86_64, i686  Both allowlisted. The kernel builds cleanly against
+#                 current upstream master and the test harness is the
+#                 same for both (qemu-system-i386 + pentium3-v1 for
+#                 i686, qemu-system-x86_64 + core2duo-v1 for x86_64).
+#                 NOTE: the harness builds a GRUB-bootable ISO via
+#                 grub-mkrescue, which nixpkgs only packages on Linux
+#                 hosts. On a darwin host, check-mach gets all the way
+#                 through userland stub generation and test linking
+#                 but then fails at the grub-mkrescue step. Run on
+#                 Linux (or a Linux container) to exercise the actual
+#                 test.
 #
 # Append a TARGET name here as it's validated end-to-end.
-_MACH_TESTS_SUPPORTED := x86_64
+_MACH_TESTS_SUPPORTED := x86_64 i686
 
 ifeq ($(filter $(TARGET),$(_MACH_TESTS_SUPPORTED)),)
 check-mach:
