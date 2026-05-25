@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # SCENARIO=hurd-gentoo — Gentoo Hurd userland on our gnumach via
 # kernel overlay (see hurd-debian.sh for the architectural notes).
-# UNTESTED — Gentoo's kernel path is a guess based on the standard
-# Hurd convention; verify and adjust if first boot fails to find it.
+# Kernel path /boot/gnumach.gz verified against the cached
+# hurd-x86_64-preview.qcow2 (orb-mounted ext2, 2026-05-25).  The
+# distro's grub.cfg references modules via `configfile entry_hurd.cfg`;
+# the sidekick's grub.cfg regenerator flattens that indirection
+# before extracting the boot recipe.
 set -euo pipefail
 . "$(dirname "$0")/lib/common.sh"
 . "$(dirname "$0")/lib/arch-flags.sh"

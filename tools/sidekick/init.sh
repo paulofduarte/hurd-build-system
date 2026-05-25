@@ -185,6 +185,36 @@ case "$SIDEKICK_OP" in
       # — GRUB's BIOS naming maps to (hd0,msdos<N>) for an IDE disk.
       part_num=$(echo "$part" | sed 's|.*[a-z]||')
 
+      # Flatten `configfile <path>` directives by inlining the
+      # referenced file's contents.  Needed for Gentoo, which keeps
+      # its module declarations in /boot/grub/entry_hurd.cfg and
+      # pulls them in via `configfile` from each menuentry (so the
+      # module chain is DRY across the GUI / serial / single-user
+      # menu entries).  Debian inlines everything; no-op for it.
+      #
+      # One-level deep, no recursion guard — distros don't nest
+      # configfile in practice.  Paths are absolute (rooted at the
+      # disk's /), so we prefix /mnt to resolve them.
+      flat_cfg=/tmp/grub-flat.cfg
+      {
+        while IFS= read -r line; do
+          case "$line" in
+            *configfile*)
+              path=$(printf '%s\n' "$line" \
+                | sed -nE 's|^[[:space:]]*configfile[[:space:]]+(.+)[[:space:]]*$|\1|p')
+              if [ -n "$path" ] && [ -f "/mnt$path" ]; then
+                cat "/mnt$path"
+              else
+                printf '%s\n' "$line"
+              fi
+              ;;
+            *)
+              printf '%s\n' "$line"
+              ;;
+          esac
+        done < "$grub_cfg"
+      } > "$flat_cfg"
+
       boot_lines=$(awk '
         /^menuentry / && !/recovery mode/ && !found { found=1; in_body=1; prev=""; next }
         in_body && /^}/ { if (prev != "") emit(prev); exit }
@@ -205,9 +235,15 @@ case "$SIDEKICK_OP" in
             print "  " line
           } else if (line ~ /^module[[:space:]]/) {
             print "  " line
+          } else if (line ~ /^[A-Z][A-Z0-9_]*=[^[:space:]=]+$/) {
+            # GRUB var assignment inside the menuentry body — e.g.
+            # Gentoo: DISK=wd0 / PART=1 / DISKOPT=noide.  Keep so
+            # that the subsequent multiboot ${DISK} etc. expand in
+            # our regenerated menuentry.
+            print "  " line
           }
         }
-      ' "$grub_cfg")
+      ' "$flat_cfg")
 
       # Three sections so the source stays readably-indented:
       #   - header (heredoc with $part_num substitution)
