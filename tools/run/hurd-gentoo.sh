@@ -50,11 +50,10 @@ hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$Q
   -no-reboot \
   "${extra_qemu_args[@]}"
 
-# Our-kernel path: overlay our gnumach at Gentoo's kernel path.
-# Initial guess — adjust if sidekick reports "target kernel missing".
-kernel_path="boot/gnumach.gz"
-
-sidekick_overlay_kernel "$overlay" "$GNUMACH_BOOT_IMAGE" "$kernel_path"
+# Our-kernel path: overlay our gnumach at Gentoo's kernel path,
+# auto-discovered by sidekick from the disk's grub.cfg multiboot
+# line.
+sidekick_overlay_kernel "$overlay" "$GNUMACH_BOOT_IMAGE"
 
 print_qemu_hint
 exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \

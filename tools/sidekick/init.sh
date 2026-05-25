@@ -119,26 +119,19 @@ case "$SIDEKICK_OP" in
 
   overlay-kernel)
     # Replace a kernel binary inside an attached qcow2 overlay with
-    # /shared/kernel.bin.  Host writes the target path into
-    # /shared/.sidekick-overlay-kernel-target.  Distros that ship a
-    # gzipped kernel get the replacement gzipped to match.
+    # /shared/kernel.bin AND regenerate grub.cfg.  The target kernel
+    # path is auto-discovered from the disk's grub.cfg first
+    # multiboot line — no need for the caller to know per-distro
+    # paths (matters for Guix where the path includes a content
+    # hash like /gnu/store/<hash>-gnumach-<ver>/boot/gnumach).
+    # Distros that ship a gzipped kernel get the replacement
+    # gzipped to match (path suffix .gz triggers this).
     for mod in virtio virtio_pci virtio_blk \
                sd_mod scsi_mod \
                ext2 ext4; do
       modprobe "$mod" 2>/dev/null
     done
     sleep 1
-
-    # Kernel overlay is optional — if /shared/kernel.bin is absent
-    # (vanilla mode), we skip the kernel copy but still generate the
-    # clean grub.cfg below so the distro's bundled kernel boots on
-    # serial.  Both kernel.bin and target must be present together.
-    do_kernel_overlay=0
-    if [ -f /shared/kernel.bin ] && [ -f /shared/.sidekick-overlay-kernel-target ]; then
-      do_kernel_overlay=1
-      target_path=$(cat /shared/.sidekick-overlay-kernel-target)
-      target_path=${target_path#/}    # strip any leading /
-    fi
 
     # Find + mount the first writable ext partition (skip swap).
     part=
@@ -151,19 +144,6 @@ case "$SIDEKICK_OP" in
     done
     [ -n "$part" ] \
       || { echo "FATAL: no mountable partition for kernel overlay" >&2; sync; poweroff -f; }
-
-    if [ "$do_kernel_overlay" = "1" ]; then
-      # Target kernel must already exist — that's what the distro's
-      # GRUB config references.  Writing a new file at a wrong path
-      # wouldn't help (GRUB would still load from the original path).
-      [ -e "/mnt/$target_path" ] \
-        || { echo "FATAL: target kernel /mnt/$target_path missing — wrong path?" >&2;
-             sync; umount /mnt; poweroff -f; }
-      case "$target_path" in
-        *.gz) gzip -c < /shared/kernel.bin > "/mnt/$target_path" ;;
-        *)    cp /shared/kernel.bin "/mnt/$target_path" ;;
-      esac
-    fi
 
     # Generate a fresh, minimal /boot/grub/grub.cfg from scratch.
     # Pull ONLY the `multiboot` + `module` lines from the disk's
@@ -244,6 +224,26 @@ case "$SIDEKICK_OP" in
           }
         }
       ' "$flat_cfg")
+
+      # Auto-discover the kernel path from the extracted boot recipe.
+      # Field 2 of the first multiboot line is the kernel binary's
+      # absolute path on the disk's fs (e.g. /boot/gnumach-1.8-486-up.gz
+      # for Debian, /gnu/store/<hash>-gnumach.../boot/gnumach for Guix).
+      # If /shared/kernel.bin is present, replace that file with ours
+      # (gzip-wrap iff the path ends in .gz, matching what GRUB expects).
+      kernel_path=$(printf '%s\n' "$boot_lines" \
+        | awk '/^[[:space:]]*multiboot[[:space:]]/{print $2; exit}')
+      kernel_path=${kernel_path#/}    # strip any leading /
+
+      if [ -f /shared/kernel.bin ] && [ -n "$kernel_path" ]; then
+        [ -e "/mnt/$kernel_path" ] \
+          || { echo "FATAL: target kernel /mnt/$kernel_path missing — grub.cfg references a non-existent path?" >&2;
+               sync; umount /mnt; poweroff -f; }
+        case "$kernel_path" in
+          *.gz) gzip -c < /shared/kernel.bin > "/mnt/$kernel_path" ;;
+          *)    cp /shared/kernel.bin "/mnt/$kernel_path" ;;
+        esac
+      fi
 
       # Three sections so the source stays readably-indented:
       #   - header (heredoc with $part_num substitution)

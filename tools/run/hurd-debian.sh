@@ -47,21 +47,10 @@ hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$Q
 
 # Our-kernel path: replace the distro's kernel inside the overlay
 # with ours, then boot the disk normally — Debian's GRUB picks up
-# our binary at its known path and feeds it to multiboot.
-#
-# Per-arch kernel path inside the disk (verified against the real
-# Debian Hurd images via orb-mounted ext2 — 2026-05-25):
-#   i686   → /boot/gnumach-1.8-486-up.gz
-#   x86_64 → /boot/gnumach-1.8-amd64-up.gz
-# Earlier guess was `boot/gnumach.gz` for i686; Debian doesn't ship
-# that symlink in the current image.  Sidekick aborts on missing
-# target, so the wrong name would just FATAL-out before booting.
-case "$TARGET" in
-  i686)   kernel_path="boot/gnumach-1.8-486-up.gz" ;;
-  x86_64) kernel_path="boot/gnumach-1.8-amd64-up.gz" ;;
-esac
-
-sidekick_overlay_kernel "$overlay" "$GNUMACH_BOOT_IMAGE" "$kernel_path"
+# our binary at its known path and feeds it to multiboot.  Sidekick
+# auto-discovers the target path from the disk's grub.cfg (works
+# uniformly across i686 / x86_64 / Guix store-hash paths).
+sidekick_overlay_kernel "$overlay" "$GNUMACH_BOOT_IMAGE"
 
 print_qemu_hint
 # -no-reboot halts qemu on guest reboot instead of cycling — lets us

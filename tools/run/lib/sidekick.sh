@@ -80,20 +80,21 @@ sidekick_extract() {
   touch "$stamp"
 }
 
-# sidekick_overlay_kernel <overlay> <kernel> <target_path>
+# sidekick_overlay_kernel <overlay> <kernel>
 #   Boot the sidekick with the overlay attached read-write; replace
-#   <target_path> inside the overlay's ext fs with <kernel>'s bytes
-#   (gzipped iff <target_path> ends in .gz).  Lets us reuse the
-#   distro's own grub.cfg + module chain instead of re-implementing
-#   it on the host side — we just swap the kernel binary, GRUB does
-#   the rest at boot.
+#   the kernel binary inside the overlay's ext fs with <kernel>'s
+#   bytes, then regenerate /boot/grub/grub.cfg with our serial-clean
+#   recipe.  The target kernel path is auto-discovered from the
+#   disk's existing grub.cfg multiboot line — caller doesn't need
+#   to know per-distro paths.  Gzipped iff the discovered path ends
+#   in .gz (matching what GRUB expects to load).
 #
 #   Idempotent — re-runs only when <kernel> or <overlay> is newer
 #   than the per-overlay stamp.  Note: a fresh overlay (the default,
 #   per RUN_KEEP_OVERLAY) always triggers a re-overlay since the
 #   stamp is per-overlay.
 sidekick_overlay_kernel() {
-  local overlay="$1" kernel="$2" target_path="$3"
+  local overlay="$1" kernel="$2"
   local stamp="$overlay.kernel-stamp"
 
   if [ -f "$stamp" ] && [ ! "$kernel" -nt "$stamp" ] && [ ! "$overlay" -nt "$stamp" ]; then
@@ -107,9 +108,8 @@ sidekick_overlay_kernel() {
   rm -rf "$work"
   mkdir -p "$work"
   cp -L "$kernel" "$work/kernel.bin"
-  printf '%s' "$target_path" > "$work/.sidekick-overlay-kernel-target"
 
-  echo "sidekick: overlaying kernel into $(basename "$overlay") at /$target_path …" >&2
+  echo "sidekick: overlaying kernel into $(basename "$overlay") …" >&2
   _sidekick_run "SIDEKICK_OP=overlay-kernel" "$work" \
     -drive "file=$overlay,if=virtio"
 
