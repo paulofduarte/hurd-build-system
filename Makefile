@@ -410,11 +410,30 @@ _PARENT_FLAGS := $(filter -%,$(_PARENT_ARGV))
 #   - Leading `+` marks the recipe as a recursive-make invocation so GNU
 #     make honours -n / -q correctly even though the recipe contains
 #     intermediate (non-make) commands.
+# `nix develop -i` runs the inner shell with a clean env (the `-i`
+# flag is "ignore" / isolated), so any plain env var from the caller
+# gets dropped on its way into the recipe.  MAKEOVERRIDES only
+# carries `NAME=val` set on the make *command line*, not env vars —
+# so vars the user supplied in env form would silently vanish unless
+# we explicitly forward each one.  TARGET survives because it's used
+# at parse time (`.#$(TARGET)` selector) AND re-exported by the
+# dev-shell shellHook; everything else needs to be listed here.
+#
+# If you add a new run-time knob the scenario script reads from env
+# (RUN_*, SCENARIO-adjacent, etc.), add it here too or it'll silently
+# vanish for users who set it via env instead of `make NAME=val`.
+_RUN_PASSTHROUGH := \
+  SCENARIO=$(SCENARIO) \
+  RUN_VANILLA=$(RUN_VANILLA) \
+  RUN_ACCEL=$(RUN_ACCEL) \
+  RUN_KEEP_OVERLAY=$(RUN_KEEP_OVERLAY) \
+  RUN_ARGS=$(RUN_ARGS)
+
 _dispatch:
 	+@$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  develop -i .#$(TARGET) \
 	  --command make --no-print-directory $(_PARENT_FLAGS) \
-	    $(filter-out TARGET=%,$(MAKEOVERRIDES)) $(_BUILD_GOALS)
+	    $(filter-out TARGET=%,$(MAKEOVERRIDES)) $(_RUN_PASSTHROUGH) $(_BUILD_GOALS)
 
 $(_BUILD_GOALS): _dispatch
 	@:
