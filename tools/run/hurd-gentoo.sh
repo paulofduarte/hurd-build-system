@@ -6,6 +6,16 @@
 # distro's grub.cfg references modules via `configfile entry_hurd.cfg`;
 # the sidekick's grub.cfg regenerator flattens that indirection
 # before extracting the boot recipe.
+#
+# Known image issue (TARGET=x86_64 only — i686 boots cleanly):
+# the amd64 preview image's openrc hangs in the boot runlevel after
+# the `servers` service errors out.  Root cause: rumpdisk's bundled
+# NetBSD rump kernel probes the entire PCI bus and tries to attach
+# the e1000 NIC (wm0), which fails on rumpdisk's tight memory budget;
+# openrc's network scripts then loop on siocgifflags forever.  Image
+# bug, not a harness bug — same userland hits the same wall under
+# both inject and vanilla, and Gentoo's own wiki flags amd64 as
+# "less stable so far than x86" (wiki.gentoo.org/wiki/Project:Hurd).
 set -euo pipefail
 . "$(dirname "$0")/lib/common.sh"
 . "$(dirname "$0")/lib/arch-flags.sh"
