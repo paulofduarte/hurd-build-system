@@ -155,6 +155,12 @@
             export TARGET=${name}
             export GNUMACH_HOST=${target.crossSystem}
             export MIG_TARGET=${target.migTarget}
+            # NIX_TARGET is the shell-side marker the Makefile uses to
+            # detect a target/shell mismatch.  Distinct from TARGET so
+            # `make TARGET=other` inside a wrong-target shell can still
+            # be diagnosed (cmdline TARGET= overrides the env TARGET that
+            # `printenv` sees, so we'd otherwise think they match).
+            export NIX_TARGET=${name}
             ${if target.platform != null
               then "export GNUMACH_PLATFORM=${target.platform}"
               else "unset GNUMACH_PLATFORM"}

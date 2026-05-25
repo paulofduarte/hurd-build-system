@@ -350,11 +350,21 @@ ifndef _SHORTCIRCUIT
 # ---- Decide whether dispatch is needed ----
 # Outside shell → dispatch.
 # Inside shell with mismatched TARGET → dispatch to nest.
+# We compare TARGET (the user's desired target) against NIX_TARGET
+# (a separate shellHook export, NOT against TARGET via env) because
+# command-line `make TARGET=X` overrides $TARGET in subprocess envs
+# too — so `$(shell printenv TARGET)` from inside a wrong-target
+# shell would return the OVERRIDDEN value, mask the mismatch, and
+# silently build with the wrong toolchain.  NIX_TARGET isn't a
+# Makefile variable so cmdline overrides don't reach it.
+# Older shells without NIX_TARGET set fall through to NEED_DISPATCH
+# (empty $(_NIX_TARGET) != any TARGET value), which re-enters with
+# a current flake that exports it.
 ifndef IN_NIX_SHELL
 NEED_DISPATCH := yes
 else
-_ENV_TARGET := $(shell printenv TARGET)
-ifneq ($(TARGET),$(_ENV_TARGET))
+_NIX_TARGET := $(shell printenv NIX_TARGET)
+ifneq ($(TARGET),$(_NIX_TARGET))
 NEED_DISPATCH := yes
 endif
 endif
