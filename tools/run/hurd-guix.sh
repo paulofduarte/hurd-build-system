@@ -21,7 +21,13 @@ set -euo pipefail
 
 scenario_check_target "hurd-guix" "x86_64 i686"
 arch_qemu_for_target "$TARGET"
-QEMU_MACHINE="-M q35"            # Guix qcow2 won't boot on i440fx — override default
+# (Experiment 2026-05-25: -M q35 was previously forced because the
+# Guix qcow2 wouldn't boot on i440fx, but that observation was made
+# under Guix's original grub.cfg with gfxterm + themes.  With our
+# minimal regenerated cfg the i440fx default may be fine — and is
+# preferable here because q35's 6-port ICH9-AHCI drags gnumach's
+# in-kernel SATA probe to ~3 min on empty ports.  Restore if Guix
+# fails to boot on i440fx.)
 arch_apply_accel_if_requested    # appends -accel to QEMU_MACHINE if RUN_ACCEL=1 + arch match
 
 extra_qemu_args=("$@")           # capture RUN_ARGS pass-through
