@@ -62,8 +62,16 @@ arch_apply_accel_if_requested() {
     *)             host_arch="$(uname -m)" ;;
   esac
 
-  if [ "$host_arch" != "$TARGET" ]; then
-    echo "RUN_ACCEL=1 ignored: TARGET=$TARGET differs from host arch ($host_arch). Falling back to TCG." >&2
+  # Compat matrix — which guests can each host accelerate?
+  #   x86_64 host:  x86_64 + i686 (32-bit is a subset; same /dev/kvm)
+  #   i686   host:  i686 only (32-bit host can't run 64-bit guests)
+  #   aarch64 host: aarch64 only (different ISA family from x86)
+  local accel_ok=0
+  case "$host_arch:$TARGET" in
+    x86_64:x86_64|x86_64:i686|i686:i686|aarch64:aarch64) accel_ok=1 ;;
+  esac
+  if [ "$accel_ok" != "1" ]; then
+    echo "RUN_ACCEL=1 ignored: host $host_arch cannot accelerate TARGET=$TARGET. Falling back to TCG." >&2
     return 0
   fi
 
