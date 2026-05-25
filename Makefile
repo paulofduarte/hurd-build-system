@@ -420,20 +420,39 @@ _PARENT_FLAGS := $(filter -%,$(_PARENT_ARGV))
 # dev-shell shellHook; everything else needs to be listed here.
 #
 # If you add a new run-time knob the scenario script reads from env
-# (RUN_*, SCENARIO-adjacent, etc.), add it here too or it'll silently
-# vanish for users who set it via env instead of `make NAME=val`.
+# (RUN_*, SCENARIO-adjacent, etc.), add it here AND to
+# _RUN_PASSTHROUGH_NAMES — otherwise it'll silently vanish for users
+# who set it via env instead of `make NAME=val`.
+
+# Tiny make-isms so we can backslash-escape embedded spaces (needed
+# for RUN_ARGS="-monitor none" style values to survive as a single
+# argv token into the inner make).
+_NULL :=
+_SP   := $(_NULL) $(_NULL)
+
 _RUN_PASSTHROUGH := \
   SCENARIO=$(SCENARIO) \
   RUN_VANILLA=$(RUN_VANILLA) \
   RUN_ACCEL=$(RUN_ACCEL) \
   RUN_KEEP_OVERLAY=$(RUN_KEEP_OVERLAY) \
-  RUN_ARGS=$(RUN_ARGS)
+  RUN_ARGS=$(subst $(_SP),\$(_SP),$(RUN_ARGS))
+
+# We intentionally do NOT forward $(MAKEOVERRIDES) here.  Two
+# reasons: (1) every user-facing knob we have today is already in
+# _RUN_PASSTHROUGH, and (2) MAKEOVERRIDES escapes embedded spaces
+# with a literal backslash that survives shell tokenization but
+# NOT make's own $(filter-out) — meaning we can't reliably filter
+# out the duplicate without splitting `RUN_ARGS=-monitor\ none`
+# into `RUN_ARGS=-monitor\` (filtered) + `none` (kept → leaks as
+# a target name).  Dropping MAKEOVERRIDES sidesteps both problems.
+# If we ever add a new cmdline-only knob the inner make needs,
+# add it to _RUN_PASSTHROUGH alongside everything else.
 
 _dispatch:
 	+@$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  develop -i .#$(TARGET) \
 	  --command make --no-print-directory $(_PARENT_FLAGS) \
-	    $(filter-out TARGET=%,$(MAKEOVERRIDES)) $(_RUN_PASSTHROUGH) $(_BUILD_GOALS)
+	    $(_RUN_PASSTHROUGH) $(_BUILD_GOALS)
 
 $(_BUILD_GOALS): _dispatch
 	@:
