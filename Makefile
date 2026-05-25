@@ -588,25 +588,27 @@ check: check-toolchain check-mach
 #                RUN_VANILLA is meaningless and mach is always required
 #                — this guard prevents the cryptic "could not load
 #                kernel image" qemu error from RUN_VANILLA=1 SCENARIO=boot.
-#   sidekick   — needed by hurd-* scenarios for module extraction
-#                (Gentoo/Guix) AND for grub-mkrescue ISO assembly when
-#                booting our 64-bit gnumach (TARGET=x86_64 inject).
+#   sidekick   — needed for any scenario that has to wrap our
+#                64-bit gnumach in a GRUB-bootable ISO (TARGET=x86_64
+#                + boot OR hurd-debian — qemu's -kernel rejects 64-bit
+#                ELFs, see D18), AND for module extraction from qcow2s
+#                (hurd-gentoo, hurd-guix regardless of TARGET).
 #                Debian i686 inject skips it (Debian publishes
-#                standalone modules + the i686 ELF is multiboot1-loadable
-#                so no ISO needed).  Vanilla mode skips it for every
-#                Hurd scenario.
+#                standalone modules + i686 ELF is multiboot1-loadable).
+#                Vanilla mode skips it for every Hurd scenario.
 #
 # The expression evaluates at Makefile-parse time.  Cells:
-#   RUN_VANILLA=1 + hurd-*                        → empty
-#   non-vanilla boot                              → mach
-#   non-vanilla hurd-debian + TARGET=i686         → mach
-#   non-vanilla hurd-debian + TARGET=x86_64       → mach sidekick (mkiso)
-#   non-vanilla hurd-{gentoo,guix} + any TARGET   → mach sidekick
+#   RUN_VANILLA=1 + hurd-*                          → empty
+#   boot + TARGET=i686/aarch64                      → mach
+#   boot + TARGET=x86_64                            → mach sidekick (mkiso)
+#   non-vanilla hurd-debian + TARGET=i686           → mach
+#   non-vanilla hurd-debian + TARGET=x86_64         → mach sidekick (extract+mkiso)
+#   non-vanilla hurd-{gentoo,guix} + any TARGET     → mach sidekick
 _RUN_PREREQS := \
   $(if $(and $(filter 1,$(RUN_VANILLA)),$(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO))),, \
     mach \
     $(if $(filter hurd-gentoo hurd-guix,$(SCENARIO)),sidekick, \
-      $(if $(and $(filter hurd-debian,$(SCENARIO)),$(filter x86_64,$(TARGET))),sidekick)))
+      $(if $(and $(filter x86_64,$(TARGET)),$(filter boot hurd-debian,$(SCENARIO))),sidekick)))
 
 # Each run is NOT idempotent, so no _SENTINEL entry — every invocation
 # re-enters dispatch and re-checks `mach` (skipped if fresh).
