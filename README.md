@@ -161,17 +161,17 @@ RUN_ACCEL=1 make run                                # -accel hvf/kvm when host m
 
 | Scenario | Supported TARGETs | What it boots |
 |---|---|---|
-| `boot` | `aarch64`, `x86_64`, `i686` | Bare kernel via `-kernel`; idles or panics on no init |
-| `hurd-debian` | `x86_64`, `i686` | Our kernel + Debian's published standalone modules + Debian disk (x86_64 boots via sidekick-built GRUB ISO; i686 via direct `-kernel`/`-initrd`) |
-| `hurd-gentoo` | `x86_64`, `i686` | Our kernel + modules extracted from Gentoo qcow2 (sidekick, one-time); x86_64 boots via sidekick-built GRUB ISO |
-| `hurd-guix` | `x86_64`, `i686` | Our kernel + modules extracted from Guix qcow2; needs `-M q35`; x86_64 boots via sidekick-built GRUB ISO |
+| `boot` | `aarch64`, `x86_64`, `i686` | Bare kernel: i686/aarch64 via direct `-kernel`; x86_64 via sidekick-built GRUB ISO (qemu's `-kernel` rejects 64-bit ELFs) |
+| `hurd-debian` | `x86_64`, `i686` | Sidekick overlays our gnumach onto Debian's bundled kernel path inside a qcow2 overlay + regenerates a serial-clean grub.cfg; disk's own GRUB drives multiboot |
+| `hurd-gentoo` | `x86_64`, `i686` | Same kernel-overlay shape; x86_64 image hangs in openrc (known image bug) |
+| `hurd-guix` | `x86_64`, `i686` | Same shape; needs `-M q35`; Guix CI usually 404s the x86_64 qcow2 (aggressive GC) |
 
-**Modifier flags** (env, all opt-in):
+**Modifier flags** (env or `make NAME=val`, all opt-in):
 
 | Flag | Effect |
 |---|---|
-| `RUN_VANILLA=1` | Boot the distro's bundled kernel via internal GRUB (Hurd scenarios only) |
-| `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); requires host arch == `TARGET` |
+| `RUN_VANILLA=1` | Boot the distro's bundled kernel instead of ours (Hurd scenarios only; sidekick still regenerates grub.cfg for serial output) |
+| `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); x86_64 hosts accelerate both x86_64 and i686 targets, others require host arch == `TARGET` |
 | `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists) |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`) |
 

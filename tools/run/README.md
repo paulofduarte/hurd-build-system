@@ -92,7 +92,9 @@ name to the `sidekick` prereq filter in the parent Makefile's
 
 ## Modifier flags
 
-All env-style, all opt-in:
+All opt-in.  Either env-form (`RUN_VANILLA=1 make run …`) or make
+command-line form (`make run RUN_VANILLA=1 …`) works — see *Dispatch
+passthrough* below for why.
 
 | Flag | Effect |
 |---|---|
@@ -100,6 +102,35 @@ All env-style, all opt-in:
 | `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); requires host arch == `TARGET`, falls back to TCG with a warning otherwise |
 | `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists; default discards) |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`, `-d int,cpu_reset`) |
+
+### Dispatch passthrough — adding a new env knob
+
+`make run` dispatches through `nix develop -i .#$(TARGET)` to enter
+the per-arch nix dev shell.  The `-i` flag means "isolated" — the
+inner shell starts with a clean env, so arbitrary env vars set by
+the caller are wiped on the way in.
+
+Two things survive:
+
+1. **The dev-shell shellHook's exports.**  Per-target nix shells
+   re-export `TARGET`, `TARGET_CC`, `MIG_TARGET`, `NIX_TARGET`,
+   `CFLAGS`, etc.  That's why `TARGET=i686 make run` works without
+   needing explicit forwarding — the outer make parses `.#$(TARGET)`
+   to select the shell, and the shell rebuilds the env.
+
+2. **Variables explicitly forwarded by the dispatch recipe.**  See
+   `_RUN_PASSTHROUGH` in the parent `Makefile` — currently
+   `SCENARIO`, `RUN_VANILLA`, `RUN_ACCEL`, `RUN_KEEP_OVERLAY`,
+   `RUN_ARGS`.  Outer-make expansion captures the value (env or
+   command line) and re-injects it as a command-line override into
+   the inner make, surviving nix's wipe.
+
+**If you add a new env knob that the scenario script reads, add it
+to `_RUN_PASSTHROUGH` too.**  Otherwise env-form invocations
+(`MY_FLAG=1 make run …`) will silently drop your flag and the
+scenario gets defaults — exactly the bug pattern that demoted
+vanilla mode to inject mode for a few weeks before this comment
+existed.
 
 ### `RUN_ACCEL=1` — risks and compat matrix
 
