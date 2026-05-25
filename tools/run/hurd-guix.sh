@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # SCENARIO=hurd-guix — Guix childhurd; hybrid-extract inject; needs -M q35.
+#
+# TODO: migrate to the kernel-overlay approach used by hurd-debian /
+# hurd-gentoo.  Blocked on the Guix kernel path containing a store
+# hash (/gnu/store/<hash>-gnumach-<ver>/boot/gnumach), which the
+# sidekick overlay-kernel op currently doesn't glob-resolve.  Two
+# possible fixes: (a) extend sidekick to accept glob patterns in
+# target_path, (b) discover the path host-side via an extra sidekick
+# extract pass that returns the resolved kernel path.
 # URL uses Cuirass's /search/latest/image endpoint (auto-resolves to latest
 # successful build with a fetchable artefact; never goes stale).
 #

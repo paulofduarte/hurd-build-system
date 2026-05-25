@@ -24,15 +24,27 @@ _sidekick_check_artefacts() {
 #   (9p share, no-reboot, 256 MB).  qemu-system-x86_64 is hardcoded —
 #   the helper VM is always x86_64 Linux regardless of host arch (see
 #   D13 in the design doc).
+#
+#   All qemu output (SeaBIOS, iPXE, Alpine kernel boot, /init script)
+#   is captured to a log under $shared/.  Only dumped to the user's
+#   terminal if qemu exits non-zero — keeps the visible flow focused
+#   on the actual Hurd boot, not the sidekick's prep work.
 _sidekick_run() {
   local append_extra="$1" shared="$2"
   shift 2
+  local log="$shared/.sidekick-qemu.log"
   qemu-system-x86_64 -nographic -m 256 -no-reboot \
     -kernel "$SIDEKICK_KERNEL" \
     -initrd "$SIDEKICK_INITRD" \
-    -append "console=ttyS0 $append_extra" \
+    -append "console=ttyS0 quiet loglevel=0 $append_extra" \
     -virtfs "local,path=$shared,mount_tag=shared,security_model=mapped-xattr,id=shared" \
-    "$@"
+    "$@" > "$log" 2>&1
+  local rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "sidekick: qemu exited $rc — full log:" >&2
+    cat "$log" >&2
+  fi
+  return $rc
 }
 
 # sidekick_extract <qcow2> <out_dir> <files>
@@ -65,6 +77,74 @@ sidekick_extract() {
   # every Hurd distro produces ext2fs.static; its presence + non-empty
   # size is a reliable "worked" signal.
   [ -s "$outdir/ext2fs.static" ] || die "sidekick extract failed: $outdir/ext2fs.static missing/empty (qemu exited 0 but /init likely errored — check EXTRACT_FILES paths against the distro qcow2 layout)"
+  touch "$stamp"
+}
+
+# sidekick_overlay_kernel <overlay> <kernel> <target_path>
+#   Boot the sidekick with the overlay attached read-write; replace
+#   <target_path> inside the overlay's ext fs with <kernel>'s bytes
+#   (gzipped iff <target_path> ends in .gz).  Lets us reuse the
+#   distro's own grub.cfg + module chain instead of re-implementing
+#   it on the host side — we just swap the kernel binary, GRUB does
+#   the rest at boot.
+#
+#   Idempotent — re-runs only when <kernel> or <overlay> is newer
+#   than the per-overlay stamp.  Note: a fresh overlay (the default,
+#   per RUN_KEEP_OVERLAY) always triggers a re-overlay since the
+#   stamp is per-overlay.
+sidekick_overlay_kernel() {
+  local overlay="$1" kernel="$2" target_path="$3"
+  local stamp="$overlay.kernel-stamp"
+
+  if [ -f "$stamp" ] && [ ! "$kernel" -nt "$stamp" ] && [ ! "$overlay" -nt "$stamp" ]; then
+    return 0
+  fi
+
+  _sidekick_check_artefacts
+
+  local work
+  work="$(dirname "$overlay")/sidekick-work"
+  rm -rf "$work"
+  mkdir -p "$work"
+  cp -L "$kernel" "$work/kernel.bin"
+  printf '%s' "$target_path" > "$work/.sidekick-overlay-kernel-target"
+
+  echo "sidekick: overlaying kernel into $(basename "$overlay") at /$target_path …" >&2
+  _sidekick_run "SIDEKICK_OP=overlay-kernel" "$work" \
+    -drive "file=$overlay,if=virtio"
+
+  rm -rf "$work"
+  touch "$stamp"
+}
+
+# sidekick_prepare_grub <overlay>
+#   Vanilla-mode helper: same sidekick op as overlay-kernel, but
+#   without writing a kernel.  Just regenerates the disk's
+#   /boot/grub/grub.cfg with our serial + timeout=0 + colour
+#   overrides so the distro's bundled kernel boots cleanly under
+#   -nographic.  Idempotent on overlay mtime.
+sidekick_prepare_grub() {
+  local overlay="$1"
+  local stamp="$overlay.grub-stamp"
+
+  if [ -f "$stamp" ] && [ ! "$overlay" -nt "$stamp" ]; then
+    return 0
+  fi
+
+  _sidekick_check_artefacts
+
+  local work
+  work="$(dirname "$overlay")/sidekick-work"
+  rm -rf "$work"
+  mkdir -p "$work"
+  # No kernel.bin / target file → /init skips the kernel-overlay step
+  # but still regenerates grub.cfg.
+
+  echo "sidekick: regenerating grub.cfg in $(basename "$overlay") for serial boot …" >&2
+  _sidekick_run "SIDEKICK_OP=overlay-kernel" "$work" \
+    -drive "file=$overlay,if=virtio"
+
+  rm -rf "$work"
   touch "$stamp"
 }
 

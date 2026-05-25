@@ -117,6 +117,131 @@ case "$SIDEKICK_OP" in
     umount /mnt
     ;;
 
+  overlay-kernel)
+    # Replace a kernel binary inside an attached qcow2 overlay with
+    # /shared/kernel.bin.  Host writes the target path into
+    # /shared/.sidekick-overlay-kernel-target.  Distros that ship a
+    # gzipped kernel get the replacement gzipped to match.
+    for mod in virtio virtio_pci virtio_blk \
+               sd_mod scsi_mod \
+               ext2 ext4; do
+      modprobe "$mod" 2>/dev/null
+    done
+    sleep 1
+
+    # Kernel overlay is optional — if /shared/kernel.bin is absent
+    # (vanilla mode), we skip the kernel copy but still generate the
+    # clean grub.cfg below so the distro's bundled kernel boots on
+    # serial.  Both kernel.bin and target must be present together.
+    do_kernel_overlay=0
+    if [ -f /shared/kernel.bin ] && [ -f /shared/.sidekick-overlay-kernel-target ]; then
+      do_kernel_overlay=1
+      target_path=$(cat /shared/.sidekick-overlay-kernel-target)
+      target_path=${target_path#/}    # strip any leading /
+    fi
+
+    # Find + mount the first writable ext partition (skip swap).
+    part=
+    for p in /dev/vd[a-z][0-9]*; do
+      [ -b "$p" ] || continue
+      if mount "$p" /mnt 2>/dev/null; then
+        part="$p"
+        break
+      fi
+    done
+    [ -n "$part" ] \
+      || { echo "FATAL: no mountable partition for kernel overlay" >&2; sync; poweroff -f; }
+
+    if [ "$do_kernel_overlay" = "1" ]; then
+      # Target kernel must already exist — that's what the distro's
+      # GRUB config references.  Writing a new file at a wrong path
+      # wouldn't help (GRUB would still load from the original path).
+      [ -e "/mnt/$target_path" ] \
+        || { echo "FATAL: target kernel /mnt/$target_path missing — wrong path?" >&2;
+             sync; umount /mnt; poweroff -f; }
+      case "$target_path" in
+        *.gz) gzip -c < /shared/kernel.bin > "/mnt/$target_path" ;;
+        *)    cp /shared/kernel.bin "/mnt/$target_path" ;;
+      esac
+    fi
+
+    # Generate a fresh, minimal /boot/grub/grub.cfg from scratch.
+    # Pull ONLY the `multiboot` + `module` lines from the disk's
+    # existing first non-recovery menuentry — that's the distro's
+    # verified boot recipe.  Hardcode everything else (insmod, set
+    # root, serial, timeout, terminal) from our knowledge of the
+    # mount.  No load_video / gfxterm / themes / recordfail leak
+    # through, so nothing emits ANSI colour or VGA-init code.
+    #
+    # Critical: Debian's grub.cfg splits long `module` lines across
+    # multiple lines with backslash continuations.  The awk joins
+    # them before emitting.  Verified against the real disk's cfg
+    # via orb (2026-05-25).
+    #
+    # Idempotent: gated on the `# sidekick-generated` marker.
+    grub_cfg=/mnt/boot/grub/grub.cfg
+    if [ -f "$grub_cfg" ] && ! grep -q "^# sidekick-generated" "$grub_cfg"; then
+      # Partition index from the device we mounted (e.g. /dev/vda2 → 2)
+      # — GRUB's BIOS naming maps to (hd0,msdos<N>) for an IDE disk.
+      part_num=$(echo "$part" | sed 's|.*[a-z]||')
+
+      boot_lines=$(awk '
+        /^menuentry / && !/recovery mode/ && !found { found=1; in_body=1; prev=""; next }
+        in_body && /^}/ { if (prev != "") emit(prev); exit }
+        in_body {
+          line = $0
+          sub(/^[[:space:]]+/, "", line)
+          if (line ~ /\\$/) {
+            sub(/[[:space:]]*\\$/, " ", line)
+            prev = prev line
+            next
+          }
+          if (prev != "") { prev = prev line; emit(prev); prev = "" }
+          else            { emit(line) }
+        }
+        function emit(line) {
+          if (line ~ /^multiboot[[:space:]]/) {
+            if (line !~ /console=com0/) line = line " console=com0"
+            print "  " line
+          } else if (line ~ /^module[[:space:]]/) {
+            print "  " line
+          }
+        }
+      ' "$grub_cfg")
+
+      # Three sections so the source stays readably-indented:
+      #   - header (heredoc with $part_num substitution)
+      #   - boot_lines (printf; lines already carry "  " prefix from awk)
+      #   - footer (quoted heredoc so \033 reaches GRUB literally)
+      {
+        cat <<EOF
+# sidekick-generated: minimal cfg for -nographic boot
+serial --unit=0 --speed=115200
+terminal_input serial
+terminal_output serial
+# Match highlight to normal so GRUB's "Welcome to GRUB!" banner
+# doesn't ANSI-invert to black-on-white (white background bleeds
+# into the host terminal and persists).
+set color_normal=light-gray/black
+set color_highlight=white/black
+set timeout=0
+
+menuentry "hurd" {
+  insmod part_msdos
+  insmod ext2
+  set root='hd0,msdos$part_num'
+EOF
+        printf '%s\n' "$boot_lines"
+        cat <<'EOF'
+}
+EOF
+      } > "$grub_cfg"
+    fi
+
+    sync
+    umount /mnt
+    ;;
+
   mkiso)
     # Host prepares /shared/iso-staging/ with the gnumach binary and
     # the modules to bake into the ISO, plus /shared/iso-grub.cfg
