@@ -269,6 +269,7 @@ menuentry "hurd" {
 EOF
         printf '%s\n' "$boot_lines"
         cat <<'EOF'
+  echo -e -n "\033[0m"
 }
 EOF
       } > "$grub_cfg"
