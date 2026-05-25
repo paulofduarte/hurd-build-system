@@ -46,4 +46,5 @@ sidekick_overlay_kernel "$overlay" "$GNUMACH_BOOT_IMAGE" "$kernel_path"
 print_qemu_hint
 exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2 \
+  -no-reboot \
   "${extra_qemu_args[@]}"

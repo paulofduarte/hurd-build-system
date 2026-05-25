@@ -175,6 +175,7 @@ hurd_exec_with_our_kernel() {
     -initrd "$modules" \
     -append "$cmdline" \
     -drive file="$overlay",format=qcow2,if=ide \
+    -no-reboot \
     "$@"
 }
 
@@ -266,5 +267,6 @@ _hurd_exec_via_iso() {
     -boot order=d \
     -cdrom "$iso" \
     -drive file="$overlay",format=qcow2,if=ide \
+    -no-reboot \
     "$@"
 }

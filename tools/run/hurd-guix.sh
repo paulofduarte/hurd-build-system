@@ -57,6 +57,7 @@ hurd_make_overlay "$qcow2" "$overlay" qcow2
 # QEMU_MACHINE="-M q35" (+ any -accel) is read here too — single source of truth.
 hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2 \
+  -no-reboot \
   "${extra_qemu_args[@]}"
 
 # Default: extract modules then boot OUR kernel.  Same dynamic-exec

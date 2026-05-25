@@ -32,16 +32,22 @@ if [ "$TARGET" = "x86_64" ]; then
   )
   sidekick_make_iso "$iso" "$staging" "$grub_cfg"
 
+  # -no-reboot: gnumach's `boot` test prints "Hello" then exits.  Without
+  # this, qemu cycles back to GRUB and the user sees a phantom second
+  # boot instead of the "exit at PASS" they expected.
   print_qemu_hint
   exec "$QEMU" -nographic $QEMU_MACHINE -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
     -boot order=d \
     -cdrom "$iso" \
+    -no-reboot \
     "${extra_qemu_args[@]}"
 fi
 
 # i686 / aarch64: direct -kernel works fine.
+# -no-reboot per the rationale above.
 print_qemu_hint
 exec "$QEMU" -nographic $QEMU_MACHINE -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
   -kernel "$GNUMACH_BOOT_IMAGE" \
   -append "console=$QEMU_CONSOLE" \
+  -no-reboot \
   "${extra_qemu_args[@]}"
