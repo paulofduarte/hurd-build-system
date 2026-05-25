@@ -74,7 +74,44 @@ MIG_BUILD     := $(WORK)/mig/$(TARGET)
 GNUMACH_CONFIGURED := $(GNUMACH_BUILD)/config.status
 MIG_CONFIGURED     := $(MIG_BUILD)/config.status
 GNUMACH_KERNEL     := $(GNUMACH_BUILD)/gnumach.elf
+# Bootable kernel image — the stripped Image qemu's -kernel consumes.
+# GNUMACH_KERNEL (.elf) is the un-stripped linker output we use as the
+# build sentinel; on aarch64 qemu silently hangs if given the .elf, so
+# the harness must point -kernel at the stripped image instead.
+GNUMACH_BOOT_IMAGE := $(GNUMACH_BUILD)/gnumach
 MIG_INSTALLED      := $(TOOLCHAIN)/bin/$(MIG)
+
+# Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
+# `packages.<system>.sidekick` output — see tools/sidekick/default.nix
+# and tools/sidekick/init.sh).  Used for ext2 module extraction
+# (Gentoo/Guix) and grub-mkrescue ISO assembly (x86_64 inject mode).
+SIDEKICK_KERNEL := $(TOOLCHAIN)/sidekick/vmlinuz
+SIDEKICK_INITRD := $(TOOLCHAIN)/sidekick/initramfs.cpio.gz
+SIDEKICK_STAMP  := $(TOOLCHAIN)/sidekick/.stamp
+
+# Hurd distro image URLs — referenced by tools/run/hurd-*.sh.
+# Naming uses our build-system convention (X86_64 / I686); where the
+# distro uses its own arch nomenclature, the mapping lives ONLY inside
+# the URL string.
+# Debian: `latest/hurd-{amd64,i386}/debian-hurd.img.tar.gz` is a versionless
+# 302-redirect to the most recently published dated image (e.g.
+# debian-hurd-amd64-YYYYMMDD.img.tar.gz).  Same trade-off as Gentoo — the
+# cached copy doesn't auto-refresh; `rm -rf work/test-images/debian/<TARGET>/`
+# forces a re-fetch.  Standalone modules (ext2fs.static, exec.static) live
+# in the same dir.  Note: Debian does NOT publish ld.so.1 standalone, and
+# doesn't need it — exec.static is fully statically linked.
+HURD_DEBIAN_X86_64_URL := https://cdimage.debian.org/cdimage/ports/latest/hurd-amd64/debian-hurd.img.tar.gz
+HURD_DEBIAN_I686_URL   := https://cdimage.debian.org/cdimage/ports/latest/hurd-i386/debian-hurd.img.tar.gz
+HURD_GENTOO_X86_64_URL := https://distfiles.gentoo.org/experimental/amd64/hurd/hurd-x86_64-preview.qcow2
+HURD_GENTOO_I686_URL   := https://distfiles.gentoo.org/experimental/x86/hurd/hurd-i686-preview.qcow2
+# Guix: /search/latest/image is Cuirass's auto-latest endpoint — server-side
+# redirect to the most recent successful build with a fetchable artefact.
+# `system:x86_64-linux` refers to the BUILD HOST (Guix only operates x86_64-linux
+# build farms for Hurd images), NOT the target arch — the target arch is
+# encoded only in the qcow2 filename.  hurd64-barebones.qcow2 artefacts are
+# aggressively GC'd by Guix CI; expect 500 most of the time for x86_64.
+HURD_GUIX_I686_URL     := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd-barebones.qcow2
+HURD_GUIX_X86_64_URL   := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd64-barebones.qcow2
 
 # Stamps we touch ourselves after invoking gnumach's `make install*` steps.
 # We don't anchor on the installed files directly because gnumach's install
@@ -99,6 +136,9 @@ help:
 	@echo "  check            run all upstream test suites (== check-toolchain + check-mach)"
 	@echo "  check-toolchain  run MIG's 'make check' (host-side codegen tests)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
+	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
+	@echo "  run-help         show all 'make run' options (TARGET/SCENARIO/RUN_*)"
+	@echo "  sidekick         build the helper VM (x86_64 Alpine, used by Hurd scenarios)"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(TARGET)/ (just this target)"
 	@echo "  mrproper         rm -rf work/ + toolchain/ + all dist/ + all gitignored files"
@@ -144,6 +184,38 @@ mrproper:
 	git -C $(GNUMACH_SRC) clean -fdX
 	git -C $(MIG_SRC)     clean -fdX
 
+# ---- sidekick (always-on, arch-independent) ----
+# Builds the x86_64 Alpine helper VM the harness uses for operations
+# darwin can't do natively — ext2 module extraction (Gentoo/Guix) and
+# grub-mkrescue ISO assembly (x86_64 inject mode for all three Hurd
+# scenarios).  Output is identical x86_64 Alpine on every build host
+# (no cross-compilation — we fetch prebuilt Alpine APKs), so the
+# initramfs is byte-identical on darwin / linux / arm64 / x86_64.
+# See tools/sidekick/{default.nix,packages.nix,init.sh}.
+#
+# Stamp-file pattern (matches HEADERS_STAMP / DIST_MACH_STAMP
+# convention): one recipe produces both SIDEKICK_KERNEL and
+# SIDEKICK_INITRD.  Make 3.81 lacks grouped-targets (`&:`, Make 4.3+)
+# so listing both files as a target would race under `-j`; using a
+# stamp as the sole real target avoids that.
+.PHONY: sidekick
+sidekick: $(SIDEKICK_STAMP)
+
+$(SIDEKICK_STAMP): tools/sidekick/default.nix tools/sidekick/packages.nix tools/sidekick/init.sh
+	@mkdir -p $(dir $(SIDEKICK_KERNEL))
+	@echo "  SIDEKICK  building helper VM (x86_64 Alpine + grub-mkrescue + busybox)…"
+	$(NIX) --extra-experimental-features 'nix-command flakes' \
+	  build .#sidekick \
+	  -o $(TOOLCHAIN)/sidekick/result
+	cp -f $(TOOLCHAIN)/sidekick/result/vmlinuz             $(SIDEKICK_KERNEL)
+	cp -f $(TOOLCHAIN)/sidekick/result/initramfs.cpio.gz   $(SIDEKICK_INITRD)
+	@touch $@
+
+# Empty rule: artefact files exist because the stamp recipe produced
+# them.  Tells Make how to satisfy a dependency on the artefact paths
+# without re-running the build.
+$(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
+
 # ============================================================
 # Categorize goals & decide whether to dispatch through nix.
 # ============================================================
@@ -152,7 +224,11 @@ mrproper:
 _GOALS := $(or $(MAKECMDGOALS),all)
 
 # Goals that need the cross-toolchain (i.e. are NOT served by always-on rules).
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help,$(_GOALS))
+# `sidekick` is filtered out here so standalone `make sidekick` invocations
+# don't enter the dev shell — its nix build is arch-independent.  When pulled
+# in as a prereq of `run` (which DOES dispatch), it still runs inside the
+# dev shell as part of the inner-make recipe.
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND
@@ -350,7 +426,7 @@ $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#aarch64' (or .#x86_64 / .#x86_64-xen / .#i686 / .#i686-xen))))
 
 .PHONY: all dist prepare dist-headers toolchain mach dist-mach \
-        check check-toolchain check-mach
+        check check-toolchain check-mach run run-help
 
 # Explicit default — `help` (defined above) would otherwise win the
 # "first non-dot target" race.
@@ -486,6 +562,76 @@ check-mach: mach
 endif
 
 check: check-toolchain check-mach
+
+# ---- run ----
+# `make run TARGET=<arch> SCENARIO=<name>` — ad-hoc qemu launch against
+# the kernel we just built.  Architecture comes from TARGET (same
+# convention as everything else in this build); SCENARIO selects what
+# to do with the built kernel:
+#
+#   boot          bare kernel via qemu -kernel (all arches)
+#   hurd-debian   Debian Hurd userland (x86_64/i686, direct-inject)
+#   hurd-gentoo   Gentoo Hurd userland (x86_64/i686, hybrid-extract)
+#   hurd-guix     Guix childhurd       (x86_64/i686, hybrid-extract)
+#
+# Modifier flags:
+#   RUN_VANILLA=1       boot the distro's bundled kernel (Hurd only)
+#   RUN_ACCEL=1         -accel hvf/kvm when host arch matches TARGET
+#   RUN_KEEP_OVERLAY=1  reuse the per-run qcow2 overlay across runs
+#   RUN_ARGS="..."      extra flags appended to qemu (e.g., "-s -S")
+#
+# Prereqs depend on (SCENARIO, RUN_VANILLA):
+#   mach       — required by all scenarios EXCEPT the
+#                "RUN_VANILLA=1 + Hurd scenario" combination (vanilla
+#                Hurd boots the distro's bundled kernel — no need to
+#                build ours).  For `boot` (or any unrecognized scenario)
+#                RUN_VANILLA is meaningless and mach is always required
+#                — this guard prevents the cryptic "could not load
+#                kernel image" qemu error from RUN_VANILLA=1 SCENARIO=boot.
+#   sidekick   — needed by hurd-* scenarios for module extraction
+#                (Gentoo/Guix) AND for grub-mkrescue ISO assembly when
+#                booting our 64-bit gnumach (TARGET=x86_64 inject).
+#                Debian i686 inject skips it (Debian publishes
+#                standalone modules + the i686 ELF is multiboot1-loadable
+#                so no ISO needed).  Vanilla mode skips it for every
+#                Hurd scenario.
+#
+# The expression evaluates at Makefile-parse time.  Cells:
+#   RUN_VANILLA=1 + hurd-*                        → empty
+#   non-vanilla boot                              → mach
+#   non-vanilla hurd-debian + TARGET=i686         → mach
+#   non-vanilla hurd-debian + TARGET=x86_64       → mach sidekick (mkiso)
+#   non-vanilla hurd-{gentoo,guix} + any TARGET   → mach sidekick
+_RUN_PREREQS := \
+  $(if $(and $(filter 1,$(RUN_VANILLA)),$(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO))),, \
+    mach \
+    $(if $(filter hurd-gentoo hurd-guix,$(SCENARIO)),sidekick, \
+      $(if $(and $(filter hurd-debian,$(SCENARIO)),$(filter x86_64,$(TARGET))),sidekick)))
+
+# Each run is NOT idempotent, so no _SENTINEL entry — every invocation
+# re-enters dispatch and re-checks `mach` (skipped if fresh).
+run: $(_RUN_PREREQS)
+	@GNUMACH_BOOT_IMAGE="$(GNUMACH_BOOT_IMAGE)" \
+	 TARGET="$(TARGET)" \
+	 WORK="$(WORK)" \
+	 RUN_VANILLA="$(RUN_VANILLA)" \
+	 RUN_ACCEL="$(RUN_ACCEL)" \
+	 RUN_KEEP_OVERLAY="$(RUN_KEEP_OVERLAY)" \
+	 SIDEKICK_KERNEL="$(SIDEKICK_KERNEL)" \
+	 SIDEKICK_INITRD="$(SIDEKICK_INITRD)" \
+	 HURD_DEBIAN_X86_64_URL="$(HURD_DEBIAN_X86_64_URL)" \
+	 HURD_DEBIAN_I686_URL="$(HURD_DEBIAN_I686_URL)" \
+	 HURD_GENTOO_X86_64_URL="$(HURD_GENTOO_X86_64_URL)" \
+	 HURD_GENTOO_I686_URL="$(HURD_GENTOO_I686_URL)" \
+	 HURD_GUIX_I686_URL="$(HURD_GUIX_I686_URL)" \
+	 HURD_GUIX_X86_64_URL="$(HURD_GUIX_X86_64_URL)" \
+	 ./tools/run/dispatch.sh "$(SCENARIO)" $(RUN_ARGS)
+
+# `run-help` has no prereqs — dispatch.sh handles --help before any
+# env validation, so the help text works from a clean checkout without
+# a built kernel.
+run-help:
+	@./tools/run/dispatch.sh --help
 
 endif # NEED_DISPATCH
 

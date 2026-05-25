@@ -144,15 +144,39 @@ nix develop             # picks the target matching your host CPU
 make                    # now uses the make inside the shell
 ```
 
-### 3. Run (aarch64 only, for now)
+### 3. Run
 
 ```sh
-make dist                                            # stage outputs into dist/aarch64/
-nix develop -i .#aarch64 --command \
-  qemu-system-aarch64 -machine virt,accel=tcg -cpu cortex-a53 -m 1G -nographic \
-    -kernel dist/aarch64/boot/gnumach \
-    -append "gnumach cmdline goes here"
+make run                                            # boot scenario, host's default TARGET
+make run TARGET=aarch64 SCENARIO=boot               # explicit; bare kernel via qemu -kernel
+make run TARGET=x86_64 SCENARIO=hurd-debian         # Debian Hurd amd64 + our x86_64 kernel
+make run TARGET=i686 SCENARIO=hurd-gentoo           # Gentoo Hurd i686 + our i686 kernel
+make run TARGET=i686 SCENARIO=hurd-guix             # Guix childhurd 32-bit + our i686 kernel
+RUN_VANILLA=1 make run TARGET=i686 SCENARIO=hurd-debian   # boot distro's bundled kernel instead
+RUN_ARGS="-s -S" make run TARGET=aarch64            # qemu waits for gdb on :1234
+RUN_ACCEL=1 make run                                # -accel hvf/kvm when host matches TARGET
 ```
+
+**Scenarios:**
+
+| Scenario | Supported TARGETs | What it boots |
+|---|---|---|
+| `boot` | `aarch64`, `x86_64`, `i686` | Bare kernel via `-kernel`; idles or panics on no init |
+| `hurd-debian` | `x86_64`, `i686` | Our kernel + Debian's published standalone modules + Debian disk (x86_64 boots via sidekick-built GRUB ISO; i686 via direct `-kernel`/`-initrd`) |
+| `hurd-gentoo` | `x86_64`, `i686` | Our kernel + modules extracted from Gentoo qcow2 (sidekick, one-time); x86_64 boots via sidekick-built GRUB ISO |
+| `hurd-guix` | `x86_64`, `i686` | Our kernel + modules extracted from Guix qcow2; needs `-M q35`; x86_64 boots via sidekick-built GRUB ISO |
+
+**Modifier flags** (env, all opt-in):
+
+| Flag | Effect |
+|---|---|
+| `RUN_VANILLA=1` | Boot the distro's bundled kernel via internal GRUB (Hurd scenarios only) |
+| `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); requires host arch == `TARGET` |
+| `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists) |
+| `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`) |
+
+See `make run-help` for the cheat sheet, and `tools/run/README.md` for
+how the harness is structured and how to add new scenarios.
 
 ## Working with the submodules
 
@@ -195,6 +219,10 @@ fresh clones get only `origin`.
 | `mach` | build the gnumach kernel binary |
 | `dist-mach` | install gnumach into `dist/$(TARGET)/` |
 | `dist` | install everything (currently `dist-mach`; will grow) |
+| `check` | run all upstream test suites (`check-toolchain` + `check-mach`) |
+| `run` | boot the built kernel in qemu — see the [Run](#3-run) section for scenarios/flags |
+| `run-help` | print all `make run` options (`TARGET`/`SCENARIO`/`RUN_*`) |
+| `sidekick` | build the helper VM (x86_64 Alpine — used by Hurd scenarios for ext2 extraction + grub-mkrescue ISO assembly; auto-built on demand) |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(TARGET)/` (current target only) |
 | `mrproper` | `rm -rf work/ toolchain/ dist/` + `git clean -fdX` on src trees |
@@ -213,11 +241,15 @@ fresh clones get only `origin`.
 │   ├── gnumach/<target>/
 │   └── mig/<target>/
 ├── toolchain/             # installed cross-MIG  (gitignored)
-│   └── bin/<target>-gnu-mig
+│   ├── bin/<target>-gnu-mig
+│   └── sidekick/          # helper-VM artefacts (vmlinuz + initramfs.cpio.gz)
 ├── dist/<target>/         # final install prefix (gitignored)
 │   ├── boot/gnumach
 │   ├── include/
 │   └── .{headers,mach}-installed       # our staleness stamps
+├── tools/                 # build-time utilities (in-repo)
+│   ├── run/               # `make run` harness scenarios + libs
+│   └── sidekick/          # nix derivation for the helper VM (Alpine fetch)
 └── LICENSE                # GPL-2.0
 ```
 

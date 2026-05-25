@@ -90,7 +90,8 @@
             pkgs.texinfo
             pkgs.git           # read-only ops + `git clean -fdX` for mrproper
             pkgs.nix           # so the Makefile can re-dispatch into a different target shell
-            pkgs.qemu          # provides qemu-system-* for running the kernel
+            pkgs.qemu          # provides qemu-system-* (incl. qemu-img) for running the kernel
+            pkgs.curl          # tools/run/hurd-*.sh fetches distro images over HTTPS
             pkgs.which         # gnumach's run-qemu.sh test runner uses `which` to gate test execution
             pkgs.starship      # nicer prompt inside the dev shell
             pkgs.bash-completion
@@ -230,5 +231,22 @@
         in
         shells // { default = shells.${defaultName}; }
       );
+
+      # sidekick: x86_64 Linux helper VM (Alpine-based) used by the
+      # `make run` harness for operations darwin can't do natively —
+      # ext2 module extraction (Gentoo/Guix) and grub-mkrescue ISO
+      # assembly (x86_64 inject mode for all three Hurd scenarios).
+      #
+      # Same Alpine binaries on every host (x86_64 regardless of build
+      # arch) so the resulting kernel+initramfs is byte-identical on
+      # darwin / linux / arm64 / x86_64 — true cross-host reproducibility.
+      #
+      # Build: `nix build .#sidekick`
+      # Output: result/vmlinuz + result/initramfs.cpio.gz
+      packages = forAllSystems (system: {
+        sidekick = import ./tools/sidekick/default.nix {
+          pkgs = nixpkgs.legacyPackages.${system};
+        };
+      });
     };
 }
