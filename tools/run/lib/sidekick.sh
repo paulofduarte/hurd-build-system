@@ -3,9 +3,16 @@
 # Reads $SIDEKICK_KERNEL, $SIDEKICK_INITRD from env (exported by the
 # parent Makefile's `run` recipe).
 #
-# Two operations exposed:
-#   sidekick_extract     pull files out of a qcow2's ext2 root
-#   sidekick_make_iso    wrap our gnumach + modules in a GRUB-bootable ISO
+# Three operations exposed:
+#   sidekick_overlay_kernel  overlay our kernel into a qcow2 +
+#                             regenerate the disk's grub.cfg
+#                             (inject mode — every Hurd scenario)
+#   sidekick_prepare_grub    regenerate the disk's grub.cfg only,
+#                             no kernel overlay (vanilla mode —
+#                             every Hurd scenario)
+#   sidekick_make_iso        wrap kernel + modules in a GRUB-bootable
+#                             ISO (used by boot scenario on x86_64
+#                             where qemu's -kernel rejects 64-bit ELFs)
 
 # _sidekick_check_artefacts
 #   Internal: die early with an actionable error if the kernel/initramfs
@@ -45,39 +52,6 @@ _sidekick_run() {
     cat "$log" >&2
   fi
   return $rc
-}
-
-# sidekick_extract <qcow2> <out_dir> <files>
-#   Runs the helper VM with SIDEKICK_OP=extract; copies the given files
-#   (space-separated relative paths, globs OK) from the qcow2's ext2
-#   root into <out_dir>.  Idempotent — re-runs only when
-#   $out_dir/.extract-stamp is older than the qcow2 or absent.
-sidekick_extract() {
-  local qcow2="$1" outdir="$2" files="$3"
-  local stamp="$outdir/.extract-stamp"
-  mkdir -p "$outdir"
-  [ -f "$stamp" ] && [ "$stamp" -nt "$qcow2" ] && return 0
-
-  _sidekick_check_artefacts
-
-  # Pass the file list via the 9p share, NOT the kernel cmdline.  Linux
-  # truncates the cmdline at COMMAND_LINE_SIZE (256 bytes on x86_64).
-  # The amd64 hurd-debian chain alone (4 module paths) exceeds this,
-  # producing a half-quoted EXTRACT_FILES that crashed /init's eval.
-  # Verified empirically 2026-05-25.
-  printf '%s\n' "$files" > "$outdir/.sidekick-extract-files"
-
-  echo "sidekick: extracting modules from $(basename "$qcow2") …" >&2
-  _sidekick_run "SIDEKICK_OP=extract" "$outdir" \
-    -drive "file=$qcow2,if=virtio,readonly=on"
-
-  rm -f "$outdir/.sidekick-extract-files"
-
-  # qemu can exit 0 even when /init failed silently.  Sanity-check:
-  # every Hurd distro produces ext2fs.static; its presence + non-empty
-  # size is a reliable "worked" signal.
-  [ -s "$outdir/ext2fs.static" ] || die "sidekick extract failed: $outdir/ext2fs.static missing/empty (qemu exited 0 but /init likely errored — check EXTRACT_FILES paths against the distro qcow2 layout)"
-  touch "$stamp"
 }
 
 # sidekick_overlay_kernel <overlay> <kernel>

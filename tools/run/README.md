@@ -14,17 +14,25 @@ you touch any of it.
 ```
 tools/run/
 ├── dispatch.sh             # entry point — validates env, exec's scenario
-├── boot.sh                 # SCENARIO=boot: bare kernel via -kernel
-├── hurd-debian.sh          # SCENARIO=hurd-debian: direct-inject
-├── hurd-gentoo.sh          # SCENARIO=hurd-gentoo: hybrid-extract inject
-├── hurd-guix.sh            # SCENARIO=hurd-guix: hybrid-extract inject
+├── boot.sh                 # SCENARIO=boot: bare kernel (direct -kernel,
+│                           #   or GRUB-on-ISO via sidekick for x86_64)
+├── hurd-debian.sh          # SCENARIO=hurd-debian: kernel-overlay inject
+├── hurd-gentoo.sh          # SCENARIO=hurd-gentoo: kernel-overlay inject
+├── hurd-guix.sh            # SCENARIO=hurd-guix: kernel-overlay inject
 ├── README.md               # this file
 └── lib/
     ├── common.sh           # die(), scenario_check_target(), print_qemu_hint()
     ├── arch-flags.sh       # arch_qemu_for_target(), arch_apply_accel_if_requested()
-    ├── hurd-common.sh      # fetch/overlay/vanilla/exec helpers
-    └── sidekick.sh         # host-side sidekick-VM orchestrator (extract + mkiso)
+    ├── hurd-common.sh      # fetch/overlay/vanilla helpers (no exec — see below)
+    └── sidekick.sh         # host-side sidekick-VM orchestrator
+                            #   (overlay_kernel + prepare_grub + make_iso)
 ```
+
+All three Hurd scenarios share the same shape: fetch the distro qcow2,
+overlay our kernel into it via the sidekick (which also regenerates a
+serial-clean grub.cfg from the disk's existing recipe), then boot it
+with plain `qemu -drive`.  No more host-side `-kernel`/`-initrd`
+construction or per-distro module-chain reverse engineering.
 
 The sidekick helper VM itself lives in `tools/sidekick/` — see the
 [Sidekick helper VM](#sidekick-helper-vm) section below.
@@ -93,7 +101,7 @@ All env-style, all opt-in:
 | `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists; default discards) |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`, `-d int,cpu_reset`) |
 
-### `RUN_ACCEL=1` — risks
+### `RUN_ACCEL=1` — risks and compat matrix
 
 This flag overrides the upstream-vetted pinned CPU model
 (`pentium3-v1` / `core2duo-v1` / `cortex-a72`) with `-cpu host`,
@@ -107,20 +115,45 @@ go fast" override at your own risk.
 If `RUN_ACCEL=1` produces a fresh gnumach panic that doesn't repro
 under TCG, that's useful upstream-bug data — worth filing.
 
+Compatibility matrix (host → accelerated targets):
+
+| host    | i686 | x86_64 | aarch64 |
+|---------|------|--------|---------|
+| x86_64  | ✓    | ✓      | ✗       |
+| i686    | ✓    | ✗      | ✗       |
+| aarch64 | ✗    | ✗      | ✓       |
+
+KVM/HVF on an x86_64 host accelerates both x86_64 and i686 guests
+(32-bit is a subset of 64-bit, same `/dev/kvm`).  All other cross-ISA
+combos fall back to TCG with a one-line warning.
+
 ## Sidekick helper VM
 
 The sidekick is a small x86_64 Linux VM the harness uses for
-operations darwin can't do natively. Two operations today, more easy
-to add later:
+operations darwin can't do natively (mounting/writing ext2 in a
+qcow2, running `grub-mkrescue`). Two operations today:
 
-- **`extract`**: mount a distro's qcow2 root and copy specific files
-  (the Hurd boot modules — `ext2fs.static`, `ld.so.1`, etc.) onto
-  a host-shared 9p mount. Used by `hurd-gentoo.sh` and `hurd-guix.sh`.
-- **`mkiso`**: assemble a GRUB-bootable ISO from our gnumach + the
-  extracted modules. Used by all three Hurd scenarios when
-  `TARGET=x86_64` (qemu's `-kernel` loader rejects 64-bit ELFs;
-  GRUB-on-ISO bypasses that via multiboot2). Called automatically
-  from inside `hurd_exec_with_our_kernel` when it detects `x86_64`.
+- **`overlay-kernel`**: mount the attached qcow2 read-write,
+  regenerate `/boot/grub/grub.cfg` from the distro's existing
+  recipe (serial-clean, minimal, with our `console=com0`), and —
+  if `/shared/kernel.bin` is present — overwrite the kernel file
+  at the path discovered from grub.cfg's first multiboot line.
+  Used by every Hurd scenario, in two modes:
+  - **inject** (`sidekick_overlay_kernel`): kernel.bin is our
+    gnumach; the overlay swaps it for the distro's bundled kernel.
+  - **vanilla** (`sidekick_prepare_grub`): no kernel.bin; only
+    the grub.cfg regen runs, so the distro's bundled kernel boots
+    cleanly on serial.
+- **`mkiso`**: assemble a GRUB-bootable ISO from a host-prepared
+  staging dir + grub.cfg.  Used by `boot.sh` on x86_64, where
+  qemu's `-kernel` rejects 64-bit ELFs (D18) and we wrap gnumach
+  in a tiny ISO instead.
+
+The `overlay-kernel` op also handles per-distro grub.cfg quirks:
+flattens `configfile` indirection (Gentoo splits modules into
+`entry_hurd.cfg`), preserves uppercase variable assignments in the
+menuentry body (Gentoo's `DISK=wd0 PART=1 DISKOPT=noide`), and
+joins backslash-continued module lines (Debian).
 
 ### How it's built
 
@@ -150,14 +183,20 @@ Output paths after `make sidekick`:
 `tools/sidekick/init.sh` is PID 1 inside the VM. It reads
 `SIDEKICK_OP=` from the kernel cmdline and dispatches:
 
-- `SIDEKICK_OP=extract EXTRACT_FILES="<paths>"`: mount /dev/vdb's
-  first ext{2,3,4} partition read-only, copy paths to /shared/.
+- `SIDEKICK_OP=overlay-kernel`: mount the first writable ext
+  partition on `/dev/vd*`, run the grub.cfg regen (flatten
+  `configfile` references, awk-extract `multiboot`/`module`/var
+  lines from the first non-recovery menuentry, emit a minimal
+  serial-clean cfg with our `console=com0` appended), and if
+  `/shared/kernel.bin` exists, copy it (gzipped iff the discovered
+  path ends in `.gz`) over the file at the disk's kernel path.
 - `SIDEKICK_OP=mkiso`: read `/shared/iso-staging/` + `/shared/iso-grub.cfg`,
   run `grub-mkrescue`, write `/shared/out.iso`.
 
 After the op completes, `/init` runs `poweroff -f`. The host's qemu
 process exits, control returns to the scenario script, output files
-are picked up from the host side of the 9p share.
+(grub.cfg in place inside the overlay; ISO on the 9p share) are
+ready to use.
 
 ### Why x86_64 even on aarch64 hosts
 
@@ -165,16 +204,15 @@ The sidekick is always x86_64 Linux regardless of host arch (per
 design D13). The `qemu-system-x86_64` invocation hard-codes that.
 Rationale:
 
-- For `extract`: the busybox/blkid reads ext2 bytes — doesn't care
-  what arch the qcow2 was compiled for.
+- For `overlay-kernel`: busybox/awk/gzip + ext2/4 read+write —
+  pure file ops, arch-agnostic.
 - For `mkiso`: `grub-mkrescue` manipulates files — also arch-agnostic.
-  And the ISO it produces boots an x86/x86_64 gnumach (the only
-  arches Hurd userland exists for today), so an x86 grub-bios is
-  what we need.
+  The ISO it produces boots an x86/x86_64 gnumach (the only arches
+  Hurd userland exists for today), so an x86 grub-bios is what we need.
 
 Running qemu-system-x86_64 under TCG on aarch64 is ~5× slower than
-native, but the sidekick runs once per (distro, TARGET) and the
-result is cached. Acceptable.
+native, but each op runs once per overlay and the result is cached
+via per-overlay stamps. Acceptable.
 
 ### Refresh after Alpine version bumps
 
@@ -265,3 +303,16 @@ Makefile only drops the `mach` dependency for `RUN_VANILLA=1` +
 Hurd scenarios, so boot still works in this case (just ignores the
 vanilla flag). This guards against the cryptic qemu "could not load
 kernel image" error from the alternative interpretation.
+
+### Known image issues per scenario
+
+- **`hurd-gentoo` + `TARGET=x86_64`** hangs in openrc's `servers`
+  service after rumpdisk's rump kernel fails to attach the qemu
+  e1000 NIC (`wm0`) — Gentoo's own wiki flags amd64 as "less stable
+  so far than x86".  i686 boots cleanly.  Image bug, not a harness
+  bug.  Comment in `hurd-gentoo.sh` for the full diagnosis.
+- **`hurd-guix` + `-M q35`** boots correctly but the visible serial
+  output stalls for ~3 minutes during gnumach's in-kernel SATA
+  probe across q35's 6 empty ICH9-AHCI ports.  q35 is mandatory
+  (Guix qcow2 won't boot on i440fx, tested), so the slow probe is
+  the accepted cost.  Boot does eventually complete.

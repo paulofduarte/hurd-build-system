@@ -2,17 +2,19 @@
 # /init for the sidekick helper VM.  PID 1 inside qemu.
 #
 # Operation is selected via the kernel cmdline:
-#   SIDEKICK_OP=extract  EXTRACT_FILES="<paths>"
-#       Mount /dev/vdb's first ext{2,3,4} partition read-only and copy
-#       the requested files (paths relative to that mount; globs OK)
-#       to the host-shared 9p mount.  Output filenames are
-#       basename-only — /shared/<basename>.
+#   SIDEKICK_OP=overlay-kernel
+#       Mount the attached qcow2 (read-write), optionally overlay
+#       /shared/kernel.bin onto the kernel path discovered from the
+#       disk's grub.cfg multiboot line, and regenerate a minimal
+#       /boot/grub/grub.cfg suitable for -nographic boot.  This is
+#       the every-Hurd-scenario path (inject when kernel.bin is
+#       present; vanilla grub-only when it isn't).
 #
 #   SIDEKICK_OP=mkiso
-#       Read /shared/iso-input.cfg (host-prepared) for the kernel +
-#       multiboot-module + GRUB-config layout, run grub-mkrescue, and
-#       write the result to /shared/out.iso.  Lets the host bypass
-#       qemu's multiboot1 32-bit-ELF restriction for x86_64 gnumach.
+#       Read /shared/iso-staging/ + /shared/iso-grub.cfg
+#       (host-prepared), run grub-mkrescue, and write the result to
+#       /shared/out.iso.  Used by the boot scenario on x86_64 to
+#       bypass qemu's multiboot1 32-bit-ELF restriction.
 
 set +e
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
@@ -36,10 +38,9 @@ mkdir -p /tmp /mnt /shared
 mount -t 9p -o trans=virtio,version=9p2000.L shared /shared \
   || { echo "FATAL: 9p mount of shared/ failed" >&2; sync; poweroff -f; }
 
-# Parse kernel cmdline into shell vars.  ONLY SIDEKICK_OP is read
-# here — file lists go via the 9p share (/shared/.sidekick-extract-files)
-# because Linux truncates the cmdline at 256 bytes, which the amd64
-# 4-module chain already overflows.
+# Parse kernel cmdline for SIDEKICK_OP.  Everything else the op
+# needs comes via the 9p share (/shared) because Linux truncates
+# the cmdline at COMMAND_LINE_SIZE (256 bytes on x86_64).
 for arg in $(cat /proc/cmdline); do
   case "$arg" in
     SIDEKICK_OP=*) eval "$arg" ;;
@@ -48,75 +49,6 @@ done
 
 SIDEKICK_OP=${SIDEKICK_OP:-}
 case "$SIDEKICK_OP" in
-  extract)
-    # Alpine's linux-virt kernel ships virtio bus + block + ext{2,3,4}
-    # as MODULES (not built-in).  PCI scan finds the virtio-block
-    # device, but without virtio_blk loaded nothing claims it — so
-    # /dev/vdb never appears and the partition scan finds nothing.
-    # Modprobe everything we need up front; failures are non-fatal
-    # because module names occasionally shift across kernel versions
-    # (e.g., virtio_pci vs virtio-pci), and the subsequent mount
-    # calls are the real correctness check.
-    for mod in virtio virtio_pci virtio_blk \
-               sd_mod scsi_mod \
-               ext2 ext4; do
-      modprobe "$mod" 2>/dev/null
-    done
-
-    # Give udev/devtmpfs a moment to populate /dev/vdb* after the
-    # virtio_blk driver binds — without this we sometimes race and
-    # find no partitions even though they're about to appear.
-    sleep 1
-
-    # Find + mount the first mountable partition.  Just try `mount -o ro`
-    # on each numbered virtio partition — kernel auto-detects ext2/3/4
-    # and rejects swap (gives "Invalid argument").  This is more robust
-    # than blkid pre-checks: busybox's `blkid -t TYPE=ext2 /dev/vda`
-    # (whole-disk-with-MBR) misbehaves and reports a false positive
-    # against the ext2 superblock nested inside the partition table,
-    # then the mount of the whole disk fails with "Invalid argument".
-    # Skipping the whole disk and just trying partitions avoids both
-    # problems.  All our supported distro images (Debian, Gentoo, Guix)
-    # use partitioned disks; an unpartitioned ext2 (raw FS at /dev/vda)
-    # would need a separate code path.
-    part=
-    for p in /dev/vd[a-z][0-9]*; do
-      [ -b "$p" ] || continue
-      if mount -o ro "$p" /mnt 2>/dev/null; then
-        part="$p"
-        break
-      fi
-    done
-    if [ -z "$part" ]; then
-      echo "FATAL: no mountable partition found on /dev/vd*[0-9]" >&2
-      echo "  available block devices:" >&2
-      ls -la /dev/vd* /dev/sd* 2>/dev/null | sed 's/^/    /' >&2
-      echo "  loaded modules:" >&2
-      lsmod 2>/dev/null | head -20 | sed 's/^/    /' >&2
-      sync; poweroff -f
-    fi
-
-    # Read the file list the host prepared on the 9p share.
-    [ -f /shared/.sidekick-extract-files ] \
-      || { echo "FATAL: /shared/.sidekick-extract-files missing — host orchestrator didn't write it" >&2; sync; poweroff -f; }
-    extract_files=$(cat /shared/.sidekick-extract-files)
-
-    # Copy each pattern to /shared/<basename>.  Globs are expanded by
-    # the shell after `cd /mnt`; empty expansions skipped silently.
-    # cp -L dereferences symlinks so we get the target's bytes
-    # (matters for things like /lib/ld.so.1 → ld-x86-64.so.1).
-    ( cd /mnt
-      for pattern in $extract_files; do
-        for f in $pattern; do
-          [ -e "$f" ] || continue
-          cp -L "$f" "/shared/$(basename "$f")"
-        done
-      done
-    )
-    sync
-    umount /mnt
-    ;;
-
   overlay-kernel)
     # Replace a kernel binary inside an attached qcow2 overlay with
     # /shared/kernel.bin AND regenerate grub.cfg.  The target kernel
@@ -301,7 +233,7 @@ EOF
 
   *)
     echo "FATAL: unknown SIDEKICK_OP=$SIDEKICK_OP" >&2
-    echo "       supported: extract, mkiso" >&2
+    echo "       supported: overlay-kernel, mkiso" >&2
     ;;
 esac
 
