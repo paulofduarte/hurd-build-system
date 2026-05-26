@@ -164,6 +164,7 @@ help:
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
 	@echo "  run-help         show all 'make run' options (TARGET/SCENARIO/RUN_*)"
 	@echo "  sidekick         build the helper VM (x86_64 Alpine, used by Hurd scenarios)"
+	@echo "  cache-push       push the $(TARGET) dev-shell closure to the project cachix cache"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(TARGET)/ (just this target)"
 	@echo "  mrproper         rm -rf work/ + toolchain/ + all dist/ + all gitignored files"
@@ -252,6 +253,45 @@ $(SIDEKICK_STAMP): tools/sidekick/default.nix tools/sidekick/packages.nix tools/
 # without re-running the build.
 $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
+# ---- cache-push (always-on, arch-independent) ----
+# Push the current TARGET's dev-shell closure to the project's cachix
+# cache.  Walks the closure explicitly (`nix path-info --recursive`)
+# rather than relying on `cachix watch-exec`'s "new paths since command
+# started" detection — so it correctly pushes toolchains that were
+# already in the store from earlier builds.  Use this whenever you've
+# bootstrapped a cross-toolchain locally (~20 min for cross-gcc) and
+# want collaborators to skip that rebuild on their machines.
+#
+# Scope is intentionally single-target: `make cache-push` pushes
+# `$(TARGET)` (default aarch64 on aarch64 hosts).  Want a different
+# target?  `make cache-push TARGET=i686` etc. — picking up the
+# existing TARGET-resolution logic from the top of this Makefile.
+# This avoids accidentally triggering a cross-arch toolchain build
+# for an arch you don't actively care about.
+#
+# Requires `cachix authtoken <token>` to have been run once on this
+# machine (token is per-user; push is authenticated, pull is anonymous).
+# Run from anywhere on the host — no dev-shell dispatch.
+_CACHE_NAME := hurd-build-system
+
+.PHONY: cache-push
+cache-push:
+	@command -v cachix >/dev/null 2>&1 || \
+	  { echo "cache-push: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
+	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
+	echo "==> Pushing dev-shell closure for $$system / $(TARGET) to '$(_CACHE_NAME)'"; \
+	shell=$$($(NIX) --accept-flake-config eval --raw \
+	  ".#devShells.$$system.$(TARGET).outPath" 2>/dev/null) || \
+	  { echo "    eval failed (is TARGET=$(TARGET) a valid flake output?)" >&2; exit 1; }; \
+	echo "  realising closure"; \
+	$(NIX) --accept-flake-config build --no-link \
+	  ".#devShells.$$system.$(TARGET).inputDerivation" >/dev/null 2>&1 || \
+	  { echo "    build failed" >&2; exit 1; }; \
+	echo "  pushing"; \
+	$(NIX) --accept-flake-config path-info --recursive "$$shell" 2>/dev/null \
+	  | cachix push $(_CACHE_NAME)
+	@echo "==> cache-push done"
+
 # ============================================================
 # Categorize goals & decide whether to dispatch through nix.
 # ============================================================
@@ -264,7 +304,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # don't enter the dev shell — its nix build is arch-independent.  When pulled
 # in as a prereq of `run` (which DOES dispatch), it still runs inside the
 # dev shell as part of the inner-make recipe.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND
