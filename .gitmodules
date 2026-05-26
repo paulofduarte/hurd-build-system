@@ -5,4 +5,4 @@
 [submodule "src/mig"]
 	path = src/mig
 	url = https://github.com/paulofduarte/mig.git
-	branch = cross-build-fixes
+	branch = cross-test-cpp
