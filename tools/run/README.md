@@ -321,10 +321,10 @@ implementation.
 
 qemu's `-kernel` consumes the stripped boot image
 (`$(WORK)/gnumach/<target>/gnumach`), not the un-stripped ELF
-(`gnumach.elf` in the same dir). On aarch64, giving qemu the ELF
-causes a silent hang — qemu can't parse it as a boot image. The
-parent Makefile defines `GNUMACH_BOOT_IMAGE` separately from
-`GNUMACH_KERNEL` (used as the build sentinel) for this reason.
+(`gnumach.elf` in the same dir, aarch64 only). On aarch64, giving
+qemu the ELF causes a silent hang — qemu can't parse it as a boot
+image. `GNUMACH_KERNEL` always points at the stripped `gnumach`;
+the harness never references `gnumach.elf`.
 
 ### Vanilla mode + boot scenario
 

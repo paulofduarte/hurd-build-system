@@ -1,0 +1,125 @@
+# GNU MIG — per-target cross-compiler derivations.
+#
+# Replaces the previous Makefile dance:
+#     autoreconf -i  +  CC=gcc TARGET_CPPFLAGS=-I<headers> ./configure
+#                       --target=<migTarget> --prefix=<TOOLCHAIN>
+#                    +  make && make install
+# with one nix derivation per target whose output is the per-target MIG
+# binary and its companion migcom under $out/{bin,libexec}.
+#
+# `doCheck = true` runs MIG's own `make check` (good/, bad/, generate-only/
+# subsuites — 12 tests on master/cross-test-cpp) inside the sandbox.
+# These exercise the host-side codegen path: cpp the .defs, run migcom,
+# compile the generated stubs.  The test_lib.sh harness (after the
+# cross-test-cpp fix landed) uses `$CC -E -x c` for the cpp step, so
+# preprocessing is target-aware — what makes cross-test reliable.
+#
+# Returned shape — one attribute per entry in `targets`, named
+# `mig-<name>`.  The root flake just merges what comes back into
+# `packages.<system>`.
+#
+# Per-target attrset fields (mirrors flake.nix):
+#   crossSystem : nixpkgs cross-system identifier — drives TARGET_CC
+#                 (the compiler that builds cpu.symc + compiles test stubs).
+#   migTarget   : the triple passed to ./configure --target=.  Also
+#                 used to compose the output binary name
+#                 (<migTarget>-mig + <migTarget>-migcom).
+#   platform    : unused by MIG (gnumach-side concern); accepted in
+#                 the attrset for symmetry with gnumach-headers.
+#
+# Source comes from ../../src/mig (the git submodule).  The root flake's
+# `inputs.self.submodules = true;` is what makes the submodule content
+# visible to the nix store at fingerprint time.
+#
+# `gnumachHeaders` is the attrset returned by toolchain/gnumach-headers
+# (the sibling sub-flake).  We look up "gnumach-headers-<name>" for the
+# matching target so cpu.sym sees <mach/message.h>.
+#
+# Build-time dependencies:
+#   - Native autotools (autoconf/automake/m4/perl/bison/flex/awk).
+#   - Native gcc for migcom itself (MIG is a build-host tool).
+#   - Cross cc for TARGET_CC (cpu.sym compilation + test-suite stub builds).
+#   - gnumach-headers for the target arch — TARGET_CPPFLAGS points at
+#     $gnumach-headers/include so cpu.symc sees <mach/message.h> etc.
+
+{ pkgs, lib, system, targets, gnumachHeaders }:
+
+let
+  mkOne = name: target:
+    let
+      gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
+      crossPkgs = import pkgs.path {
+        localSystem = { inherit system; };
+        crossSystem = target.crossSystem;
+      };
+      inherit (crossPkgs.stdenv) cc;
+      toolPrefix = cc.targetPrefix;
+    in
+    # Native stdenv: MIG itself is a host tool.  Cross tools come in via
+    # nativeBuildInputs + explicit env vars below.
+    pkgs.stdenv.mkDerivation {
+      pname   = "mig-${target.migTarget}";
+      version = "src";
+
+      src = ../../src/mig;
+
+      nativeBuildInputs = with pkgs; [
+        autoconf
+        automake
+        gnum4
+        perl
+        bison
+        flex
+        gawk
+      ] ++ [ crossPkgs.stdenv.cc ];  # the cross compiler used for TARGET_CC + tests
+
+      # Pinned at the same gnu17 the dev shell uses — keeps cross- and
+      # native-arch builds consistent.
+      CFLAGS = "-std=gnu17 -g -O2";
+
+      # autoreconf clean every time (same rationale as gnumach-headers).
+      preConfigure = ''
+        rm -f configure aclocal.m4
+        autoreconf -i
+
+        # MIG's cpu.symc is compiled by TARGET_CC; the resulting .symo's
+        # symbols are sed-extracted into cpu.h.  Without TARGET_CPPFLAGS
+        # pointing at gnumach's headers, that step can't find
+        # <mach/message.h>.
+        export TARGET_CPPFLAGS="-I${gnumach-headers}/include"
+        export TARGET_CC=${crossPkgs.stdenv.cc}/bin/${toolPrefix}gcc
+      '';
+
+      # --prefix is injected by stdenv's configurePhase (from $prefix=$out).
+      # Native stdenv already wires CC to the host gcc — TARGET_CC (exported
+      # in preConfigure) is what handles the cross-side cpu.symc compile.
+      configureFlags = [
+        "--target=${target.migTarget}"
+      ];
+
+      # Run MIG's host-side codegen test-suite inside the sandbox.
+      # AM_TESTS_ENVIRONMENT (tests/Makeconf.am) re-exports CC as
+      # $(TARGET_CC), so the test_lib.sh harness preprocesses with the
+      # target compiler — matches cross-build semantics.
+      doCheck = true;
+
+      # test_lib.sh compiles the generated -server.c / -user.c stubs with
+      # $CC $CFLAGS.  Those stubs `#include <mach/boolean.h>` etc., so the
+      # cross compiler needs the gnumach-headers include path on its search
+      # list at check time.  AM_TESTS_ENVIRONMENT (tests/Makeconf.am) only
+      # forwards SRCDIR/BUILDDIR/CC — not CFLAGS — so a bare env export
+      # wouldn't reach the test process.  Pass it via TESTS_ENVIRONMENT,
+      # which automake concatenates with AM_TESTS_ENVIRONMENT for each test.
+      checkFlags = [
+        "TESTS_ENVIRONMENT=CFLAGS=-I${gnumach-headers}/include"
+      ];
+
+      passthru = { inherit target; };
+
+      meta = with lib; {
+        description = "GNU MIG cross-compiler for ${target.migTarget}";
+        platforms = platforms.all;
+      };
+    };
+in
+lib.mapAttrs' (name: target: lib.nameValuePair "mig-${name}" (mkOne name target)) targets

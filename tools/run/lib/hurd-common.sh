@@ -1,6 +1,6 @@
 # Hurd-specific helpers — fetch, overlay, vanilla-vs-inject branch, exec.
 #
-# Reads $WORK, $TARGET, $GNUMACH_BOOT_IMAGE, $QEMU*, $RUN_* from env.
+# Reads $WORK, $TARGET, $GNUMACH_KERNEL, $QEMU*, $RUN_* from env.
 
 # hurd_cache_dir <distro> <target>
 #   Echoes $WORK/test-images/<distro>/<target>/, creating it as a side

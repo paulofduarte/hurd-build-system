@@ -50,7 +50,7 @@ hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$Q
 # our binary at its known path and feeds it to multiboot.  Sidekick
 # auto-discovers the target path from the disk's grub.cfg (works
 # uniformly across i686 / x86_64 / Guix store-hash paths).
-sidekick_overlay_kernel "$overlay" "$GNUMACH_BOOT_IMAGE"
+sidekick_overlay_kernel "$overlay" "$GNUMACH_KERNEL"
 
 print_qemu_hint
 # -no-reboot halts qemu on guest reboot instead of cycling — lets us

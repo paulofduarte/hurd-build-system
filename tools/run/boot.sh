@@ -21,12 +21,12 @@ if [ "$TARGET" = "x86_64" ]; then
   iso="$cache/boot.iso"
   rm -rf "$staging"
   mkdir -p "$staging"
-  cp -L "$GNUMACH_BOOT_IMAGE" "$staging/$(basename "$GNUMACH_BOOT_IMAGE")"
+  cp -L "$GNUMACH_KERNEL" "$staging/$(basename "$GNUMACH_KERNEL")"
 
   grub_cfg=$(
     printf 'set timeout=0\n'
     printf 'menuentry "boot" {\n'
-    printf '  multiboot /%s console=%s\n' "$(basename "$GNUMACH_BOOT_IMAGE")" "$QEMU_CONSOLE"
+    printf '  multiboot /%s console=%s\n' "$(basename "$GNUMACH_KERNEL")" "$QEMU_CONSOLE"
     printf '  boot\n'
     printf '}\n'
   )
@@ -47,7 +47,7 @@ fi
 # -no-reboot per the rationale above.
 print_qemu_hint
 exec "$QEMU" -nographic $QEMU_MACHINE -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
-  -kernel "$GNUMACH_BOOT_IMAGE" \
+  -kernel "$GNUMACH_KERNEL" \
   -append "console=$QEMU_CONSOLE" \
   -no-reboot \
   "${extra_qemu_args[@]}"

@@ -28,7 +28,7 @@ EOF
 fi
 
 : "${TARGET:?TARGET required (set by Makefile)}"
-: "${GNUMACH_BOOT_IMAGE:?GNUMACH_BOOT_IMAGE required (set by Makefile)}"
+: "${GNUMACH_KERNEL:?GNUMACH_KERNEL required (set by Makefile)}"
 : "${WORK:?WORK required (set by Makefile)}"
 
 scenario="${1:-boot}"
