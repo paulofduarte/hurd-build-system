@@ -1,6 +1,21 @@
 {
   description = "Cross-compilation environment for GNU Mach";
 
+  # Project-scoped binary cache for built artefacts (cross-toolchains,
+  # mig-<arch>, gnumach-headers-<arch>, dev-shell closures).  Anyone who
+  # uses this flake is offered the cache as an additional substituter;
+  # first-time users see a one-shot trust prompt from nix.  For non-
+  # interactive consumers (CI), pass `--accept-flake-config` or set
+  # `accept-flake-config = true` in nix.conf.
+  nixConfig = {
+    extra-substituters = [
+      "https://hurd-build-system.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
 
@@ -100,8 +115,6 @@
             pkgs.qemu          # provides qemu-system-* (incl. qemu-img) for running the kernel
             pkgs.curl          # tools/run/hurd-*.sh fetches distro images over HTTPS
             pkgs.which         # gnumach's run-qemu.sh test runner uses `which` to gate test execution
-            pkgs.starship      # nicer prompt inside the dev shell
-            pkgs.bash-completion
           ]
           # gnumach's kernel-side `make check` on x86 builds a multiboot
           # ISO with grub-mkrescue (which itself needs xorriso + mtools)
@@ -175,47 +188,10 @@
               then "export UBOOT_BIN=${pkgs.ubootQemuAarch64}/u-boot.bin"
               else "unset UBOOT_BIN"}
 
-            # nix develop -i isolates env vars but doesn't change IN_NIX_SHELL,
-            # so starship still shows "impure" even in a sandboxed shell. Detect
-            # pure mode by the tell-tale empty HOME and correct the label.
-            if [ -z "$HOME" ]; then
-              export IN_NIX_SHELL=pure
-            fi
-
-            # Nix pure shells default TERM to "dumb" which kills colour and
-            # most TUI features. Force a sane default.
-            export TERM=xterm-256color
-
             # Local toolchain — anything installed here (MIG, etc.) becomes
             # visible to the next configure run. Enter the dev shell from
             # the project root for this to resolve correctly.
             export PATH="$PWD/toolchain/bin:$PATH"
-
-            # Bash programmable completion.
-            if [ -r "${pkgs.bash-completion}/share/bash-completion/bash_completion" ]; then
-              source "${pkgs.bash-completion}/share/bash-completion/bash_completion"
-            fi
-
-            # Starship prompt.
-            eval "$(${pkgs.starship}/bin/starship init bash)"
-
-            # Compute the MIG label once, before the banner is printed.
-            mig=$(command -v ${target.migTarget}-mig 2>/dev/null)
-            mig_label=''${mig:+$(basename "$mig")}
-            mig_label=''${mig_label:-(build in work/mig)}
-
-            echo "========================================================"
-            echo " GNU Mach Cross-Build Environment"
-            echo " Target:    ${name} (--target=${target.migTarget})"
-            ${if target.platform != null
-              then ''echo " Platform:  ${target.platform} (--enable-platform)"''
-              else ""}
-            echo " Compiler:  $CC"
-            echo " TARGET_CC: $TARGET_CC"
-            echo " MIG:       $mig_label"
-            echo " CFLAGS:    $CFLAGS"
-            echo "========================================================"
-            echo "Type 'make' to build, 'make help' for the full target list."
           '';
         };
     in

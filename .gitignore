@@ -16,6 +16,11 @@
 # direnv / nix-direnv per-project state (profile gc-roots, env cache).
 /.direnv/
 
+# Makefile-managed gc-roots for `nix develop -i --profile` dispatch.
+# One entry per TARGET; kept out of .direnv/ so nix-direnv's reload
+# cleanup doesn't wipe them.
+/.gcroots/
+
 # Editor / OS noise
 .DS_Store
 *.swp
