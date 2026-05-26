@@ -13,6 +13,9 @@
 # Claude Code per-project state — keep it out of the repo
 /.claude/
 
+# direnv / nix-direnv per-project state (profile gc-roots, env cache).
+/.direnv/
+
 # Editor / OS noise
 .DS_Store
 *.swp

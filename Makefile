@@ -388,25 +388,18 @@ endif
 ifndef _SHORTCIRCUIT
 
 # ---- Decide whether dispatch is needed ----
-# Outside shell → dispatch.
-# Inside shell with mismatched TARGET → dispatch to nest.
-# We compare TARGET (the user's desired target) against NIX_TARGET
-# (a separate shellHook export, NOT against TARGET via env) because
-# command-line `make TARGET=X` overrides $TARGET in subprocess envs
-# too — so `$(shell printenv TARGET)` from inside a wrong-target
-# shell would return the OVERRIDDEN value, mask the mismatch, and
-# silently build with the wrong toolchain.  NIX_TARGET isn't a
-# Makefile variable so cmdline overrides don't reach it.
-# Older shells without NIX_TARGET set fall through to NEED_DISPATCH
-# (empty $(_NIX_TARGET) != any TARGET value), which re-enters with
-# a current flake that exports it.
-ifndef IN_NIX_SHELL
+# Always dispatch through `nix develop -i` unless this make IS the
+# dispatched inner make (signalled via _MAKE_INNER=1 on the recursive
+# call below).  Trade-off: every build pays ~200-500ms for the
+# isolated shell spawn; in exchange we get a hard guarantee that
+# nothing from the caller's environment leaks into the build — the
+# only inputs are what the dev shell explicitly declares.  Direnv,
+# host-installed tools, accidental `export`s — none of them can
+# perturb the build via this path.  The previous IN_NIX_SHELL +
+# NIX_TARGET trust check was bypassable by any caller that just
+# `export IN_NIX_SHELL=1`, so it was speed, not safety.
+ifndef _MAKE_INNER
 NEED_DISPATCH := yes
-else
-_NIX_TARGET := $(shell printenv NIX_TARGET)
-ifneq ($(TARGET),$(_NIX_TARGET))
-NEED_DISPATCH := yes
-endif
 endif
 
 ifdef NEED_DISPATCH
@@ -470,6 +463,18 @@ _PARENT_FLAGS := $(filter -%,$(_PARENT_ARGV))
 _NULL :=
 _SP   := $(_NULL) $(_NULL)
 
+# Persistent gc-root for the dispatched dev shell.  Matches nix-direnv's
+# naming convention (`.direnv/flake-profile-<sha1(flake_expr)>`) so a
+# direnv-driven entry into `.#$(TARGET)` and a `make`-driven dispatch
+# share the same gc-root — neither rebuilds after `nix-collect-garbage`
+# as long as the other has been used recently.  sha1sum (coreutils) is
+# preferred; fall back to shasum (BSD/macOS) so this works without
+# anything beyond a base POSIX system.
+# `\#` is Make's literal `#` (otherwise `#` starts a comment mid-line).
+_FLAKE_EXPR    := .\#$(TARGET)
+_FLAKE_HASH    := $(shell printf '%s\n' '$(_FLAKE_EXPR)' | (sha1sum 2>/dev/null || shasum) | cut -d' ' -f1)
+_FLAKE_PROFILE := .direnv/flake-profile-$(_FLAKE_HASH)
+
 _RUN_PASSTHROUGH := \
   SCENARIO=$(SCENARIO) \
   RUN_VANILLA=$(RUN_VANILLA) \
@@ -489,9 +494,10 @@ _RUN_PASSTHROUGH := \
 # add it to _RUN_PASSTHROUGH alongside everything else.
 
 _dispatch:
+	@mkdir -p $(dir $(_FLAKE_PROFILE))
 	+@$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  develop -i .#$(TARGET) \
-	  --command make --no-print-directory $(_PARENT_FLAGS) \
+	  develop -i --profile "$(_FLAKE_PROFILE)" .#$(TARGET) \
+	  --command make --no-print-directory _MAKE_INNER=1 $(_PARENT_FLAGS) \
 	    $(_RUN_PASSTHROUGH) $(_BUILD_GOALS)
 
 $(_BUILD_GOALS): _dispatch

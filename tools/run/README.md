@@ -113,8 +113,7 @@ the caller are wiped on the way in.
 Two things survive:
 
 1. **The dev-shell shellHook's exports.**  Per-target nix shells
-   re-export `TARGET`, `TARGET_CC`, `MIG_TARGET`, `NIX_TARGET`,
-   `CFLAGS`, etc.  That's why `TARGET=i686 make run` works without
+   re-export `TARGET`, `TARGET_CC`, `MIG_TARGET`, `CFLAGS`, etc.  That's why `TARGET=i686 make run` works without
    needing explicit forwarding — the outer make parses `.#$(TARGET)`
    to select the shell, and the shell rebuilds the env.
 
