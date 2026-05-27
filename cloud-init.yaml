@@ -63,23 +63,30 @@ write_files:
       # ---- 1. Install nix (multi-user, daemon-managed) ----
       EXTRA=(
         --extra-conf "experimental-features = nix-command flakes"
-        --extra-conf "trusted-users = @sudo"
-        # Pre-trust the project's cachix cache at the daemon level so
-        # `nix develop` doesn't prompt the user to allow the flake's
-        # `nixConfig.extra-substituters` on first run (which would
-        # hang non-interactive callers like direnv).  Values match
-        # the flake's nixConfig exactly — nix sees them as already
-        # configured and skips the trust prompt.
+        # @sudo on Debian/Ubuntu, @wheel on RHEL/Fedora/Arch — list
+        # both so this YAML works across distros.
+        --extra-conf "trusted-users = @sudo @wheel"
+        # Pre-trust the project's cachix cache + auto-accept flake
+        # nixConfig.  Together these make `nix develop` on the project
+        # flow through without the "do you want to allow this
+        # extra-substituter?" prompt (which non-interactive callers
+        # like direnv can't answer and would hang on).  The substituter
+        # entries match the flake's nixConfig; `accept-flake-config`
+        # opts into any flake's nixConfig declaration on this VM
+        # (acceptable for a single-purpose dev box).
+        --extra-conf "accept-flake-config = true"
         --extra-conf "extra-substituters = https://hurd-build-system.cachix.org"
         --extra-conf "extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE="
       )
-      # orbstack registers rosetta as a binfmt_misc handler inside
-      # x86_64 VMs running on Apple Silicon hosts.  Its presence is a
-      # reliable signal that seccomp BPF won't work — nix's
-      # filter-syscalls install fails with "Invalid argument".  Disable
-      # it on emulated VMs; native VMs keep the filter for stricter
-      # build sandboxing.
-      if [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
+      # Detect when we're running under emulation.  orbstack registers
+      # rosetta as a binfmt_misc handler in *both* directions:
+      #   - on an x86_64 VM (the rosetta marker is THE emulator)
+      #   - on an aarch64 VM (so x86_64 binaries inside the otherwise-
+      #     native VM can still run via rosetta translation)
+      # Only the first case actually needs filter-syscalls disabled
+      # — the second has a fully native aarch64 kernel that supports
+      # seccomp BPF normally.  Check `uname -m` to disambiguate.
+      if [ "$(uname -m)" = "x86_64" ] && [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
         EXTRA+=(--extra-conf "filter-syscalls = false")
       fi
       curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
