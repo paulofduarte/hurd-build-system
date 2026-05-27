@@ -76,8 +76,8 @@ write_files:
       # to the per-user profile of whoever invoked cloud-init (root),
       # which isn't what we want either.
       "$NIX" --extra-experimental-features 'nix-command flakes' \
-        --profile "$SYSTEM_PROFILE" \
         profile add \
+          --profile "$SYSTEM_PROFILE" \
           nixpkgs#cachix \
           nixpkgs#direnv \
           nixpkgs#nix-direnv \
