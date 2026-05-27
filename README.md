@@ -185,7 +185,7 @@ The submodule URLs in `.gitmodules`:
 | Submodule | URL | Tracked branch |
 |---|---|---|
 | `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port + its kernel test arms) | `aarch64-tests` |
-| `src/mig` | `https://github.com/paulofduarte/mig.git` (fork carrying the cross-build / test-harness fix) | `cross-build-fixes` |
+| `src/mig` | `https://github.com/paulofduarte/mig.git` (now tracking upstream-equivalent `master`) | `master` |
 
 The `aarch64-tests` branch is `aarch64-port` (the kernel-side port,
 nine commits on top of savannah master) plus six commits adding the
@@ -194,11 +194,16 @@ to both the port and the validated test machinery in one go; if you
 only want the kernel port without the test work, point the submodule
 at `aarch64-port` instead.
 
+`src/mig` previously tracked a `cross-build-fixes` branch carrying a
+`test_lib.sh` patch (preserving externally-supplied `CFLAGS`).  That
+fix has been merged upstream, so the fork now tracks plain `master`
+in lockstep with savannah.
+
 To advance a submodule to its branch's latest commit:
 
 ```sh
 git submodule update --remote src/gnumach           # follow aarch64-tests
-git submodule update --remote src/mig               # follow cross-build-fixes
+git submodule update --remote src/mig               # follow master
 ```
 
 Then `git add src/gnumach src/mig` from the project root and commit to
@@ -213,51 +218,61 @@ fresh clones get only `origin`.
 | Target | Action |
 |---|---|
 | `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
-| `prepare` | `autoreconf -i` on both source trees |
-| `dist-headers` | install gnumach public headers into `dist/$(TARGET)/include` |
-| `toolchain` | `dist-headers` + build & install MIG into `toolchain/` |
+| `prepare` | `autoreconf -i` on `src/gnumach` (MIG no longer needs local autoreconf — its nix derivation handles it) |
+| `dist-headers` | symlink the gnumach public headers from the nix-built `gnumach-headers-<TARGET>` package into `dist/$(TARGET)/include` |
+| `toolchain` | `dist-headers` + symlink the nix-built `mig-<TARGET>` wrapper into `toolchain/bin/<arch>-gnu-mig` |
 | `mach` | build the gnumach kernel binary |
 | `dist-mach` | install gnumach into `dist/$(TARGET)/` |
 | `dist` | install everything (currently `dist-mach`; will grow) |
-| `check` | run all upstream test suites (`check-toolchain` + `check-mach`) |
+| `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
+| `check-mach` | the actual kernel-tests recipe `check` delegates to |
 | `run` | boot the built kernel in qemu — see the [Run](#3-run) section for scenarios/flags |
 | `run-help` | print all `make run` options (`TARGET`/`SCENARIO`/`RUN_*`) |
 | `sidekick` | build the helper VM (x86_64 Alpine — used by Hurd scenarios for ext2 extraction + grub-mkrescue ISO assembly; auto-built on demand) |
+| `cache-push` | push the current `$(TARGET)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(TARGET)/` (current target only) |
-| `mrproper` | `rm -rf work/ toolchain/ dist/` + `git clean -fdX` on src trees |
+| `mrproper` | `rm -rf work/`, the toolchain build outputs (`toolchain/bin`, `toolchain/sidekick`, the `result-*` gc-roots, the per-target install stamps), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `toolchain/{gnumach-headers,mig}/` are preserved. |
 
 ## Directory layout
 
 ```
 .
-├── flake.nix              # Nix dev shells (per-target)
-├── flake.lock             # pinned nixpkgs (nixos-25.11)
-├── Makefile               # orchestration: dispatches through nix develop
+├── flake.nix                       # Nix dev shells + per-target packages
+├── flake.lock                      # pinned nixpkgs (nixos-25.11)
+├── Makefile                        # orchestration: always dispatches through `nix develop -i`
+├── cloud-init.yaml                 # bootstrap recipe for orb-style Linux VMs
+├── .envrc                          # nix-direnv hook (`use flake .#${TARGET:-aarch64}`)
 ├── src/
-│   ├── gnumach/           # submodule → paulofduarte/gnumach @ aarch64-tests
-│   └── mig/               # submodule → paulofduarte/mig @ cross-build-fixes
-├── work/                  # build directories  (gitignored)
-│   ├── gnumach/<target>/
-│   └── mig/<target>/
-├── toolchain/             # installed cross-MIG  (gitignored)
-│   ├── bin/<target>-gnu-mig
-│   └── sidekick/          # helper-VM artefacts (vmlinuz + initramfs.cpio.gz)
-├── dist/<target>/         # final install prefix (gitignored)
+│   ├── gnumach/                    # submodule → paulofduarte/gnumach @ aarch64-tests
+│   └── mig/                        # submodule → paulofduarte/mig @ master
+├── work/                           # local build directories (gitignored)
+│   └── gnumach/<target>/
+├── toolchain/                      # nix-driven toolchain artefacts
+│   ├── gnumach-headers/default.nix # per-target headers derivation (tracked)
+│   ├── gnumach-headers/result-*    # per-target gc-root symlinks (gitignored)
+│   ├── mig/default.nix             # per-target MIG derivation (tracked)
+│   ├── mig/result-*                # per-target gc-root symlinks (gitignored)
+│   ├── bin/<target>-gnu-mig        # PATH-discovery symlinks to the mig/result-*
+│   ├── sidekick/                   # helper-VM artefacts (vmlinuz + initramfs.cpio.gz)
+│   └── .mig-<target>-installed     # Makefile staleness stamps
+├── dist/<target>/                  # final install prefix (gitignored)
 │   ├── boot/gnumach
-│   ├── include/
-│   └── .{headers,mach}-installed       # our staleness stamps
-├── tools/                 # build-time utilities (in-repo)
-│   ├── run/               # `make run` harness scenarios + libs
-│   └── sidekick/          # nix derivation for the helper VM (Alpine fetch)
-└── LICENSE                # GPL-2.0
+│   ├── include/                    # symlink → nix-built gnumach-headers-<target>
+│   └── .{headers,mach}-installed   # staleness stamps
+├── .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
+├── .direnv/                        # nix-direnv per-project state (gitignored)
+├── tools/                          # build-time utilities (in-repo)
+│   ├── run/                        # `make run` harness scenarios + libs
+│   └── sidekick/                   # nix derivation for the helper VM (Alpine fetch)
+└── LICENSE                         # GPL-2.0
 ```
 
 ## How it works
 
 ### Dev shell
 
-The flake defines three named dev shells, one per target:
+The flake defines five named dev shells, one per target:
 
 ```sh
 nix develop                   # picks the target whose CPU matches the host
@@ -278,13 +293,73 @@ Each shell exports:
 
 ### Transparent dispatch
 
-The top-level `Makefile` is the single entry point. When invoked outside
-the Nix shell — or inside the *wrong* target's shell — it re-enters
-`nix develop -i .#<target>` and re-runs itself. So you never need to type
-`nix develop` manually; just `make`.
+The top-level `Makefile` is the single entry point. Every build target
+re-enters `nix develop -i .#<target>` (always — strict isolation) and
+re-runs itself, so the build's only inputs are what the dev shell
+declares.  You never need to type `nix develop` manually; just `make`.
 
-Targets that don't need the cross-toolchain (`clean`, `clean-dist`,
-`mrproper`, `help`) run at the top level without spawning a shell.
+Targets that don't need the cross-toolchain run at the top level
+without spawning a shell: `clean`, `clean-dist`, `mrproper`, `help`,
+`sidekick`, and `cache-push`.
+
+### Binary cache
+
+The flake declares the project's [cachix](https://cachix.org/) cache
+(`hurd-build-system`) via `nixConfig`, so anyone using the flake is
+offered the prebuilt cross-toolchains as a substituter the first time
+they enter the shell.  Accept the trust prompt once and `nix develop`
+pulls aarch64/i686/x86_64 cross-gccs as binary downloads instead of
+bootstrapping each one (~20 min/target → ~30 s/target).
+
+To populate the cache after a fresh cross-toolchain build:
+
+```sh
+make cache-push                    # current TARGET
+make cache-push TARGET=x86_64      # a specific arch
+```
+
+`cachix authtoken <token>` once per host is enough; push is
+authenticated, pull is anonymous.
+
+### Direnv (optional)
+
+If you use [direnv](https://direnv.net/) + nix-direnv, the project's
+`.envrc` activates `.#${TARGET:-aarch64}` automatically when you `cd`
+into the repo.  Set `TARGET` in your shell before `cd` to pick a
+different default for that direnv-driven shell.  The Makefile's
+dispatch is unaffected — it always enters its own isolated shell per
+`make` invocation.
+
+The cloud-init template at the project root (`cloud-init.yaml`) is
+the easiest way to provision an orbstack Linux VM with nix +
+cachix + direnv + nix-direnv ready to go — see the next section.
+
+### Provisioning an orbstack VM
+
+`cloud-init.yaml` at the project root is a self-contained cloud-init
+recipe.  When orbstack creates a Linux VM and consumes that file as
+user-data, the VM boots fully wired:
+
+- nix multi-user installed (flakes + the primary user trusted).
+- `cachix`, `direnv`, `nix-direnv`, `starship` in the user's nix
+  profile.
+- bash hooks for direnv + starship; nix-direnv configured as direnv's
+  plugin with the env-diff banner suppressed.
+- For x86_64 VMs on Apple Silicon hosts (which run under rosetta and
+  can't load seccomp BPF), `filter-syscalls = false` is added to
+  nix.conf automatically based on the presence of
+  `/proc/sys/fs/binfmt_misc/rosetta`.  Native VMs keep the seccomp
+  filter enabled.
+
+Apply when creating an orbstack machine:
+
+```sh
+orb create ubuntu my-hurd-vm -u cloud-init.yaml
+```
+
+After boot, log out and back in once (so the bash hooks load), then
+`cd` into a clone of this repo with direnv allow'd and the cross
+toolchains stream in from cachix in seconds.
 
 ### Mtime-based short-circuit
 
@@ -335,17 +410,25 @@ deliberately:
 
 **First-build caveat.** The cross-GCC for each `<target>-none-elf` /
 `<target>-elf` triple isn't in nixpkgs' binary cache for our host/target
-matrix, so the *very first* `nix develop` on a given host always
-compiles GCC from source; binutils sometimes comes from cache and
-sometimes doesn't. Verified across **Linux x86_64**, **Linux aarch64**,
-and **macOS aarch64** — all three paid the same one-time cost.
-Reference point: **under 10 min** on an M4 MacBook Pro for the first
-target. Longer on older or slower hosts. After that the toolchain
-lives in `/nix/store` and subsequent builds reuse it — that's where
-the ~40 s incremental figure above comes from. The roadmap item
-*"Docker-based build path"* (below) addresses this by shipping a
-prebuilt image so users without Nix can skip the cross-toolchain
-build entirely.
+matrix.  The project's cachix cache
+(`hurd-build-system.cachix.org`) holds prebuilt cross-toolchains for
+the host/target combinations we've populated, so on supported hosts
+the *very first* `nix develop` pulls them as binary downloads —
+typically **under a minute per target**, network-bound rather than
+CPU-bound.
+
+| Host arch  | Cached on cachix? | First `nix develop` for a target |
+|---|---|---|
+| `aarch64-darwin`  | ✅ | ~30-60 s |
+| `aarch64-linux`   | ✅ | ~30-60 s |
+| `x86_64-darwin`   | not yet | ~10-20 min (bootstraps cross-GCC) |
+| `x86_64-linux`    | not yet | ~10-20 min (bootstraps cross-GCC) |
+
+After that, the toolchain lives in `/nix/store` and subsequent builds
+reuse it — that's where the ~40 s incremental figure above comes from.
+With `direnv` (or a Makefile-side gc-root via `.gcroots/<target>`),
+`nix-collect-garbage` won't sweep the toolchain away on regular gc
+runs.
 
 ## Hacking notes
 
@@ -405,37 +488,34 @@ suite:
   legitimate write with `KERN_INVALID_ARGUMENT`; replace with a
   copy-into-aligned-local before validating.
 
-**mig.** Stock savannah `tests/test_lib.sh` hardcodes
-`CFLAGS="-I$TEST_DIR/includes"`, overwriting any externally-supplied
-value. That works on Hurd developer boxes (system Mach headers in
-the default search path) but breaks `make check` on every other host.
-Our fork's `cross-build-fixes` branch appends `${CFLAGS:-}` so the
-target's installed Mach headers can be supplied via the standard
-env var (`make check CFLAGS=-I/path/to/include`). Suitable for an
-upstream submission; carrying it locally for now.
+**mig.** No carried patches.  `src/mig` tracks vanilla `master` from
+savannah.  The kernel test-harness CFLAGS issue (stock
+`tests/test_lib.sh` overwriting external `CFLAGS`) is worked around
+inside our `toolchain/mig/default.nix` derivation by passing
+`TESTS_ENVIRONMENT="CFLAGS=-I${gnumach-headers}/include"` on the
+`make check` invocation, so we don't need a fork patch for it.
 
 ### Upstream gaps we work around
 
 **gnumach kernel test suite.** `make check-mach` forwards into
-gnumach's own `make check` for any TARGET in `_MACH_TESTS_SUPPORTED`
-— today, `x86_64` and `i686`. The harness builds a GRUB-bootable
-ISO via `grub-mkrescue` and runs it under `qemu-system-i386 /
-x86_64`; both are pulled into the dev shell on Linux hosts (nixpkgs
-doesn't package GRUB on darwin), and the parent Makefile passes
-`USER_MIG=$(TOOLCHAIN)/bin/$(MIG_TARGET)-mig` to gnumach's configure
-so the userland test binaries link against our cross MIG.
+gnumach's own `make check` for the current TARGET.  The harness
+builds a GRUB-bootable ISO via `grub-mkrescue` and runs it under
+`qemu-system-i386 / x86_64`; the parent Makefile passes
+`USER_MIG=$(MIG_INSTALLED)` (the nix-built mig wrapper) to gnumach's
+configure so the userland test binaries link against the cross MIG.
+*Host constraints:* GRUB/xorriso/mtools and u-boot are only pulled
+into the dev shell on Linux hosts (nixpkgs doesn't package GRUB on
+darwin, and `ubootQemuAarch64` is aarch64-linux-only), so
+`make check-mach` errors out early on darwin with a clear message
+pointing at orbstack or another Linux host.
 *Validation:* the full x86_64 / i686 suite has been observed passing
-on a Linux/x86_64 host with KVM acceleration. *Other hosts for x86:*
-on macOS the pipeline runs as far as userland-stub generation and
-test-binary linking, then fails at the ISO step; on Linux/aarch64
-the dev shell has `grub-mkrescue` but nixpkgs only ships its
-`arm64-efi` target, so the produced ISO can't be booted by SeaBIOS.
+on a Linux/x86_64 host with KVM acceleration.
 *aarch64:* the `aarch64-tests` branch routes the kernel tests
 through QEMU's `-device guest-loader` (no GRUB) so the same
-harness works on any host with `qemu-system-aarch64` — including
-darwin.  All 11 user-space tests pass under
-`qemu-system-aarch64 -M virt`.  On non-x86 hosts the run uses TCG
-and is slow; bump `MACH_TEST_TIMEOUT` if 60 s isn't enough.
+harness works on any aarch64-linux host with `qemu-system-aarch64`.
+All 11 user-space tests pass under `qemu-system-aarch64 -M virt`.
+On non-x86 hosts the run uses TCG and is slow; bump
+`MACH_TEST_TIMEOUT` if 60 s isn't enough.
 *Xen targets:* tests are intentionally empty — guarded by
 `if !PLATFORM_xen` in `tests/Makefrag.am`.
 
@@ -453,11 +533,13 @@ Add an entry to `targets` in `flake.nix`:
 arm = {
   crossSystem = "arm-none-eabi";
   migTarget   = "arm-gnu";
+  platform    = null;            # or "at" / "xen" if gnumach has a platform for it
 };
 ```
 
-Everything else (env exports, banner, Makefile dispatch) follows
-automatically.
+Everything else (env exports, per-target dev shell, per-target
+`mig-arm` and `gnumach-headers-arm` packages, Makefile dispatch)
+follows automatically from the `targets` attrset.
 
 ## License
 
