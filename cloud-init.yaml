@@ -16,9 +16,17 @@
 #                                         without our packages on top.
 #   /etc/profile.d/nix-system-tools.sh    Adds system-tools/bin to PATH,
 #                                         sets TERM, points direnv at
-#                                         /etc/direnv via DIRENV_CONFIG.
-#   /etc/bash.bashrc (appended)           direnv hook + starship init,
-#                                         for every interactive bash.
+#                                         /etc/direnv, and (for
+#                                         interactive shells only) wires
+#                                         direnv + starship hooks.
+#                                         /etc/profile.d/* is sourced
+#                                         by login shells (orb -m vm);
+#                                         /etc/bash.bashrc would catch
+#                                         non-login interactive shells
+#                                         on Ubuntu but isn't loaded
+#                                         for login shells, so the
+#                                         hooks live here instead and
+#                                         guard themselves with `$-`.
 #   /etc/direnv/direnvrc                  System direnv plugin file —
 #                                         sources nix-direnv.
 #   /etc/direnv/direnv.toml               System direnv settings;
@@ -109,26 +117,27 @@ write_files:
       # it at /etc/direnv/ so the nix-direnv plugin is picked up
       # system-wide.
       export DIRENV_CONFIG=/etc/direnv
+
+      # Interactive-shell hooks.  Ubuntu sources /etc/profile.d/* for
+      # *login* shells (e.g., `orb -m vm`) but NOT /etc/bash.bashrc —
+      # so the direnv+starship init that lives there would be missed
+      # by login shells without these copies.  Guarded by $- so we
+      # don't try to attach a PROMPT_COMMAND to non-interactive
+      # invocations (eg. systemd timers, cron, scripts).  Re-running
+      # `eval $(direnv hook bash)` on a shell that already sourced
+      # /etc/bash.bashrc is idempotent (just redefines _direnv_hook).
+      case $- in
+        *i*)
+          if [ -n "${BASH_VERSION:-}" ]; then
+            command -v direnv   >/dev/null 2>&1 && eval "$(direnv hook bash)"
+            command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
+          fi
+          ;;
+      esac
       PROFILED
       chmod 0644 /etc/profile.d/nix-system-tools.sh
 
-      # ---- 4. /etc/bash.bashrc additions — direnv + starship ----
-      # On Debian/Ubuntu, /etc/bash.bashrc is sourced for every
-      # interactive bash shell (login or not).  This is where the
-      # hooks belong: profile.d would miss non-login interactive
-      # shells (new tmux pane, `bash` invoked manually, etc).
-      # Append-guarded so re-running cloud-init won't duplicate.
-      if ! grep -q '# BEGIN nix-system-tools hooks' /etc/bash.bashrc 2>/dev/null; then
-        cat >> /etc/bash.bashrc <<'BASHRC'
-
-      # BEGIN nix-system-tools hooks  (provisioned by cloud-init)
-      if command -v direnv   >/dev/null 2>&1; then eval "$(direnv hook bash)"; fi
-      if command -v starship >/dev/null 2>&1; then eval "$(starship init bash)"; fi
-      # END nix-system-tools hooks
-      BASHRC
-      fi
-
-      # ---- 5. System-wide direnv config (/etc/direnv) ----
+      # ---- 4. System-wide direnv config (/etc/direnv) ----
       # /etc/profile.d/nix-system-tools.sh sets DIRENV_CONFIG to this
       # dir, so direnv picks up both files for every user.
       mkdir -p /etc/direnv
