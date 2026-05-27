@@ -26,54 +26,69 @@
 #   sudo cloud-init status --long            # current state + reason
 #   sudo cat /var/log/cloud-init.log         # full init log
 #   sudo cat /var/log/cloud-init-output.log  # stdout/stderr from runcmd
+#
+# Why write_files + runcmd instead of an inline runcmd block:
+# cloud-init's `runcmd` items execute under /bin/sh, which is dash on
+# Ubuntu — and dash rejects `set -o pipefail` (a bashism).  Writing
+# the script to disk with a `#!/bin/bash` shebang and exec'ing it lets
+# us use bash semantics (notably pipefail) for the `curl … | sh`
+# install line.
+
+write_files:
+  - path: /usr/local/sbin/bootstrap-nix-dev.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      DEFAULT_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}' /etc/passwd)
+      HOME_DIR=$(getent passwd "$DEFAULT_USER" | cut -d: -f6)
+      NIX=/nix/var/nix/profiles/default/bin/nix
+
+      # ---- 1. Install nix ----
+      EXTRA=(
+        --extra-conf "experimental-features = nix-command flakes"
+        --extra-conf "trusted-users = @sudo"
+      )
+      # orbstack registers rosetta as a binfmt_misc handler inside
+      # x86_64 VMs running on Apple Silicon hosts.  Its presence is a
+      # reliable signal that seccomp BPF will fail and nix needs
+      # filter-syscalls disabled.  Native VMs leave this alone for
+      # stricter sandboxing.
+      if [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
+        EXTRA+=(--extra-conf "filter-syscalls = false")
+      fi
+      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+        | sh -s -- install linux --no-confirm "${EXTRA[@]}"
+
+      # ---- 2. Install per-user dev tooling ----
+      sudo -u "$DEFAULT_USER" "$NIX" profile add \
+        nixpkgs#cachix \
+        nixpkgs#direnv \
+        nixpkgs#nix-direnv \
+        nixpkgs#starship
+
+      # ---- 3. Shell init for the default user ----
+      cat >> "$HOME_DIR/.profile" <<'PROFILE'
+      export TERM=xterm-256color
+      PROFILE
+      cat >> "$HOME_DIR/.bashrc" <<'BASHRC'
+      eval "$(direnv hook bash)"
+      eval "$(starship init bash)"
+      BASHRC
+      chown "$DEFAULT_USER:" "$HOME_DIR/.profile" "$HOME_DIR/.bashrc"
+
+      # ---- 4. nix-direnv as direnv's plugin + quiet env-diff banner ----
+      sudo -u "$DEFAULT_USER" mkdir -p "$HOME_DIR/.config/direnv"
+      cat > "$HOME_DIR/.config/direnv/direnvrc" <<'DIRENVRC'
+      source $HOME/.nix-profile/share/nix-direnv/direnvrc
+      DIRENVRC
+      cat > "$HOME_DIR/.config/direnv/direnv.toml" <<'TOML'
+      [global]
+      hide_env_diff = true
+      TOML
+      chown -R "$DEFAULT_USER:" "$HOME_DIR/.config/direnv"
 
 runcmd:
-  - |
-    set -euo pipefail
-
-    DEFAULT_USER=$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}' /etc/passwd)
-    HOME_DIR=$(getent passwd "$DEFAULT_USER" | cut -d: -f6)
-    NIX=/nix/var/nix/profiles/default/bin/nix
-
-    # ---- 1. Install nix ----
-    EXTRA=(
-      --extra-conf "experimental-features = nix-command flakes"
-      --extra-conf "trusted-users = @sudo"
-    )
-    # orbstack registers rosetta as a binfmt_misc handler inside x86_64
-    # VMs running on Apple Silicon hosts.  Its presence is a reliable
-    # signal that seccomp BPF will fail and nix needs filter-syscalls
-    # disabled.  Native VMs leave this alone for stricter sandboxing.
-    if [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
-      EXTRA+=(--extra-conf "filter-syscalls = false")
-    fi
-    curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
-      | sh -s -- install linux --no-confirm "${EXTRA[@]}"
-
-    # ---- 2. Install per-user dev tooling ----
-    sudo -u "$DEFAULT_USER" "$NIX" profile add \
-      nixpkgs#cachix \
-      nixpkgs#direnv \
-      nixpkgs#nix-direnv \
-      nixpkgs#starship
-
-    # ---- 3. Shell init for the default user ----
-    cat >> "$HOME_DIR/.profile" <<'PROFILE'
-    export TERM=xterm-256color
-    PROFILE
-    cat >> "$HOME_DIR/.bashrc" <<'BASHRC'
-    eval "$(direnv hook bash)"
-    eval "$(starship init bash)"
-    BASHRC
-    chown "$DEFAULT_USER:" "$HOME_DIR/.profile" "$HOME_DIR/.bashrc"
-
-    # ---- 4. nix-direnv as direnv's plugin + quiet env-diff banner ----
-    sudo -u "$DEFAULT_USER" mkdir -p "$HOME_DIR/.config/direnv"
-    cat > "$HOME_DIR/.config/direnv/direnvrc" <<'DIRENVRC'
-    source $HOME/.nix-profile/share/nix-direnv/direnvrc
-    DIRENVRC
-    cat > "$HOME_DIR/.config/direnv/direnv.toml" <<'TOML'
-    [global]
-    hide_env_diff = true
-    TOML
-    chown -R "$DEFAULT_USER:" "$HOME_DIR/.config/direnv"
+  - /usr/local/sbin/bootstrap-nix-dev.sh
