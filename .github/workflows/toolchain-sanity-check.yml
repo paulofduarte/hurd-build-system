@@ -107,6 +107,25 @@ jobs:
           path: dist-${{ matrix.runner.system }}-${{ matrix.arch }}.sha256
           retention-days: 14
 
+      - name: Pack dist tarball
+        # Per-(host, arch) tarball of the whole dist/<arch>/ tree.
+        # Uploaded so when the cross-host hash comparison flags drift,
+        # we can download both sides and diff the actual files.  Plain
+        # tar.gz for portability — these are debug artefacts, size
+        # doesn't matter much.
+        run: |
+          tar -C dist -czf \
+            "dist-${{ matrix.runner.system }}-${{ matrix.arch }}.tar.gz" \
+            "${{ matrix.arch }}"
+          ls -lh "dist-${{ matrix.runner.system }}-${{ matrix.arch }}.tar.gz"
+
+      - name: Upload dist tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.runner.system }}-${{ matrix.arch }}
+          path: dist-${{ matrix.runner.system }}-${{ matrix.arch }}.tar.gz
+          retention-days: 14
+
   compare:
     name: Cross-host hash comparison (informational)
     needs: build
