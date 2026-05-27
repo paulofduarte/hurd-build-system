@@ -133,12 +133,15 @@
           # partitioned disk, so we add an MBR via sfdisk (util-linux)
           # and create the FAT inside the partition via mtools' @@<off>
           # notation.  Pull in u-boot, mkimage, sfdisk, mkfs.vfat, and
-          # mcopy on Linux aarch64 builds.  Same darwin caveat as the
-          # x86 grub2 conditional above — nixpkgs's u-boot is also
-          # Linux-only.
+          # mcopy only on aarch64-linux hosts: nixpkgs's ubootQemuAarch64
+          # has `meta.platforms = ["aarch64-linux"]` (the others are
+          # linux-generic, but the constraint is aarch64-linux-or-bust),
+          # so x86_64-linux hosts must skip the whole block.  Those
+          # hosts can still cross-build the aarch64 kernel itself —
+          # only the in-tree `make check-mach` test harness is gated.
           ++ nixpkgs.lib.optionals
                (target.crossSystem == "aarch64-none-elf"
-                && nixpkgs.lib.hasSuffix "-linux" system)
+                && system == "aarch64-linux")
                [ pkgs.ubootQemuAarch64 pkgs.ubootTools
                  pkgs.util-linux pkgs.dosfstools pkgs.mtools ];
 
@@ -182,9 +185,11 @@
             # aarch64 tests need an explicit u-boot binary path because
             # qemu's -bios is resolved against qemu's own data dir, not
             # the dev shell's PATH.  Point at nixpkgs's
-            # ubootQemuAarch64 output explicitly.
+            # ubootQemuAarch64 output explicitly.  Same aarch64-linux-
+            # only constraint as the nativeBuildInputs block above —
+            # ubootQemuAarch64's meta.platforms is ["aarch64-linux"].
             ${if target.crossSystem == "aarch64-none-elf"
-                && nixpkgs.lib.hasSuffix "-linux" system
+                && system == "aarch64-linux"
               then "export UBOOT_BIN=${pkgs.ubootQemuAarch64}/u-boot.bin"
               else "unset UBOOT_BIN"}
 
