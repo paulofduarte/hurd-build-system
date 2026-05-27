@@ -157,11 +157,14 @@ let
         # build step.
         export TARGET_CC=${toolPrefix}gcc
 
-        # Pin MIG so AC_CHECK_TOOL respects it instead of falling back to
-        # bare `mig` (which doesn't exist).
-        export MIG=${target.migTarget}-mig
-
-        # Target identity for the top-level Makefile.
+        # Target identity for the top-level Makefile.  MIG itself is a
+        # *built* artefact (from `make mig` or `make dist-mig`) — the
+        # Makefile derives its absolute path from MIG_TARGET when it
+        # needs it, so the dev shell doesn't put MIG on PATH or export
+        # a bare-name `MIG=` (which would resolve to nothing).  When
+        # you need the wrapper interactively, point at
+        # ./work/mig/$ARCH/install/bin/$MIG_TARGET-mig (in-tree) or
+        # ./dist/$ARCH/bin/$MIG_TARGET-mig (dist).
         export ARCH=${name}
         export GNUMACH_HOST=${target.crossSystem}
         export MIG_TARGET=${target.migTarget}
@@ -179,13 +182,6 @@ let
             && system == "aarch64-linux"
           then "export UBOOT_BIN=${pkgs.ubootQemuAarch64}/u-boot.bin"
           else "unset UBOOT_BIN"}
-
-        # Per-arch tool dirs on PATH.  In-tree mig (work/mig/$ARCH/
-        # install/bin) wins if present — the iterative-dev path.
-        # Dist mig (dist/$ARCH/bin) is the fallback from `make
-        # dist-mig`.  Both are conditional on disk existence; adding
-        # absent dirs to PATH is harmless.
-        export PATH="$PWD/work/mig/$ARCH/install/bin:$PWD/dist/$ARCH/bin:$PATH"
       '';
     };
 
