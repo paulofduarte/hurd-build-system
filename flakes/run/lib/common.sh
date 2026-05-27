@@ -3,6 +3,23 @@
 # die <msg> — print to stderr, exit 1
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# sha256_stdin — read stdin, print only the hex digest (no filename).
+#   Tool picker: Linux distros + nix's coreutils ship `sha256sum`;
+#   macOS BSD ships `shasum` (Perl Digest::SHA) but not the coreutils
+#   variant.  Either tool's output is `<hex>  <filename>`, and we
+#   want the first column.  Try sha256sum first, fall back to
+#   `shasum -a 256` so this works whether you're inside nix's shell
+#   or running the scripts under a plain macOS/Linux environment.
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  else
+    die "neither sha256sum nor shasum found on PATH"
+  fi
+}
+
 # scenario_check_target <scenario_name> <space-separated supported list>
 #   Validates $ARCH; calls die with an informative message on mismatch.
 scenario_check_target() {

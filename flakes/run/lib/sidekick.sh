@@ -141,7 +141,7 @@ sidekick_make_iso() {
 
   # Cache check: invalidate if staging mtime or grub_cfg hash changed
   local cfg_hash
-  cfg_hash=$(printf '%s' "$grub_cfg" | shasum -a 256 | cut -d' ' -f1)
+  cfg_hash=$(printf '%s' "$grub_cfg" | sha256_stdin)
   if [ -f "$out_iso" ] && [ -f "$stamp" ] \
       && [ "$stamp" -nt "$staging" ] \
       && [ "$(cat "$stamp" 2>/dev/null)" = "$cfg_hash" ]; then
