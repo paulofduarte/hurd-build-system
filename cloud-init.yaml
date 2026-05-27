@@ -136,6 +136,7 @@ write_files:
           --profile "$SYSTEM_PROFILE" \
           nixpkgs#cachix \
           nixpkgs#direnv \
+          nixpkgs#git \
           nixpkgs#nix-direnv \
           nixpkgs#starship
 
