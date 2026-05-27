@@ -116,6 +116,14 @@
       #                                    `doCheck = true` runs MIG's own
       #                                    make check (12 tests) inside the
       #                                    sandbox.
+      #   gnumach-<target>               — bootable kernel for one target,
+      #                                    built with the matching cross
+      #                                    MIG wrapper.  Output:
+      #                                    $out/boot/{gnumach,gnumach.elf}
+      #                                    + public headers + .defs.
+      #                                    Tests currently disabled until
+      #                                    the kernel test-suite runs
+      #                                    inside the nix sandbox.
       #
       # Source for each per-target derivation is the local git checkout
       # (`./src/gnumach`, `./src/mig`) — passed as a path, so the
@@ -133,13 +141,17 @@
             inherit pkgs system targets;
             lib = nixpkgs.lib;
           };
-          migs = import ./flakes/mig {
+          mig = import ./flakes/mig {
             inherit pkgs system targets gnumachHeaders;
+            lib = nixpkgs.lib;
+          };
+          gnumach = import ./flakes/gnumach {
+            inherit pkgs system targets mig;
             lib = nixpkgs.lib;
           };
         in
         {
           sidekick = import ./flakes/sidekick/default.nix { inherit pkgs; };
-        } // gnumachHeaders // migs);
+        } // gnumachHeaders // mig // gnumach);
     };
 }
