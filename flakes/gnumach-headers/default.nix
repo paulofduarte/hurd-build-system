@@ -38,15 +38,12 @@
 #     never invoked during install-data; point it at /bin/true so the
 #     check passes without dragging MIG into this derivation's inputs.
 
-{ pkgs, lib, system, targets }:
+{ pkgs, lib, system, targets, mkCrossPkgs }:
 
 let
   mkOne = name: target:
     let
-      crossPkgs = import pkgs.path {
-        localSystem = { inherit system; };
-        crossSystem = target.crossSystem;
-      };
+      crossPkgs = mkCrossPkgs system target;
     in
     crossPkgs.stdenv.mkDerivation {
       pname   = "gnumach-headers-${target.migTarget}";

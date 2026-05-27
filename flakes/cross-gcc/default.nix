@@ -68,17 +68,28 @@ let
       newlib               = addHookAttrs prev.newlib;
     };
 
+  # Single source of truth for "import nixpkgs with the right cross
+  # config + the config.sub overlay applied when the build host needs
+  # it".  All sub-flakes (cross-gcc itself, gnumach-headers, mig,
+  # gnumach) consume this so they share one cross-pkgs construction
+  # — without it, only the cross-gcc dev shell got the overlay and
+  # standalone `nix build .#mig-<arch>` / `.#gnumach-headers-<arch>`
+  # on x86_64-darwin would fall back to the un-patched cross-toolchain
+  # and trip the same config.sub error.
+  mkCrossPkgs = system: target:
+    import nixpkgs {
+      localSystem = { inherit system; };
+      crossSystem = target.crossSystem;
+      overlays = lib.optionals (system == "x86_64-darwin") [ overlay ];
+    };
+
   mkDevShell = system: name: target:
     let
       pkgs = nixpkgs.legacyPackages.${system};
 
       # GNU Mach is a freestanding microkernel — no libc, no hosted OS.
       # Use a bare-metal cross-toolchain for the chosen target.
-      crossPkgs = import nixpkgs {
-        localSystem = { inherit system; };
-        crossSystem = target.crossSystem;
-        overlays = lib.optionals (system == "x86_64-darwin") [ overlay ];
-      };
+      crossPkgs = mkCrossPkgs system target;
 
       # The cross-toolchain's binary prefix (e.g. "aarch64-unknown-none-elf-").
       # Includes the trailing "-".
@@ -196,5 +207,5 @@ let
     else "aarch64";
 
 in {
-  inherit mkDevShell defaultTargetName overlay;
+  inherit mkDevShell mkCrossPkgs defaultTargetName overlay;
 }

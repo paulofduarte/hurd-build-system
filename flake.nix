@@ -137,17 +137,26 @@
           # passes in the shared target spec and merges what comes back.
           # `inputs.self.submodules = true` (top of file) is what makes
           # the submodule content visible in the store.
+          # crossGcc.mkCrossPkgs is the single "import nixpkgs with
+          # cross + x86_64-darwin overlay" entry point — passed down
+          # so all three sub-flakes share the same cross-pkgs
+          # construction.  Without it, `nix build .#mig-<arch>` and
+          # `.#gnumach-headers-<arch>` would skip the overlay and
+          # fail on x86_64-darwin with the bundled-config.sub bug.
           gnumachHeaders = import ./flakes/gnumach-headers {
             inherit pkgs system targets;
             lib = nixpkgs.lib;
+            mkCrossPkgs = crossGcc.mkCrossPkgs;
           };
           mig = import ./flakes/mig {
             inherit pkgs system targets gnumachHeaders;
             lib = nixpkgs.lib;
+            mkCrossPkgs = crossGcc.mkCrossPkgs;
           };
           gnumach = import ./flakes/gnumach {
             inherit pkgs system targets mig;
             lib = nixpkgs.lib;
+            mkCrossPkgs = crossGcc.mkCrossPkgs;
           };
         in
         {

@@ -53,16 +53,13 @@
 # qemu, neither of which the sandbox provides.  Until then, kernel
 # tests stay under the parent Makefile's `check-mach` target.
 
-{ pkgs, lib, system, targets, mig }:
+{ pkgs, lib, system, targets, mig, mkCrossPkgs }:
 
 let
   mkOne = name: target:
     let
       crossMig = mig."mig-${name}";
-      crossPkgs = import pkgs.path {
-        localSystem = { inherit system; };
-        crossSystem = target.crossSystem;
-      };
+      crossPkgs = mkCrossPkgs system target;
     in
     crossPkgs.stdenv.mkDerivation {
       pname   = "gnumach-${target.migTarget}";

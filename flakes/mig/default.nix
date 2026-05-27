@@ -42,16 +42,13 @@
 #   - gnumach-headers for the target arch — TARGET_CPPFLAGS points at
 #     $gnumach-headers/include so cpu.symc sees <mach/message.h> etc.
 
-{ pkgs, lib, system, targets, gnumachHeaders }:
+{ pkgs, lib, system, targets, gnumachHeaders, mkCrossPkgs }:
 
 let
   mkOne = name: target:
     let
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
-      crossPkgs = import pkgs.path {
-        localSystem = { inherit system; };
-        crossSystem = target.crossSystem;
-      };
+      crossPkgs = mkCrossPkgs system target;
       inherit (crossPkgs.stdenv) cc;
       toolPrefix = cc.targetPrefix;
     in
