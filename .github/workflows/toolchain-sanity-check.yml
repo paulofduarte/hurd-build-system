@@ -99,7 +99,9 @@ jobs:
           echo "Hashed $(wc -l < "$out") files → $out"
 
       - name: Upload hash list
-        uses: actions/upload-artifact@v4
+        # v7 is the current major (Node 24 runtime).  v4 still works
+        # but emits Node 20 deprecation warnings on every run.
+        uses: actions/upload-artifact@v7
         with:
           name: hashes-${{ matrix.runner.system }}-${{ matrix.arch }}
           path: dist-${{ matrix.runner.system }}-${{ matrix.arch }}.sha256
@@ -116,18 +118,22 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download all hash artifacts
-        uses: actions/download-artifact@v4
+        # v8 is the current major (Node 24 runtime).  Pairs with
+        # actions/upload-artifact@v7 above — both speak the v4+
+        # immutable-artifact API server-side.
+        uses: actions/download-artifact@v8
         with:
           path: hashes
           pattern: hashes-*
 
       - name: Compare hashes
         # IMPORTANT: this step never exits non-zero.  Drift is
-        # reported in the job summary; whether to act on it is a
-        # human decision, not a CI gate.
+        # reported in the job summary AND echoed to the step log
+        # (via `tee`) so it's findable from either view; whether to
+        # act on it is a human decision, not a CI gate.
         run: |
           set -uo pipefail
-          python3 - <<'PYEOF' >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PYEOF' | tee -a "$GITHUB_STEP_SUMMARY"
           import re, glob
           from collections import defaultdict
 
