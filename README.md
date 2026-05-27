@@ -340,16 +340,27 @@ cachix + direnv + nix-direnv ready to go — see the next section.
 recipe.  When orbstack creates a Linux VM and consumes that file as
 user-data, the VM boots fully wired:
 
-- nix multi-user installed (flakes + the primary user trusted).
-- `cachix`, `direnv`, `nix-direnv`, `starship` in the user's nix
-  profile.
-- bash hooks for direnv + starship; nix-direnv configured as direnv's
-  plugin with the env-diff banner suppressed.
+- nix multi-user installed (flakes + the `@sudo` group trusted).
+- `cachix`, `direnv`, `nix-direnv`, `starship` installed into a
+  dedicated system profile at `/nix/var/nix/profiles/system-tools/`,
+  separate from the Determinate Nix daemon's own profile.
+- System-wide PATH wiring via `/etc/profile.d/nix-system-tools.sh`
+  — every user on the VM gets the tools on PATH, plus `TERM` and
+  `DIRENV_CONFIG=/etc/direnv` exports.
+- `/etc/bash.bashrc` appended with direnv + starship hooks (sourced
+  by every interactive bash shell, login or not).
+- `/etc/direnv/direnvrc` sources nix-direnv from the system profile;
+  `/etc/direnv/direnv.toml` hides the env-diff banner.  Both apply
+  to every user via `DIRENV_CONFIG`.
 - For x86_64 VMs on Apple Silicon hosts (which run under rosetta and
   can't load seccomp BPF), `filter-syscalls = false` is added to
   nix.conf automatically based on the presence of
   `/proc/sys/fs/binfmt_misc/rosetta`.  Native VMs keep the seccomp
   filter enabled.
+
+The system-wide layout means orbstack's later-provisioned user (the
+one matching your macOS account) inherits all the tooling
+automatically — no race with cloud-init's timing.
 
 Apply when creating an orbstack machine — the flag is `--user-data`
 (long) or `-c` (short):
