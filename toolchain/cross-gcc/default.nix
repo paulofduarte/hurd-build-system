@@ -172,10 +172,11 @@ let
           then "export UBOOT_BIN=${pkgs.ubootQemuAarch64}/u-boot.bin"
           else "unset UBOOT_BIN"}
 
-        # Local toolchain — anything installed here (MIG, etc.) becomes
-        # visible to the next configure run. Enter the dev shell from
-        # the project root for this to resolve correctly.
-        export PATH="$PWD/toolchain/bin:$PATH"
+        # Locally-installed tools (the MIG wrapper symlinks, mainly).
+        # Lives at the repo root, separate from the tracked sub-flake
+        # sources under toolchain/.  Enter the dev shell from the
+        # project root for this to resolve correctly.
+        export PATH="$PWD/.bin:$PATH"
       '';
     };
 

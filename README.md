@@ -220,7 +220,7 @@ fresh clones get only `origin`.
 | `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
 | `prepare` | `autoreconf -i` on `src/gnumach` (MIG no longer needs local autoreconf — its nix derivation handles it) |
 | `dist-headers` | symlink the gnumach public headers from the nix-built `gnumach-headers-<TARGET>` package into `dist/$(TARGET)/include` |
-| `toolchain` | `dist-headers` + symlink the nix-built `mig-<TARGET>` wrapper into `toolchain/bin/<arch>-gnu-mig` |
+| `toolchain` | `dist-headers` + symlink the nix-built `mig-<TARGET>` wrapper into `.bin/<arch>-gnu-mig` |
 | `mach` | build the gnumach kernel binary |
 | `dist-mach` | install gnumach into `dist/$(TARGET)/` |
 | `dist` | install everything (currently `dist-mach`; will grow) |
@@ -232,7 +232,7 @@ fresh clones get only `origin`.
 | `cache-push` | push the current `$(TARGET)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(TARGET)/` (current target only) |
-| `mrproper` | `rm -rf work/`, the toolchain build outputs (`toolchain/bin`, `toolchain/sidekick`, the `result-*` gc-roots, the per-target install stamps), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `toolchain/{gnumach-headers,mig}/` are preserved. |
+| `mrproper` | `rm -rf work/`, the project-root install dirs (`.bin/`, `.sidekick/`), the toolchain gc-roots (`toolchain/{gnumach-headers,mig}/result-*`) + install stamps (`toolchain/mig/.mig-*-installed`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `toolchain/{cross-gcc,gnumach-headers,mig}/` are preserved. |
 
 ## Directory layout
 
@@ -248,14 +248,15 @@ fresh clones get only `origin`.
 │   └── mig/                        # submodule → paulofduarte/mig @ master
 ├── work/                           # local build directories (gitignored)
 │   └── gnumach/<target>/
-├── toolchain/                      # nix-driven toolchain artefacts
-│   ├── gnumach-headers/default.nix # per-target headers derivation (tracked)
+├── toolchain/                      # nix sub-flakes for the cross toolchain (source-only)
+│   ├── cross-gcc/default.nix       # mkDevShell + x86_64-darwin config.sub overlay
+│   ├── gnumach-headers/default.nix # per-target headers derivation
 │   ├── gnumach-headers/result-*    # per-target gc-root symlinks (gitignored)
-│   ├── mig/default.nix             # per-target MIG derivation (tracked)
+│   ├── mig/default.nix             # per-target MIG derivation
 │   ├── mig/result-*                # per-target gc-root symlinks (gitignored)
-│   ├── bin/<target>-gnu-mig        # PATH-discovery symlinks to the mig/result-*
-│   ├── sidekick/                   # helper-VM artefacts (vmlinuz + initramfs.cpio.gz)
-│   └── .mig-<target>-installed     # Makefile staleness stamps
+│   └── mig/.mig-<target>-installed # Makefile staleness stamps (gitignored)
+├── .bin/<target>-gnu-mig           # PATH-discovery symlinks → mig/result-* (gitignored)
+├── .sidekick/                      # helper-VM artefacts (vmlinuz + initramfs.cpio.gz, gitignored)
 ├── dist/<target>/                  # final install prefix (gitignored)
 │   ├── boot/gnumach
 │   ├── include/                    # symlink → nix-built gnumach-headers-<target>

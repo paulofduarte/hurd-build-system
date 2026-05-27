@@ -205,8 +205,8 @@ aarch64, x86_64 — same Alpine APKs, same POSIX tools, same output.
 
 Output paths after `make sidekick`:
 
-- `toolchain/sidekick/vmlinuz` (~12 MB)
-- `toolchain/sidekick/initramfs.cpio.gz` (~40 MB)
+- `.sidekick/vmlinuz` (~12 MB)
+- `.sidekick/initramfs.cpio.gz` (~40 MB)
 
 ### `/init` dispatcher
 
@@ -254,7 +254,7 @@ this once to seed the file; the resulting hashes are in git).
 After any bump:
 
 ```sh
-rm -rf toolchain/sidekick
+rm -rf .sidekick
 make sidekick          # rebuilds + caches
 ```
 

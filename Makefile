@@ -58,11 +58,17 @@ ifndef MIG
 MIG := $(MIG_TARGET)-mig
 endif
 
-# Layout
+# Layout.  TOOLCHAIN is source-only (the nix sub-flakes for cross-gcc,
+# gnumach-headers, and mig).  BIN holds dev-shell-visible wrapper
+# symlinks; SIDEKICK holds the x86_64 helper-VM artefacts.  Both BIN
+# and SIDEKICK are gitignored at the repo root so toolchain/ stays
+# clean (no mixing of tracked sources with build outputs).
 PROJ          := $(CURDIR)
 SRC           := $(PROJ)/src
 WORK          := $(PROJ)/work
 TOOLCHAIN     := $(PROJ)/toolchain
+BIN           := $(PROJ)/.bin
+SIDEKICK      := $(PROJ)/.sidekick
 DIST_ROOT     := $(PROJ)/dist
 DIST          := $(DIST_ROOT)/$(TARGET)
 
@@ -78,21 +84,21 @@ GNUMACH_CONFIGURED := $(GNUMACH_BUILD)/config.status
 GNUMACH_KERNEL     := $(GNUMACH_BUILD)/gnumach
 
 # Nix-built per-target outputs.  `nix build -o <path>` creates a gc-root
-# symlink at <path> pointing into /nix/store; the local toolchain/bin
-# symlink (kept for the dev-shell PATH convention) just re-targets the
-# wrapper binary inside that result.  These are regenerated cheaply on
-# every build — nix decides whether to rebuild the underlying derivation.
+# symlink at <path> pointing into /nix/store; the .bin/ wrapper symlink
+# (kept for the dev-shell PATH convention) just re-targets the wrapper
+# binary inside that result.  These are regenerated cheaply on every
+# build — nix decides whether to rebuild the underlying derivation.
 NIX_HEADERS_RESULT := $(TOOLCHAIN)/gnumach-headers/result-$(TARGET)
 NIX_MIG_RESULT     := $(TOOLCHAIN)/mig/result-$(TARGET)
-MIG_INSTALLED      := $(TOOLCHAIN)/bin/$(MIG)
+MIG_INSTALLED      := $(BIN)/$(MIG)
 
 # Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
 # `packages.<system>.sidekick` output — see tools/sidekick/default.nix
 # and tools/sidekick/init.sh).  Used for ext2 module extraction
 # (Gentoo/Guix) and grub-mkrescue ISO assembly (x86_64 inject mode).
-SIDEKICK_KERNEL := $(TOOLCHAIN)/sidekick/vmlinuz
-SIDEKICK_INITRD := $(TOOLCHAIN)/sidekick/initramfs.cpio.gz
-SIDEKICK_STAMP  := $(TOOLCHAIN)/sidekick/.stamp
+SIDEKICK_KERNEL := $(SIDEKICK)/vmlinuz
+SIDEKICK_INITRD := $(SIDEKICK)/initramfs.cpio.gz
+SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 
 # Hurd distro image URLs — referenced by tools/run/hurd-*.sh.
 # Naming uses our build-system convention (X86_64 / I686); where the
@@ -118,14 +124,22 @@ HURD_GENTOO_I686_URL   := https://distfiles.gentoo.org/experimental/x86/hurd/hur
 HURD_GUIX_I686_URL     := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd-barebones.qcow2
 HURD_GUIX_X86_64_URL   := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd64-barebones.qcow2
 
-# Stamps we touch ourselves after invoking gnumach's `make install*` steps.
-# We don't anchor on the installed files directly because gnumach's install
-# uses `install-sh -C` (compare-only): when the source bytes match the
-# destination, the dest isn't touched — its mtime stays old, and our
-# staleness heuristic would loop. Stamps decouple "we ran the install"
-# from "did install touch the file".
+# Stamps we touch ourselves after invoking install steps.
+#
+# - HEADERS_STAMP / DIST_MACH_STAMP: gnumach's install uses
+#   `install-sh -C` (compare-only): when the source bytes match the
+#   destination, the dest isn't touched — its mtime stays old, and our
+#   staleness heuristic would loop.
+# - MIG_STAMP: anchored on a /nix/store path that has epoch mtime
+#   (nix freezes mtimes for reproducibility), so make's stat() through
+#   the symlink would always look older than the prerequisites and the
+#   rule would re-fire.
+#
+# Stamps live with what they describe: MIG_STAMP under toolchain/mig/
+# (the sub-flake that owns the install), HEADERS_STAMP / DIST_MACH_STAMP
+# under $(DIST) (the destination of the install they track).
 HEADERS_STAMP      := $(DIST)/.headers-installed
-MIG_STAMP          := $(TOOLCHAIN)/.mig-$(TARGET)-installed
+MIG_STAMP          := $(TOOLCHAIN)/mig/.mig-$(TARGET)-installed
 DIST_MACH_STAMP    := $(DIST)/.mach-installed
 
 # Defensive parse-time check.  The stamps are make's mtime anchor for the
@@ -155,7 +169,7 @@ help:
 	@echo "  all              build the gnumach kernel (default)"
 	@echo "  prepare          autoreconf the source trees"
 	@echo "  dist-headers     link gnumach public headers under ./dist/$(TARGET)/include (via nix)"
-	@echo "  toolchain        dist-headers + link MIG under ./toolchain/bin (via nix)"
+	@echo "  toolchain        dist-headers + link MIG under .bin/ (via nix)"
 	@echo "  mach             build gnumach kernel"
 	@echo "  dist-mach        install gnumach into ./dist/$(TARGET)/"
 	@echo "  dist             install everything (== dist-mach for now)"
@@ -200,23 +214,24 @@ clean:
 	@# gc-roots, install stamps, and the dev-shell PATH symlinks so the
 	@# next build re-pulls them from the store.
 	@rm -f $(TOOLCHAIN)/mig/result-* $(TOOLCHAIN)/gnumach-headers/result-*
-	@rm -f $(TOOLCHAIN)/.mig-*-installed
-	@rm -f $(TOOLCHAIN)/bin/*-mig
+	@rm -f $(TOOLCHAIN)/mig/.mig-*-installed
+	@rm -f $(BIN)/*-mig
 
 clean-dist:
 	rm -rf $(DIST)
 
 # mrproper still nukes work/ wholesale — that's a deeper reset and we
 # expect users to invoke it when they want a clean slate including
-# configure state.  toolchain/ now holds tracked flake source files
-# (toolchain/gnumach-headers/, toolchain/mig/), so we can't `rm -rf` it;
-# instead, scrub the build artefacts (bin/, sidekick/, per-target
-# result-* gc-roots) while leaving the *.nix sources alone.
+# configure state.  toolchain/ holds tracked flake source files
+# (toolchain/{cross-gcc,gnumach-headers,mig}/), so we can't `rm -rf`
+# it; instead, scrub only the gitignored bits inside (result-*
+# gc-roots, .mig-*-installed stamps) and drop the project-root install
+# directories ($(BIN) and $(SIDEKICK)) wholesale.
 mrproper:
 	rm -rf $(WORK)
-	rm -rf $(TOOLCHAIN)/bin $(TOOLCHAIN)/sidekick
+	rm -rf $(BIN) $(SIDEKICK)
 	rm -f  $(TOOLCHAIN)/gnumach-headers/result-* $(TOOLCHAIN)/mig/result-*
-	rm -f  $(TOOLCHAIN)/.mig-*-installed
+	rm -f  $(TOOLCHAIN)/mig/.mig-*-installed
 	rm -rf $(DIST_ROOT)
 	git -C $(GNUMACH_SRC) clean -fdX
 	git -C $(MIG_SRC)     clean -fdX
@@ -243,9 +258,9 @@ $(SIDEKICK_STAMP): tools/sidekick/default.nix tools/sidekick/packages.nix tools/
 	@echo "  SIDEKICK  building helper VM (x86_64 Alpine + grub-mkrescue + busybox)…"
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  build .#sidekick \
-	  -o $(TOOLCHAIN)/sidekick/result
-	cp -f $(TOOLCHAIN)/sidekick/result/vmlinuz             $(SIDEKICK_KERNEL)
-	cp -f $(TOOLCHAIN)/sidekick/result/initramfs.cpio.gz   $(SIDEKICK_INITRD)
+	  -o $(SIDEKICK)/result
+	cp -f $(SIDEKICK)/result/vmlinuz             $(SIDEKICK_KERNEL)
+	cp -f $(SIDEKICK)/result/initramfs.cpio.gz   $(SIDEKICK_INITRD)
 	@touch $@
 
 # Empty rule: artefact files exist because the stamp recipe produced
@@ -604,18 +619,19 @@ $(HEADERS_STAMP): toolchain/gnumach-headers/default.nix flake.nix
 # ---- toolchain ----
 # MIG comes from `nix build .#mig-$(TARGET)`.  Its test-suite runs
 # inline (doCheck = true), so a successful build means tests passed.
-# We symlink the wrapper into $(TOOLCHAIN)/bin/<MIG_TARGET>-mig so the
-# dev shell's PATH discovery still finds it under the legacy name.
-# The wrapper itself hardcodes its store prefix, so it locates migcom
-# in $(NIX_MIG_RESULT)/libexec without needing $(TOOLCHAIN)/libexec.
-# Same stamp pattern as dist-headers above for the same mtime reason.
+# We symlink the wrapper into $(BIN)/<MIG_TARGET>-mig so the dev
+# shell's PATH discovery (PATH=$PWD/.bin:...) finds it under the
+# legacy name.  The wrapper itself hardcodes its store prefix, so
+# it locates migcom in $(NIX_MIG_RESULT)/libexec without needing a
+# local libexec/.  Same stamp pattern as dist-headers above for the
+# same mtime reason.
 toolchain: dist-headers $(MIG_STAMP)
 
 $(MIG_STAMP): toolchain/mig/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_MIG_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  build .#mig-$(TARGET) -o $(NIX_MIG_RESULT)
-	@mkdir -p $(TOOLCHAIN)/bin
+	@mkdir -p $(BIN)
 	ln -sfn $(NIX_MIG_RESULT)/bin/$(MIG_TARGET)-mig $(MIG_INSTALLED)
 	@touch $@
 
