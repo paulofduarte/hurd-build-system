@@ -223,7 +223,7 @@ fresh clones get only `origin`.
 | `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` — incremental compile, the path you want while iterating on `src/mig` inside `nix develop` |
 | `dist-mig` | copy clean nix-built MIG (`mig-<ARCH>`) into `dist/$(ARCH)/{bin,libexec}/` |
 | `mach` | build the gnumach kernel binary **in-tree** under `work/gnumach/$(ARCH)/` using the in-tree MIG from `make mig` — incremental compile, the path you want while iterating on `src/gnumach` |
-| `dist-mach` | copy clean nix-built kernel (`gnumach-<ARCH>`) into `dist/$(ARCH)/boot/gnumach` |
+| `dist-mach` | copy clean nix-built kernel (`gnumach-<ARCH>`) into `dist/$(ARCH)/boot/gnumach`, plus the GNU Mach Info manual into `dist/$(ARCH)/share/info/mach.info*` and the RPC message-ID table into `dist/$(ARCH)/share/msgids/gnumach.msgids` |
 | `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-headers` + `dist-mig` + `dist-mach`).  Real copies, not symlinks — `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
 | `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
 | `check-mach` | the actual kernel-tests recipe `check` delegates to |
@@ -265,7 +265,10 @@ fresh clones get only `origin`.
 │   ├── boot/gnumach                # kernel (copy, not symlink)
 │   ├── bin/<target>-gnu-mig        # MIG wrapper (copy of nix-built)
 │   ├── libexec/<target>-gnu-migcom # MIG codegen binary (copy of nix-built)
-│   └── include/                    # gnumach public headers (cp -r from nix-built)
+│   ├── include/                    # gnumach public headers (cp -r from nix-built)
+│   └── share/                      # docs from the gnumach package
+│       ├── info/mach.info*         # GNU Mach reference manual (~408K Info pages)
+│       └── msgids/gnumach.msgids   # RPC message-ID table for trace decoders
 ├── .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
 ├── .direnv/                        # nix-direnv per-project state (gitignored)
 ├── tools/                          # `make run` harness scenarios + libs

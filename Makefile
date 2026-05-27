@@ -688,6 +688,14 @@ $(GNUMACH_KERNEL): $(LOCAL_MIG) $(GNUMACH_CONFIGURED)
 #   `make dist-mach`  — nix-built, fully reproducible, cacheable via
 #                       cachix; the file that ships in a release
 #                       tarball of dist/<arch>/.
+#
+# Also pulls in the docs the gnumach package emits alongside the
+# kernel — `share/info/mach.info*` (the GNU Mach reference manual,
+# ~408K of Info pages) and `share/msgids/gnumach.msgids` (~12K, the
+# RPC message-ID table debuggers use to decode wire traces).  These
+# come from the same nix derivation as the kernel, so adding them
+# here is free — and they're exactly what a userspace SDK consumer
+# wants alongside the kernel + headers + mig.
 dist-mach: $(DIST_KERNEL)
 
 $(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
@@ -696,6 +704,13 @@ $(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
 	  build .#gnumach-$(ARCH) -o $(NIX_MACH_RESULT)
 	@mkdir -p $(DIST)/boot
 	install -m 0644 $(NIX_MACH_RESULT)/boot/gnumach $(DIST_KERNEL)
+	@# Refresh share/ each time so removed files don't linger.  The
+	@# cp -r preserves /nix/store epoch mtimes, so touch the tree
+	@# afterwards to give make sane staleness arithmetic.
+	@rm -rf $(DIST)/share
+	cp -r $(NIX_MACH_RESULT)/share $(DIST)/share
+	chmod -R u+w $(DIST)/share
+	@find $(DIST)/share -exec touch {} +
 
 # ---- check ----
 # Test suite shipped by upstream gnumach, surfaced as a make target:
