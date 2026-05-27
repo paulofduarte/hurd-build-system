@@ -137,6 +137,7 @@ write_files:
           nixpkgs#cachix \
           nixpkgs#direnv \
           nixpkgs#git \
+          nixpkgs#gnumake \
           nixpkgs#nix-direnv \
           nixpkgs#starship
 
