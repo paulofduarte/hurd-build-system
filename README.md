@@ -241,7 +241,7 @@ fresh clones get only `origin`.
 ├── flake.nix                       # Nix dev shells + per-target packages
 ├── flake.lock                      # pinned nixpkgs (nixos-25.11)
 ├── Makefile                        # orchestration: always dispatches through `nix develop -i`
-├── cloud-init.yaml                 # bootstrap recipe for orb-style Linux VMs
+├── cloud-init.yaml                 # bootstrap recipe for any cloud-init-capable Linux VM
 ├── .envrc                          # nix-direnv hook (`use flake .#${TARGET:-aarch64}`)
 ├── src/
 │   ├── gnumach/                    # submodule → paulofduarte/gnumach @ aarch64-tests
@@ -330,56 +330,75 @@ different default for that direnv-driven shell.  The Makefile's
 dispatch is unaffected — it always enters its own isolated shell per
 `make` invocation.
 
-The cloud-init template at the project root (`cloud-init.yaml`) is
-the easiest way to provision an orbstack Linux VM with nix +
-cachix + direnv + nix-direnv ready to go — see the next section.
+### Provisioning a Linux VM via cloud-init
 
-### Provisioning an orbstack VM
+`cloud-init.yaml` at the project root is a self-contained
+[cloud-init](https://cloudinit.readthedocs.io/) recipe.  Any
+cloud-init-capable Linux VM consuming it as *user-data* boots
+fully wired for working on this project:
 
-`cloud-init.yaml` at the project root is a self-contained cloud-init
-recipe.  When orbstack creates a Linux VM and consumes that file as
-user-data, the VM boots fully wired:
-
-- nix multi-user installed (flakes + the `@sudo` group trusted).
+- nix multi-user installed (Determinate Nix; flakes enabled; `@sudo`
+  and `@wheel` groups marked trusted-users).
 - `cachix`, `direnv`, `nix-direnv`, `starship` installed into a
   dedicated system profile at `/nix/var/nix/profiles/system-tools/`,
   separate from the Determinate Nix daemon's own profile.
 - System-wide PATH wiring via `/etc/profile.d/nix-system-tools.sh`
   — every user on the VM gets the tools on PATH, plus `TERM` and
-  `DIRENV_CONFIG=/etc/direnv` exports.
-- `/etc/bash.bashrc` appended with direnv + starship hooks (sourced
-  by every interactive bash shell, login or not).
+  `DIRENV_CONFIG=/etc/direnv` exports, and (for interactive bash)
+  the direnv + starship hooks.
 - `/etc/direnv/direnvrc` sources nix-direnv from the system profile;
-  `/etc/direnv/direnv.toml` hides the env-diff banner.  Both apply
-  to every user via `DIRENV_CONFIG`.
-- For x86_64 VMs on Apple Silicon hosts (which run under rosetta and
-  can't load seccomp BPF), `filter-syscalls = false` is added to
-  nix.conf automatically based on the presence of
-  `/proc/sys/fs/binfmt_misc/rosetta`.  Native VMs keep the seccomp
-  filter enabled.
+  `/etc/direnv/direnv.toml` hides direnv's noisy env-diff banner.
+  Both apply to every user via `DIRENV_CONFIG`.
+- The project's cachix cache pre-trusted in `nix.conf` and
+  `accept-flake-config = true` set, so the flake's `nixConfig`
+  applies silently — direnv-driven entry never hangs on a
+  trust prompt.
+- For *emulated* VMs (an x86_64 VM running under rosetta/qemu-user
+  on an aarch64 host), `filter-syscalls = false` is added to
+  nix.conf automatically — the emulation layer can't honor seccomp
+  BPF and nix would otherwise fail to install.  Native VMs leave
+  the filter on.
 
-The system-wide layout means orbstack's later-provisioned user (the
-one matching your macOS account) inherits all the tooling
-automatically — no race with cloud-init's timing.
+#### How to apply
 
-Apply when creating an orbstack machine — the flag is `--user-data`
-(long) or `-c` (short):
+The exact invocation depends on your VM platform.  cloud-init is
+supported across most of the Linux ecosystem; the user-data flag
+varies in name:
+
+| Platform | Command |
+|---|---|
+| AWS EC2 | `aws ec2 run-instances --user-data file://cloud-init.yaml ...` |
+| GCP | `gcloud compute instances create … --metadata-from-file user-data=cloud-init.yaml` |
+| Azure | `az vm create … --custom-data cloud-init.yaml` |
+| Hetzner Cloud | `hcloud server create … --user-data-from-file cloud-init.yaml` |
+| DigitalOcean | `doctl compute droplet create … --user-data-file cloud-init.yaml` |
+| OpenStack (Nova) | `openstack server create … --user-data cloud-init.yaml` |
+| `cloud-localds` + libvirt / qemu | `cloud-localds seed.iso cloud-init.yaml; qemu … -drive file=seed.iso,...` |
+| multipass | `multipass launch --cloud-init cloud-init.yaml` |
+| Lima | `limactl start --tty=false template://default --set '.cloudinit = "cloud-init.yaml"'` |
+| OrbStack | `orb create ubuntu my-hurd-vm --user-data cloud-init.yaml` |
+
+> **Note on OrbStack.** OrbStack offers an unusually convenient
+> developer UX on Apple Silicon — fast boot, transparent
+> filesystem mount of your macOS home into the VM, and one-command
+> shell access — but it's commercial software with a paid tier.
+> It's the smoothest path if your host is an ARM Mac and you don't
+> mind the price; everything in this section works equivalently on
+> any other cloud-init-capable platform listed above.
+
+#### After boot
+
+Once cloud-init finishes, log in once to pick up the bash hooks
+(direnv + starship), then `cd` into a clone of this repo.  Run
+`direnv allow .` and the cross-toolchain streams in from cachix —
+no rebuild, no prompts.
+
+#### Debugging cloud-init
+
+If user-data didn't seem to run, the canonical diagnostic commands
+work on any cloud-init system:
 
 ```sh
-orb create ubuntu my-hurd-vm --user-data cloud-init.yaml
-# or:
-orb create ubuntu my-hurd-vm -c cloud-init.yaml
-```
-
-After boot, log out and back in once (so the bash hooks load), then
-`cd` into a clone of this repo with direnv allow'd and the cross
-toolchains stream in from cachix in seconds.
-
-If cloud-init doesn't seem to have run, inspect the logs inside the
-VM:
-
-```sh
-orb shell my-hurd-vm
 sudo cloud-init status --long             # current state + reason
 sudo cat /var/log/cloud-init.log          # full init log
 sudo cat /var/log/cloud-init-output.log   # stdout/stderr from runcmd
@@ -531,7 +550,8 @@ configure so the userland test binaries link against the cross MIG.
 into the dev shell on Linux hosts (nixpkgs doesn't package GRUB on
 darwin, and `ubootQemuAarch64` is aarch64-linux-only), so
 `make check-mach` errors out early on darwin with a clear message
-pointing at orbstack or another Linux host.
+pointing at a Linux VM (provisioned via `cloud-init.yaml`) or
+another Linux host.
 *Validation:* the full x86_64 / i686 suite has been observed passing
 on a Linux/x86_64 host with KVM acceleration.
 *aarch64:* the `aarch64-tests` branch routes the kernel tests
