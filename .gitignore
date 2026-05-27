@@ -5,6 +5,7 @@
 # Toolchain — the nix flake sources for gnumach-headers + mig are
 # tracked; per-target build outputs (symlinks + result/) are not.
 /toolchain/*
+!/toolchain/cross-gcc/
 !/toolchain/gnumach-headers/
 !/toolchain/mig/
 /toolchain/gnumach-headers/result*
