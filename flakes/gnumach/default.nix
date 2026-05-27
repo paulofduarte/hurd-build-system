@@ -60,6 +60,7 @@ let
     let
       crossMig = mig."mig-${name}";
       crossPkgs = mkCrossPkgs system target;
+      cc = crossPkgs.stdenv.cc;
     in
     crossPkgs.stdenv.mkDerivation {
       pname   = "gnumach-${target.migTarget}";
@@ -83,7 +84,33 @@ let
 
       # Same gnu17 pin as the dev shell — keeps nix-built and
       # Makefile-driven kernels bit-identical when nothing else differs.
-      CFLAGS = "-std=gnu17 -g -O2";
+      #
+      # `-fdebug-prefix-map` entries rewrite the host-specific
+      # cross-toolchain /nix/store paths embedded in DWARF (header
+      # file refs from <stdarg.h> etc., comp dirs, file tables) to
+      # stable names.  Without them the same source compiled by the
+      # "same" cross-gcc 14.3.0 on different hosts produces byte-
+      # different `.debug_info` sections, because the cross-gcc is
+      # bootstrapped from a host-specific native compiler and its
+      # store hash leaks into every translation unit.
+      #
+      # The map values (`/cross-gcc`, `/cross-cc-wrapper`, ...) are
+      # arbitrary; what matters is that they're the same strings on
+      # every host.  `${cc}`/`${cc.cc}`/`${cc.bintools}` resolve at
+      # derivation-eval time, so each host's specific hash gets
+      # normalized away.
+      #
+      # NB this leaves the debug info itself intact — just paths
+      # change.  Stripping is still avoided so dist/ stays useful
+      # for gdb / addr2line.
+      CFLAGS = lib.concatStringsSep " " [
+        "-std=gnu17"
+        "-g"
+        "-O2"
+        "-fdebug-prefix-map=${cc}=/cross-cc-wrapper"
+        "-fdebug-prefix-map=${cc.cc}=/cross-gcc"
+        "-fdebug-prefix-map=${cc.bintools}=/cross-binutils-wrapper"
+      ];
 
       preConfigure = ''
         rm -f configure aclocal.m4
