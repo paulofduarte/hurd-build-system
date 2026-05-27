@@ -65,40 +65,56 @@ endif
 # x86_64+boot → sidekick prereq and the harness errors out.
 SCENARIO ?= boot
 
-# Layout.  FLAKES is source-only (the nix sub-flakes for cross-gcc,
-# gnumach-headers, mig, sidekick).  BIN holds dev-shell-visible wrapper
-# symlinks; SIDEKICK holds the x86_64 helper-VM artefacts.  Both BIN
-# and SIDEKICK are gitignored at the repo root so flakes/ stays clean
-# (no mixing of tracked sources with build outputs).
+# Layout.  Two parallel tracks per component:
+#   work/<comp>/<arch>/   in-tree iterative builds (fast incremental;
+#                         the path for active development of that
+#                         component inside `nix develop`).
+#   dist/<arch>/          clean reproducible install tree (copies of
+#                         nix-built artefacts; tarball-able as a
+#                         release with no /nix/store runtime deps for
+#                         the kernel + headers).
+#
+# FLAKES is source-only (the nix sub-flakes for cross-gcc,
+# gnumach-headers, mig, gnumach, sidekick).  SIDEKICK holds the
+# x86_64 helper-VM artefacts at the repo root, gitignored.
 PROJ          := $(CURDIR)
 SRC           := $(PROJ)/src
 WORK          := $(PROJ)/work
 FLAKES        := $(PROJ)/flakes
-BIN           := $(PROJ)/.bin
 SIDEKICK      := $(PROJ)/.sidekick
 DIST_ROOT     := $(PROJ)/dist
 DIST          := $(DIST_ROOT)/$(ARCH)
 
-GNUMACH_SRC   := $(SRC)/gnumach
-GNUMACH_BUILD := $(WORK)/gnumach/$(ARCH)
-MIG_SRC       := $(SRC)/mig
-
+# In-tree iterative build dirs.
+GNUMACH_SRC      := $(SRC)/gnumach
+GNUMACH_BUILD    := $(WORK)/gnumach/$(ARCH)
+GNUMACH_KERNEL   := $(GNUMACH_BUILD)/gnumach
 GNUMACH_CONFIGURED := $(GNUMACH_BUILD)/config.status
-# The bootable kernel image — same file the harness feeds to qemu's
-# -kernel.  On aarch64 this is the objcopy'd raw binary (the linker also
-# emits gnumach.elf alongside, which qemu silently hangs on; we don't
-# track it).  On i386/x86_64 the linker writes gnumach (ELF) directly.
-GNUMACH_KERNEL     := $(GNUMACH_BUILD)/gnumach
 
-# Nix-built per-target outputs.  `nix build -o <path>` creates a gc-root
-# symlink at <path> pointing into /nix/store; the .bin/ wrapper symlink
-# (kept for the dev-shell PATH convention) just re-targets the wrapper
-# binary inside that result.  These are regenerated cheaply on every
-# build — nix decides whether to rebuild the underlying derivation.
+MIG_SRC          := $(SRC)/mig
+MIG_BUILD        := $(WORK)/mig/$(ARCH)
+MIG_INSTALL_DIR  := $(MIG_BUILD)/install
+LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG)
+
+# Nix-built per-target outputs.  `nix build -o <path>` creates a
+# gc-root symlink at <path> pointing into /nix/store.  Each `dist-*`
+# rule copies real bytes out of these into the user-visible $(DIST)
+# tree, so dist/<arch>/ is a self-contained release prefix — no
+# symlinks back into /nix/store for the kernel or headers (the MIG
+# wrapper script still embeds a /nix/store *string* near its top,
+# but doesn't reference it at runtime; lookup is $0-relative).
 NIX_HEADERS_RESULT := $(FLAKES)/gnumach-headers/result-$(ARCH)
 NIX_MIG_RESULT     := $(FLAKES)/mig/result-$(ARCH)
 NIX_MACH_RESULT    := $(FLAKES)/gnumach/result-$(ARCH)
-MIG_INSTALLED      := $(BIN)/$(MIG)
+
+# Dist artefacts — real copies, so each file's mtime is the cp time
+# and make's regular mtime arithmetic just works (no separate stamp
+# files needed, no /nix/store epoch-mtime trap).  These ARE the
+# make rule targets.
+DIST_INCLUDE := $(DIST)/include
+DIST_MIG     := $(DIST)/bin/$(MIG)
+DIST_MIGCOM  := $(DIST)/libexec/$(MIG_TARGET)-migcom
+DIST_KERNEL  := $(DIST)/boot/gnumach
 
 # Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
 # `packages.<system>.sidekick` output — see flakes/sidekick/default.nix
@@ -132,55 +148,23 @@ HURD_GENTOO_I686_URL   := https://distfiles.gentoo.org/experimental/x86/hurd/hur
 HURD_GUIX_I686_URL     := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd-barebones.qcow2
 HURD_GUIX_X86_64_URL   := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd64-barebones.qcow2
 
-# Stamps we touch ourselves after invoking install steps.
-#
-# - HEADERS_STAMP / DIST_MACH_STAMP: gnumach's install uses
-#   `install-sh -C` (compare-only): when the source bytes match the
-#   destination, the dest isn't touched — its mtime stays old, and our
-#   staleness heuristic would loop.
-# - MIG_STAMP: anchored on a /nix/store path that has epoch mtime
-#   (nix freezes mtimes for reproducibility), so make's stat() through
-#   the symlink would always look older than the prerequisites and the
-#   rule would re-fire.
-#
-# Stamps live with what they describe: MIG_STAMP under flakes/mig/
-# (the sub-flake that owns the install), HEADERS_STAMP / DIST_MACH_STAMP
-# under $(DIST) (the destination of the install they track).
-HEADERS_STAMP      := $(DIST)/.headers-installed
-MIG_STAMP          := $(FLAKES)/mig/.mig-$(ARCH)-installed
-DIST_MACH_STAMP    := $(DIST)/.mach-installed
-
-# Defensive parse-time check.  The stamps are make's mtime anchor for the
-# nix-driven rules, but the *symlinks* they're paired with ($(DIST)/include,
-# $(MIG_INSTALLED), $(NIX_*_RESULT)) can be removed independently — by
-# `mrproper`, `git clean -fdX`, manual rm, or nix-store gc.  If any of
-# those is gone while the stamp survives, make would short-circuit and
-# the next `make mach` would run with no MIG on PATH.  Drop the stamp
-# whenever its companion artefact is missing so the rule fires again.
-ifeq ($(wildcard $(NIX_HEADERS_RESULT)),)
-$(shell rm -f $(HEADERS_STAMP))
-endif
-ifeq ($(wildcard $(DIST)/include),)
-$(shell rm -f $(HEADERS_STAMP))
-endif
-ifeq ($(wildcard $(NIX_MIG_RESULT)),)
-$(shell rm -f $(MIG_STAMP))
-endif
-ifeq ($(wildcard $(MIG_INSTALLED)),)
-$(shell rm -f $(MIG_STAMP))
-endif
+# No separate stamps — dist files are real copies (not symlinks into
+# /nix/store), so each file's mtime is the cp time and make's regular
+# mtime arithmetic is the staleness check.  In-tree artefacts
+# ($(GNUMACH_KERNEL), $(LOCAL_MIG)) are real files too.
 
 # ---- Help (always-on) ----
 .PHONY: help
 help:
 	@echo "Targets (for ARCH=$(ARCH)):"
-	@echo "  all              build the gnumach kernel (default)"
+	@echo "  all              build the gnumach kernel in-tree (default; same as 'mach')"
 	@echo "  prepare          autoreconf the source trees"
-	@echo "  dist-headers     link gnumach public headers under ./dist/$(ARCH)/include (via nix)"
-	@echo "  toolchain        dist-headers + link MIG under .bin/ (via nix)"
-	@echo "  mach             build gnumach kernel (in-tree, incremental — best for iteration)"
-	@echo "  dist-mach        clean nix-built kernel, symlinked into ./dist/$(ARCH)/boot/gnumach"
-	@echo "  dist             install everything (== dist-mach for now)"
+	@echo "  dist-headers     copy gnumach public headers into ./dist/$(ARCH)/include (via nix)"
+	@echo "  mig              build MIG in-tree under ./work/mig/$(ARCH)/ (incremental — for MIG iteration)"
+	@echo "  dist-mig         copy clean nix-built MIG into ./dist/$(ARCH)/{bin,libexec}/"
+	@echo "  mach             build gnumach kernel in-tree under ./work/gnumach/$(ARCH)/ (incremental — for kernel iteration)"
+	@echo "  dist-mach        copy clean nix-built kernel into ./dist/$(ARCH)/boot/gnumach"
+	@echo "  dist             produce a tarball-ready ./dist/$(ARCH)/ (headers + mig + kernel)"
 	@echo "  check            run upstream test suites (== check-mach; MIG tests run inline via nix)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
@@ -189,7 +173,7 @@ help:
 	@echo "  cache-push       push the $(ARCH) dev-shell closure to the project cachix cache"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
-	@echo "  mrproper         rm -rf work/ + .bin/ + .sidekick/ + all dist/ + flake gc-roots/stamps"
+	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + flake gc-roots"
 	@if [ -z "$(NIX)" ]; then \
 	  echo ""; \
 	  echo "Warning: nix is not installed. Targets require it."; \
@@ -219,12 +203,9 @@ clean:
 	@# detects "needs rebuild".
 	@rm -f $(WORK)/gnumach/*/gnumach.elf $(WORK)/gnumach/*/gnumach
 	@# MIG, gnumach-headers, and the dist-mach kernel are built by
-	@# nix; clean the per-target gc-roots, install stamps, and the
-	@# dev-shell PATH symlinks so the next build re-pulls them from
-	@# the store.
+	@# nix; clean the per-target gc-roots so the next build re-pulls
+	@# them from the store.
 	@rm -f $(FLAKES)/mig/result-* $(FLAKES)/gnumach-headers/result-* $(FLAKES)/gnumach/result-*
-	@rm -f $(FLAKES)/mig/.mig-*-installed
-	@rm -f $(BIN)/*-mig
 
 clean-dist:
 	rm -rf $(DIST)
@@ -232,15 +213,14 @@ clean-dist:
 # mrproper still nukes work/ wholesale — that's a deeper reset and we
 # expect users to invoke it when they want a clean slate including
 # configure state.  flakes/ holds tracked source files
-# (flakes/{cross-gcc,gnumach-headers,mig,sidekick}/), so we can't
-# `rm -rf` it; instead, scrub only the gitignored bits inside
-# (result-* gc-roots, .mig-*-installed stamps) and drop the
-# project-root install directories ($(BIN) and $(SIDEKICK)) wholesale.
+# (flakes/{cross-gcc,gnumach-headers,mig,gnumach,sidekick}/), so we
+# can't `rm -rf` it; instead, scrub only the gitignored bits inside
+# (result-* gc-roots) and drop the project-root install directory
+# ($(SIDEKICK)) wholesale.
 mrproper:
 	rm -rf $(WORK)
-	rm -rf $(BIN) $(SIDEKICK)
+	rm -rf $(SIDEKICK)
 	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-*
-	rm -f  $(FLAKES)/mig/.mig-*-installed
 	rm -rf $(DIST_ROOT)
 	git -C $(GNUMACH_SRC) clean -fdX
 	git -C $(MIG_SRC)     clean -fdX
@@ -254,11 +234,13 @@ mrproper:
 # initramfs is byte-identical on darwin / linux / arm64 / x86_64.
 # See flakes/sidekick/{default.nix,packages.nix,init.sh}.
 #
-# Stamp-file pattern (matches HEADERS_STAMP / DIST_MACH_STAMP
-# convention): one recipe produces both SIDEKICK_KERNEL and
+# Stamp-file pattern: one recipe produces both SIDEKICK_KERNEL and
 # SIDEKICK_INITRD.  Make 3.81 lacks grouped-targets (`&:`, Make 4.3+)
 # so listing both files as a target would race under `-j`; using a
-# stamp as the sole real target avoids that.
+# stamp as the sole real target avoids that.  (The component targets
+# above all use real artefacts as their make rules — see the comment
+# at $(DIST_INCLUDE) / $(LOCAL_MIG) / $(DIST_KERNEL) — but the
+# sidekick build can't pull the same trick without Make 4.3+.)
 .PHONY: sidekick
 sidekick: $(SIDEKICK_STAMP)
 
@@ -349,29 +331,31 @@ _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push,
 # runs and gnumach's own make decides what to do.
 
 _PREPARE_FILES   := $(GNUMACH_SRC)/configure
-# Stamp files (touched by us) are the makefile-tracked staleness anchors.
-# Make's stat() follows symlinks, so the NIX_*_RESULT gc-roots — which
-# point into /nix/store with epoch mtimes — would otherwise mislead
-# every downstream comparison.
-_HEADERS_FILES   := $(HEADERS_STAMP)
-_TOOLCHAIN_FILES := $(_HEADERS_FILES) $(MIG_STAMP)
-_MACH_FILES      := $(_TOOLCHAIN_FILES) $(GNUMACH_KERNEL)
-# dist-mach no longer depends on the in-tree kernel — it goes
-# straight to `nix build .#gnumach-$(ARCH)`.  Its stamp is the only
-# sentinel; the nix CLI itself decides whether real work is needed.
-_DIST_MACH_FILES := $(DIST_MACH_STAMP)
+# Sentinel files are real artefacts (dist copies or in-tree binaries),
+# not stamps — each has a real mtime (cp / install time) that make's
+# arithmetic uses for staleness checks.
+_HEADERS_FILES   := $(DIST_INCLUDE)
+_MIG_FILES       := $(_HEADERS_FILES) $(LOCAL_MIG)
+_MACH_FILES      := $(_MIG_FILES) $(GNUMACH_KERNEL)
+_DIST_MIG_FILES  := $(DIST_MIG) $(DIST_MIGCOM)
+_DIST_MACH_FILES := $(DIST_KERNEL)
+_DIST_FILES      := $(_HEADERS_FILES) $(_DIST_MIG_FILES) $(_DIST_MACH_FILES)
 
 _SENTINEL.prepare      := $(_PREPARE_FILES)
 _PRIMARY.prepare       := $(_PREPARE_FILES)
 _WATCH.prepare         := $(GNUMACH_SRC)/configure.ac
 
 _SENTINEL.dist-headers := $(_HEADERS_FILES)
-_PRIMARY.dist-headers  := $(HEADERS_STAMP)
+_PRIMARY.dist-headers  := $(DIST_INCLUDE)
 _WATCH.dist-headers    := $(GNUMACH_SRC)/include flakes/gnumach-headers
 
-_SENTINEL.toolchain    := $(_TOOLCHAIN_FILES)
-_PRIMARY.toolchain     := $(MIG_STAMP)
-_WATCH.toolchain       := $(MIG_SRC) $(GNUMACH_SRC)/include flakes/mig flakes/gnumach-headers
+_SENTINEL.mig          := $(_MIG_FILES)
+_PRIMARY.mig           := $(LOCAL_MIG)
+_WATCH.mig             := $(MIG_SRC) flakes/mig
+
+_SENTINEL.dist-mig     := $(_DIST_MIG_FILES)
+_PRIMARY.dist-mig      := $(DIST_MIG)
+_WATCH.dist-mig        := $(MIG_SRC) flakes/mig
 
 _SENTINEL.mach         := $(_MACH_FILES)
 _PRIMARY.mach          := $(GNUMACH_KERNEL)
@@ -382,12 +366,12 @@ _PRIMARY.all           := $(GNUMACH_KERNEL)
 _WATCH.all             := $(GNUMACH_SRC)
 
 _SENTINEL.dist-mach    := $(_DIST_MACH_FILES)
-_PRIMARY.dist-mach     := $(DIST_MACH_STAMP)
+_PRIMARY.dist-mach     := $(DIST_KERNEL)
 _WATCH.dist-mach       := $(GNUMACH_SRC) flakes/gnumach
 
-_SENTINEL.dist         := $(_DIST_MACH_FILES)
-_PRIMARY.dist          := $(DIST_MACH_STAMP)
-_WATCH.dist            := $(GNUMACH_SRC) flakes/gnumach
+_SENTINEL.dist         := $(_DIST_FILES)
+_PRIMARY.dist          := $(DIST_KERNEL)
+_WATCH.dist            := $(GNUMACH_SRC) $(MIG_SRC) flakes/gnumach flakes/mig flakes/gnumach-headers
 
 # We rely on `git ls-files` to enumerate "real source" — anything else
 # (configure, Makefile.in, autom4te.cache/, INSTALL, doc/stamp-vti, ...) is
@@ -584,7 +568,7 @@ REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC CFLAGS
 $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#aarch64' (or .#x86_64 / .#x86_64-xen / .#i686 / .#i686-xen))))
 
-.PHONY: all dist prepare dist-headers toolchain mach dist-mach \
+.PHONY: all dist prepare dist-headers mig dist-mig mach dist-mach \
         check check-mach run run-help
 
 # Explicit default — `help` (defined above) would otherwise win the
@@ -592,11 +576,12 @@ $(foreach v,$(REQUIRED_VARS), \
 .DEFAULT_GOAL := all
 
 # ---- Default & top-level groupings ----
-# `all` and `dist` are NOT aliases: they list real dependencies we'll grow
-# over time (e.g. once Hurd userland builds, add `hurd` / `dist-hurd` here).
+# `all` and `dist` are NOT aliases: they list real dependencies we'll
+# grow over time (e.g. once Hurd userland builds, add `hurd` /
+# `dist-hurd` here).
 all: mach
 
-dist: dist-mach
+dist: dist-headers dist-mig dist-mach
 
 # ---- prepare ----
 # `autoreconf -i` (no -f): install missing aux files and regenerate ONLY
@@ -613,89 +598,104 @@ $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac
 	cd $(GNUMACH_SRC) && autoreconf -i
 
 # ---- dist-headers ----
-# Public Mach headers come from `nix build .#gnumach-headers-$(ARCH)`.
-# The stamp is the makefile-tracked artifact (regular file, real mtime
-# we set via touch); $(NIX_HEADERS_RESULT) is a /nix/store symlink whose
-# stat() resolves to epoch — useless for make's mtime arithmetic — and
-# $(DIST)/include is the user-facing legacy path that consumers expect.
-dist-headers: $(HEADERS_STAMP)
+# Public Mach headers come from `nix build .#gnumach-headers-$(ARCH)`,
+# copied (not symlinked) into $(DIST_INCLUDE) so the dist/ tree is
+# self-contained and tarball-able.  The directory's mtime is set
+# explicitly at the end so make's stat() sees a real timestamp
+# (cp -r preserves source mtimes, which are /nix/store epoch).
+dist-headers: $(DIST_INCLUDE)
 
-$(HEADERS_STAMP): flakes/gnumach-headers/default.nix flake.nix
+$(DIST_INCLUDE): flakes/gnumach-headers/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_HEADERS_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  build .#gnumach-headers-$(ARCH) -o $(NIX_HEADERS_RESULT)
 	@mkdir -p $(DIST)
-	ln -sfn $(NIX_HEADERS_RESULT)/include $(DIST)/include
-	@touch $@
+	@rm -rf $(DIST_INCLUDE)
+	cp -r $(NIX_HEADERS_RESULT)/include $(DIST_INCLUDE)
+	chmod -R u+w $(DIST_INCLUDE)
+	@touch $(DIST_INCLUDE)
 
-# ---- toolchain ----
-# MIG comes from `nix build .#mig-$(ARCH)`.  Its test-suite runs
-# inline (doCheck = true), so a successful build means tests passed.
-#
-# We install a tiny shell shim at $(BIN)/<MIG_TARGET>-mig that
-# `exec`s the store-path wrapper directly (NOT a symlink to it).
-# The MIG wrapper script uses `dirname "$0"` to locate its sibling
-# migcom under `../libexec/<arch>-gnu-migcom`; with a symlink in
-# $(BIN), $0 is the symlink path and the lookup lands at
-# `<repo>/libexec/...` (nonexistent).  With a shim, $0 becomes the
-# absolute store path and the wrapper finds migcom alongside itself
-# in the store.
-#
-# Same stamp pattern as dist-headers above for the same mtime reason.
-toolchain: dist-headers $(MIG_STAMP)
+# ---- mig ----
+# In-tree iterative MIG build.  autoreconf in src/mig (writes
+# gitignored files — see the submodule's .gitignore), configure +
+# make + make install into $(MIG_INSTALL_DIR).  The wrapper at
+# $(LOCAL_MIG) uses dirname-$0/../libexec at runtime, so its sibling
+# migcom resolves under $(MIG_INSTALL_DIR)/libexec/.  Re-running
+# `make mig` after editing src/mig is incremental (autoreconf -i
+# doesn't rewrite up-to-date outputs, and the build dir's
+# config.status survives between invocations).
+mig: $(LOCAL_MIG)
 
-$(MIG_STAMP): flakes/mig/default.nix flake.nix
+$(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE)
+	@mkdir -p $(MIG_BUILD)
+	@# MIG is a *native* host tool — it runs on the build host and
+	@# emits portable .c/.h.  The dev-shell's $CC is the cross
+	@# compiler (cross-gcc/default.nix shellHook pins it to the
+	@# kernel-side toolchain), which would fail configure's "can
+	@# create executables" test on the host.  Override to the native
+	@# gcc that the dev shell also provides via pkgs.gcc; keep
+	@# TARGET_CC (already exported by the dev shell) for cpu.symc.
+	cd $(MIG_BUILD) && [ -f config.status ] || \
+	  CC=gcc LD= AR= NM= RANLIB= STRIP= OBJCOPY= \
+	  $(MIG_SRC)/configure \
+	    --target=$(MIG_TARGET) \
+	    --prefix=$(MIG_INSTALL_DIR) \
+	    TARGET_CPPFLAGS="-I$(DIST_INCLUDE)"
+	cd $(MIG_BUILD) && $(MAKE) CC=gcc install
+
+$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
+	cd $(MIG_SRC) && autoreconf -i
+
+# ---- dist-mig ----
+# Clean nix-built MIG — wrapper and migcom copied into $(DIST)/{bin,
+# libexec}/ as real files.  The wrapper computes its libexec via
+# dirname-$0/../libexec at runtime, so this layout works whether
+# dist/ stays here or gets tarballed and extracted elsewhere.
+# Install -m sets executable mode (defaults differ across platforms).
+dist-mig: $(DIST_MIG)
+
+$(DIST_MIG): flakes/mig/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_MIG_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  build .#mig-$(ARCH) -o $(NIX_MIG_RESULT)
-	@mkdir -p $(BIN)
-	@store=$$(readlink $(NIX_MIG_RESULT)); \
-	  printf '#!/bin/sh\nexec %s "$$@"\n' \
-	    "$$store/bin/$(MIG_TARGET)-mig" > $(MIG_INSTALLED); \
-	  chmod +x $(MIG_INSTALLED)
-	@touch $@
+	@mkdir -p $(DIST)/bin $(DIST)/libexec
+	install -m 0755 $(NIX_MIG_RESULT)/bin/$(MIG_TARGET)-mig $(DIST_MIG)
+	install -m 0755 $(NIX_MIG_RESULT)/libexec/$(MIG_TARGET)-migcom $(DIST_MIGCOM)
 
 # ---- mach ----
-# Kernel build still uses a local configured tree under
-# $(GNUMACH_BUILD) — the cross-toolchain compiles + links the .elf
-# there.  Headers + MIG come in via nix, satisfied by the `toolchain`
-# prereq.  USER_MIG points at the same nix-backed wrapper so gnumach's
-# tests/configfrag.ac records the path that `make check-mach` will exec.
+# In-tree kernel build under $(GNUMACH_BUILD), using the in-tree MIG
+# from `make mig`.  USER_MIG/MIG point at $(LOCAL_MIG) explicitly so
+# gnumach's AC_CHECK_TOOL doesn't have to discover it via PATH.
+# Incremental compile — re-running `make mach` after editing
+# src/gnumach rebuilds only the changed translation units.
 mach: $(GNUMACH_KERNEL)
 
-$(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG_STAMP)
+$(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(LOCAL_MIG)
 	mkdir -p $(GNUMACH_BUILD)
 	cd $(GNUMACH_BUILD) && \
-	  USER_MIG=$(MIG_INSTALLED) \
+	  USER_MIG=$(LOCAL_MIG) MIG=$(LOCAL_MIG) \
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
-$(GNUMACH_KERNEL): toolchain $(GNUMACH_CONFIGURED)
+$(GNUMACH_KERNEL): $(LOCAL_MIG) $(GNUMACH_CONFIGURED)
 	cd $(GNUMACH_BUILD) && $(MAKE)
 
-# `dist-mach` ships the *clean nix-built kernel*, distinct from
-# `make mach` which is the fast in-tree iterative build under $(WORK).
-# Two paths intentionally coexist:
+# ---- dist-mach ----
+# Clean nix-built kernel, copied into $(DIST_KERNEL) as a real file.
+# Counterpart to `mach`:
 #
-#   `make mach`       — in-tree configure + make, incremental
-#                       compile, no closure rebuild on tiny edits.
-#                       The path you want while iterating on
-#                       src/gnumach inside `nix develop`.
-#   `make dist-mach`  — `nix build .#gnumach-$(ARCH)`, fully
-#                       reproducible, cacheable via cachix.  Symlink
-#                       the resulting bootable image into the
-#                       conventional dist/$(ARCH)/boot/gnumach
-#                       location so downstream consumers find it
-#                       under the legacy path.
-dist-mach: $(DIST_MACH_STAMP)
+#   `make mach`       — in-tree, incremental, fast iteration
+#   `make dist-mach`  — nix-built, fully reproducible, cacheable via
+#                       cachix; the file that ships in a release
+#                       tarball of dist/<arch>/.
+dist-mach: $(DIST_KERNEL)
 
-$(DIST_MACH_STAMP): flakes/gnumach/default.nix flake.nix
+$(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_MACH_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  build .#gnumach-$(ARCH) -o $(NIX_MACH_RESULT)
 	@mkdir -p $(DIST)/boot
-	ln -sfn $(NIX_MACH_RESULT)/boot/gnumach $(DIST)/boot/gnumach
-	@mkdir -p $(@D) && touch $@
+	install -m 0644 $(NIX_MACH_RESULT)/boot/gnumach $(DIST_KERNEL)
 
 # ---- check ----
 # Test suite shipped by upstream gnumach, surfaced as a make target:
@@ -707,7 +707,7 @@ $(DIST_MACH_STAMP): flakes/gnumach/default.nix flake.nix
 #
 # MIG's own test-suite has no make target — it runs inline via doCheck=true
 # on every `nix build .#mig-<arch>`, which is transitively triggered by
-# `make toolchain`, `make mach`, etc.
+# `make dist-mig` / `make dist-mach` / `make dist`.
 #
 # No _SENTINEL entries — running a test suite is not idempotent, so we
 # always dispatch and let the inner make decide.

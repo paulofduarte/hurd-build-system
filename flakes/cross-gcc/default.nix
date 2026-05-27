@@ -180,11 +180,12 @@ let
           then "export UBOOT_BIN=${pkgs.ubootQemuAarch64}/u-boot.bin"
           else "unset UBOOT_BIN"}
 
-        # Locally-installed tools (the MIG wrapper symlinks, mainly).
-        # Lives at the repo root, separate from the tracked sub-flake
-        # sources under flakes/.  Enter the dev shell from the
-        # project root for this to resolve correctly.
-        export PATH="$PWD/.bin:$PATH"
+        # Per-arch tool dirs on PATH.  In-tree mig (work/mig/$ARCH/
+        # install/bin) wins if present — the iterative-dev path.
+        # Dist mig (dist/$ARCH/bin) is the fallback from `make
+        # dist-mig`.  Both are conditional on disk existence; adding
+        # absent dirs to PATH is harmless.
+        export PATH="$PWD/work/mig/$ARCH/install/bin:$PWD/dist/$ARCH/bin:$PATH"
       '';
     };
 

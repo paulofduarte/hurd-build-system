@@ -219,11 +219,12 @@ fresh clones get only `origin`.
 |---|---|
 | `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
 | `prepare` | `autoreconf -i` on `src/gnumach` (MIG no longer needs local autoreconf — its nix derivation handles it) |
-| `dist-headers` | symlink the gnumach public headers from the nix-built `gnumach-headers-<ARCH>` package into `dist/$(ARCH)/include` |
-| `toolchain` | `dist-headers` + symlink the nix-built `mig-<ARCH>` wrapper into `.bin/<arch>-gnu-mig` |
-| `mach` | build the gnumach kernel binary **in-tree** under `work/gnumach/$(ARCH)/` — incremental compile, the path you want while iterating inside `nix develop` |
-| `dist-mach` | run `nix build .#gnumach-$(ARCH)` and symlink the resulting kernel into `dist/$(ARCH)/boot/gnumach` — clean reproducible, cacheable via cachix |
-| `dist` | install everything (currently `dist-mach`; will grow) |
+| `dist-headers` | copy gnumach public headers (from nix-built `gnumach-headers-<ARCH>`) into `dist/$(ARCH)/include` |
+| `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` — incremental compile, the path you want while iterating on `src/mig` inside `nix develop` |
+| `dist-mig` | copy clean nix-built MIG (`mig-<ARCH>`) into `dist/$(ARCH)/{bin,libexec}/` |
+| `mach` | build the gnumach kernel binary **in-tree** under `work/gnumach/$(ARCH)/` using the in-tree MIG from `make mig` — incremental compile, the path you want while iterating on `src/gnumach` |
+| `dist-mach` | copy clean nix-built kernel (`gnumach-<ARCH>`) into `dist/$(ARCH)/boot/gnumach` |
+| `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-headers` + `dist-mig` + `dist-mach`).  Real copies, not symlinks — `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
 | `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
 | `check-mach` | the actual kernel-tests recipe `check` delegates to |
 | `run` | boot the built kernel in qemu — see the [Run](#3-run) section for scenarios/flags |
@@ -232,7 +233,7 @@ fresh clones get only `origin`.
 | `cache-push` | push the current `$(ARCH)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(ARCH)/` (current target only) |
-| `mrproper` | `rm -rf work/`, the project-root install dirs (`.bin/`, `.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`) + install stamps (`flakes/mig/.mig-*-installed`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
+| `mrproper` | `rm -rf work/`, the project-root install dir (`.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
 
 ## Directory layout
 
@@ -246,8 +247,9 @@ fresh clones get only `origin`.
 ├── src/
 │   ├── gnumach/                    # submodule → paulofduarte/gnumach @ aarch64-tests
 │   └── mig/                        # submodule → paulofduarte/mig @ master
-├── work/                           # local build directories (gitignored)
-│   └── gnumach/<target>/
+├── work/                           # local in-tree build dirs (gitignored)
+│   ├── mig/<target>/install/       # iterative MIG build (`make mig`)
+│   └── gnumach/<target>/           # iterative kernel build (`make mach`)
 ├── flakes/                         # nix sub-flakes (source-only)
 │   ├── cross-gcc/default.nix       # mkDevShell + x86_64-darwin config.sub overlay
 │   ├── gnumach-headers/default.nix # per-target headers derivation
@@ -258,12 +260,12 @@ fresh clones get only `origin`.
 │   ├── gnumach/default.nix         # per-target kernel derivation (clean reproducible build)
 │   ├── gnumach/result-*            # per-target gc-root symlinks (gitignored)
 │   └── sidekick/                   # nix derivation for the helper VM (Alpine fetch)
-├── .bin/<target>-gnu-mig           # PATH-discovery symlinks → flakes/mig/result-* (gitignored)
 ├── .sidekick/                      # helper-VM artefacts (vmlinuz + initramfs.cpio.gz, gitignored)
-├── dist/<target>/                  # final install prefix (gitignored)
-│   ├── boot/gnumach
-│   ├── include/                    # symlink → nix-built gnumach-headers-<target>
-│   └── .{headers,mach}-installed   # staleness stamps
+├── dist/<target>/                  # clean install tree — real copies, tarball-able (gitignored)
+│   ├── boot/gnumach                # kernel (copy, not symlink)
+│   ├── bin/<target>-gnu-mig        # MIG wrapper (copy of nix-built)
+│   ├── libexec/<target>-gnu-migcom # MIG codegen binary (copy of nix-built)
+│   └── include/                    # gnumach public headers (cp -r from nix-built)
 ├── .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
 ├── .direnv/                        # nix-direnv per-project state (gitignored)
 ├── tools/                          # `make run` harness scenarios + libs
