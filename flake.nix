@@ -99,19 +99,28 @@
             # 2021-vintage config.sub stays in the source tree, and it rejects
             # the cross triple `aarch64-unknown-none-elf` with "Kernel `none'
             # not known to work with OS `elf'" — the Aug-2023 gnu-config patch
-            # that added that case is only in nixpkgs' replacement config.sub,
+            # that added that case is only in nixpkgs' replacement config.sub
             # (`gnu-config-2024-01-01`), not in GCC's bundled one.
             #
-            # `gcc-unwrapped` at the pkgs top level is just an alias to
-            # `gcc14.cc`, so overriding it doesn't propagate — re-wrap the
-            # underlying cc with the hook added and bind it back as `gcc14`.
+            # Two cross-GCC derivations participate in the bootstrap: the
+            # final `gcc14` and the stage-1 `gccWithoutTargetLibc` (built
+            # first, used to compile newlib).  Both share the same broken
+            # bundled config.sub and need the hook.  Override `.cc` via the
+            # wrapper's own `.override` so the wrap-time args (`bintools`,
+            # `libc`, `withoutTargetLibc`) stay intact.
             overlays = nixpkgs.lib.optionals (system == "x86_64-darwin") [
-              (final: prev: {
-                gcc14 = final.wrapCC (prev.gcc14.cc.overrideAttrs (old: {
-                  nativeBuildInputs = (old.nativeBuildInputs or [])
-                    ++ [ final.buildPackages.updateAutotoolsGnuConfigScriptsHook ];
-                }));
-              })
+              (final: prev:
+                let
+                  withConfigSubHook = wrapped: wrapped.override {
+                    cc = wrapped.cc.overrideAttrs (old: {
+                      nativeBuildInputs = (old.nativeBuildInputs or [])
+                        ++ [ prev.buildPackages.updateAutotoolsGnuConfigScriptsHook ];
+                    });
+                  };
+                in {
+                  gcc14                = withConfigSubHook prev.gcc14;
+                  gccWithoutTargetLibc = withConfigSubHook prev.gccWithoutTargetLibc;
+                })
             ];
           };
 
