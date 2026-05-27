@@ -221,8 +221,8 @@ fresh clones get only `origin`.
 | `prepare` | `autoreconf -i` on `src/gnumach` (MIG no longer needs local autoreconf — its nix derivation handles it) |
 | `dist-headers` | symlink the gnumach public headers from the nix-built `gnumach-headers-<ARCH>` package into `dist/$(ARCH)/include` |
 | `toolchain` | `dist-headers` + symlink the nix-built `mig-<ARCH>` wrapper into `.bin/<arch>-gnu-mig` |
-| `mach` | build the gnumach kernel binary |
-| `dist-mach` | install gnumach into `dist/$(ARCH)/` |
+| `mach` | build the gnumach kernel binary **in-tree** under `work/gnumach/$(ARCH)/` — incremental compile, the path you want while iterating inside `nix develop` |
+| `dist-mach` | run `nix build .#gnumach-$(ARCH)` and symlink the resulting kernel into `dist/$(ARCH)/boot/gnumach` — clean reproducible, cacheable via cachix |
 | `dist` | install everything (currently `dist-mach`; will grow) |
 | `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
 | `check-mach` | the actual kernel-tests recipe `check` delegates to |
@@ -232,7 +232,7 @@ fresh clones get only `origin`.
 | `cache-push` | push the current `$(ARCH)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(ARCH)/` (current target only) |
-| `mrproper` | `rm -rf work/`, the project-root install dirs (`.bin/`, `.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig}/result-*`) + install stamps (`flakes/mig/.mig-*-installed`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,sidekick}/` are preserved. |
+| `mrproper` | `rm -rf work/`, the project-root install dirs (`.bin/`, `.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`) + install stamps (`flakes/mig/.mig-*-installed`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
 
 ## Directory layout
 
@@ -255,6 +255,8 @@ fresh clones get only `origin`.
 │   ├── mig/default.nix             # per-target MIG derivation
 │   ├── mig/result-*                # per-target gc-root symlinks (gitignored)
 │   ├── mig/.mig-<target>-installed # Makefile staleness stamps (gitignored)
+│   ├── gnumach/default.nix         # per-target kernel derivation (clean reproducible build)
+│   ├── gnumach/result-*            # per-target gc-root symlinks (gitignored)
 │   └── sidekick/                   # nix derivation for the helper VM (Alpine fetch)
 ├── .bin/<target>-gnu-mig           # PATH-discovery symlinks → flakes/mig/result-* (gitignored)
 ├── .sidekick/                      # helper-VM artefacts (vmlinuz + initramfs.cpio.gz, gitignored)

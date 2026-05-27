@@ -97,6 +97,7 @@ GNUMACH_KERNEL     := $(GNUMACH_BUILD)/gnumach
 # build — nix decides whether to rebuild the underlying derivation.
 NIX_HEADERS_RESULT := $(FLAKES)/gnumach-headers/result-$(ARCH)
 NIX_MIG_RESULT     := $(FLAKES)/mig/result-$(ARCH)
+NIX_MACH_RESULT    := $(FLAKES)/gnumach/result-$(ARCH)
 MIG_INSTALLED      := $(BIN)/$(MIG)
 
 # Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
@@ -177,8 +178,8 @@ help:
 	@echo "  prepare          autoreconf the source trees"
 	@echo "  dist-headers     link gnumach public headers under ./dist/$(ARCH)/include (via nix)"
 	@echo "  toolchain        dist-headers + link MIG under .bin/ (via nix)"
-	@echo "  mach             build gnumach kernel"
-	@echo "  dist-mach        install gnumach into ./dist/$(ARCH)/"
+	@echo "  mach             build gnumach kernel (in-tree, incremental — best for iteration)"
+	@echo "  dist-mach        clean nix-built kernel, symlinked into ./dist/$(ARCH)/boot/gnumach"
 	@echo "  dist             install everything (== dist-mach for now)"
 	@echo "  check            run upstream test suites (== check-mach; MIG tests run inline via nix)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
@@ -217,10 +218,11 @@ clean:
 	@# our sentinel tracking depends on so the next `make` correctly
 	@# detects "needs rebuild".
 	@rm -f $(WORK)/gnumach/*/gnumach.elf $(WORK)/gnumach/*/gnumach
-	@# MIG + gnumach-headers are built by nix; clean the per-target
-	@# gc-roots, install stamps, and the dev-shell PATH symlinks so the
-	@# next build re-pulls them from the store.
-	@rm -f $(FLAKES)/mig/result-* $(FLAKES)/gnumach-headers/result-*
+	@# MIG, gnumach-headers, and the dist-mach kernel are built by
+	@# nix; clean the per-target gc-roots, install stamps, and the
+	@# dev-shell PATH symlinks so the next build re-pulls them from
+	@# the store.
+	@rm -f $(FLAKES)/mig/result-* $(FLAKES)/gnumach-headers/result-* $(FLAKES)/gnumach/result-*
 	@rm -f $(FLAKES)/mig/.mig-*-installed
 	@rm -f $(BIN)/*-mig
 
@@ -237,7 +239,7 @@ clean-dist:
 mrproper:
 	rm -rf $(WORK)
 	rm -rf $(BIN) $(SIDEKICK)
-	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-*
+	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-*
 	rm -f  $(FLAKES)/mig/.mig-*-installed
 	rm -rf $(DIST_ROOT)
 	git -C $(GNUMACH_SRC) clean -fdX
@@ -354,7 +356,10 @@ _PREPARE_FILES   := $(GNUMACH_SRC)/configure
 _HEADERS_FILES   := $(HEADERS_STAMP)
 _TOOLCHAIN_FILES := $(_HEADERS_FILES) $(MIG_STAMP)
 _MACH_FILES      := $(_TOOLCHAIN_FILES) $(GNUMACH_KERNEL)
-_DIST_MACH_FILES := $(_MACH_FILES) $(DIST_MACH_STAMP)
+# dist-mach no longer depends on the in-tree kernel — it goes
+# straight to `nix build .#gnumach-$(ARCH)`.  Its stamp is the only
+# sentinel; the nix CLI itself decides whether real work is needed.
+_DIST_MACH_FILES := $(DIST_MACH_STAMP)
 
 _SENTINEL.prepare      := $(_PREPARE_FILES)
 _PRIMARY.prepare       := $(_PREPARE_FILES)
@@ -378,11 +383,11 @@ _WATCH.all             := $(GNUMACH_SRC)
 
 _SENTINEL.dist-mach    := $(_DIST_MACH_FILES)
 _PRIMARY.dist-mach     := $(DIST_MACH_STAMP)
-_WATCH.dist-mach       := $(GNUMACH_SRC)
+_WATCH.dist-mach       := $(GNUMACH_SRC) flakes/gnumach
 
 _SENTINEL.dist         := $(_DIST_MACH_FILES)
 _PRIMARY.dist          := $(DIST_MACH_STAMP)
-_WATCH.dist            := $(GNUMACH_SRC)
+_WATCH.dist            := $(GNUMACH_SRC) flakes/gnumach
 
 # We rely on `git ls-files` to enumerate "real source" — anything else
 # (configure, Makefile.in, autom4te.cache/, INSTALL, doc/stamp-vti, ...) is
@@ -668,10 +673,28 @@ $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG_STAMP)
 $(GNUMACH_KERNEL): toolchain $(GNUMACH_CONFIGURED)
 	cd $(GNUMACH_BUILD) && $(MAKE)
 
+# `dist-mach` ships the *clean nix-built kernel*, distinct from
+# `make mach` which is the fast in-tree iterative build under $(WORK).
+# Two paths intentionally coexist:
+#
+#   `make mach`       — in-tree configure + make, incremental
+#                       compile, no closure rebuild on tiny edits.
+#                       The path you want while iterating on
+#                       src/gnumach inside `nix develop`.
+#   `make dist-mach`  — `nix build .#gnumach-$(ARCH)`, fully
+#                       reproducible, cacheable via cachix.  Symlink
+#                       the resulting bootable image into the
+#                       conventional dist/$(ARCH)/boot/gnumach
+#                       location so downstream consumers find it
+#                       under the legacy path.
 dist-mach: $(DIST_MACH_STAMP)
 
-$(DIST_MACH_STAMP): $(GNUMACH_KERNEL)
-	cd $(GNUMACH_BUILD) && $(MAKE) install
+$(DIST_MACH_STAMP): flakes/gnumach/default.nix flake.nix
+	@mkdir -p $(dir $(NIX_MACH_RESULT))
+	$(NIX) --extra-experimental-features 'nix-command flakes' \
+	  build .#gnumach-$(ARCH) -o $(NIX_MACH_RESULT)
+	@mkdir -p $(DIST)/boot
+	ln -sfn $(NIX_MACH_RESULT)/boot/gnumach $(DIST)/boot/gnumach
 	@mkdir -p $(@D) && touch $@
 
 # ---- check ----
