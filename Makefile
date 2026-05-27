@@ -58,6 +58,13 @@ ifndef MIG
 MIG := $(MIG_TARGET)-mig
 endif
 
+# Default SCENARIO so `make run` works without an explicit override.
+# The inner tools/dispatch.sh also defaults to boot, but the make-level
+# _RUN_PREREQS rule below needs the value at *parse time* — without
+# this default, `make TARGET=x86_64 run` doesn't pick up the
+# x86_64+boot → sidekick prereq and the harness errors out.
+SCENARIO ?= boot
+
 # Layout.  FLAKES is source-only (the nix sub-flakes for cross-gcc,
 # gnumach-headers, mig, sidekick).  BIN holds dev-shell-visible wrapper
 # symlinks; SIDEKICK holds the x86_64 helper-VM artefacts.  Both BIN
