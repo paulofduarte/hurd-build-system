@@ -464,8 +464,8 @@ CPU-bound.
 |---|---|---|
 | `aarch64-darwin`  | ✅ | ~30-60 s |
 | `aarch64-linux`   | ✅ | ~30-60 s |
+| `x86_64-linux`    | ✅ | ~30-60 s |
 | `x86_64-darwin`   | not yet | ~10-20 min (bootstraps cross-GCC) |
-| `x86_64-linux`    | not yet | ~10-20 min (bootstraps cross-GCC) |
 
 After that, the toolchain lives in `/nix/store` and subsequent builds
 reuse it — that's where the ~40 s incremental figure above comes from.
