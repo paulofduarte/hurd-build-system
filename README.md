@@ -261,7 +261,6 @@ fresh clones get only `origin`.
 ├── flake.lock                      # pinned nixpkgs (nixos-25.11)
 ├── Makefile                        # orchestration: always dispatches through `nix develop -i`
 ├── cloud-init.yaml                 # bootstrap recipe for any cloud-init-capable Linux VM
-├── .envrc                          # nix-direnv hook (`use flake .#${ARCH:-aarch64}`)
 ├── src/
 │   ├── gnumach/                    # submodule → paulofduarte/gnumach @ aarch64-tests
 │   └── mig/                        # submodule → paulofduarte/mig @ master
@@ -290,7 +289,6 @@ fresh clones get only `origin`.
 │       ├── info/mach.info*         # GNU Mach reference manual (~408K Info pages)
 │       └── msgids/gnumach.msgids   # RPC message-ID table for trace decoders
 ├── .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
-├── .direnv/                        # nix-direnv per-project state (gitignored)
 └── LICENSE                         # GPL-2.0
 ```
 
@@ -362,15 +360,6 @@ GitHub secrets as `CACHIX_AUTH_TOKEN` (from
 Trigger manually via the Actions tab → "Cache cross-toolchains" →
 "Run workflow" if you want to refresh without a flake change.
 
-### Direnv (optional)
-
-If you use [direnv](https://direnv.net/) + nix-direnv, the project's
-`.envrc` activates `.#${ARCH:-aarch64}` automatically when you `cd`
-into the repo.  Set `ARCH` in your shell before `cd` to pick a
-different default for that direnv-driven shell.  The Makefile's
-dispatch is unaffected — it always enters its own isolated shell per
-`make` invocation.
-
 ### Provisioning a Linux VM via cloud-init
 
 `cloud-init.yaml` at the project root is a self-contained
@@ -380,20 +369,15 @@ fully wired for working on this project:
 
 - nix multi-user installed (Determinate Nix; flakes enabled; `@sudo`
   and `@wheel` groups marked trusted-users).
-- `cachix`, `direnv`, `nix-direnv`, `starship` installed into a
-  dedicated system profile at `/nix/var/nix/profiles/system-tools/`,
-  separate from the Determinate Nix daemon's own profile.
+- `cachix`, `git`, `gnumake`, `starship` installed into a dedicated
+  system profile at `/nix/var/nix/profiles/system-tools/`, separate
+  from the Determinate Nix daemon's own profile.
 - System-wide PATH wiring via `/etc/profile.d/nix-system-tools.sh`
-  — every user on the VM gets the tools on PATH, plus `TERM` and
-  `DIRENV_CONFIG=/etc/direnv` exports, and (for interactive bash)
-  the direnv + starship hooks.
-- `/etc/direnv/direnvrc` sources nix-direnv from the system profile;
-  `/etc/direnv/direnv.toml` hides direnv's noisy env-diff banner.
-  Both apply to every user via `DIRENV_CONFIG`.
+  — every user on the VM gets the tools on PATH, plus a `TERM`
+  default and (for interactive bash) the starship hook.
 - The project's cachix cache pre-trusted in `nix.conf` and
   `accept-flake-config = true` set, so the flake's `nixConfig`
-  applies silently — direnv-driven entry never hangs on a
-  trust prompt.
+  applies silently — `nix develop` never hangs on a trust prompt.
 - For *emulated* VMs (an x86_64 VM running under rosetta/qemu-user
   on an aarch64 host), `filter-syscalls = false` is added to
   nix.conf automatically — the emulation layer can't honor seccomp
@@ -430,9 +414,10 @@ varies in name:
 #### After boot
 
 Once cloud-init finishes, log in once to pick up the bash hooks
-(direnv + starship), then `cd` into a clone of this repo.  Run
-`direnv allow .` and the cross-toolchain streams in from cachix —
-no rebuild, no prompts.
+(starship), then `cd` into a clone of this repo and run `make`
+(or `nix develop .#<arch>` for an interactive shell).  The
+cross-toolchain streams in from cachix on first use — no rebuild,
+no prompts.
 
 #### Debugging cloud-init
 
@@ -510,9 +495,8 @@ CPU-bound.
 
 After that, the toolchain lives in `/nix/store` and subsequent builds
 reuse it — that's where the ~40 s incremental figure above comes from.
-With `direnv` (or a Makefile-side gc-root via `.gcroots/<target>`),
-`nix-collect-garbage` won't sweep the toolchain away on regular gc
-runs.
+The Makefile pins it via a gc-root under `.gcroots/<ARCH>` so
+`nix-collect-garbage` won't sweep it away.
 
 ## Hacking notes
 

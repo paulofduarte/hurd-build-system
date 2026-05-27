@@ -2,17 +2,15 @@
 #
 # Bootstrap a Linux VM (orbstack, AWS, GCP, libvirt, …) for nix-based
 # dev work on this project.  System-wide setup — every user gets the
-# same tools, shell hooks, and direnv config.  Robust to platforms
-# that provision the host-matching user after cloud-init has run
-# (orbstack does this on some configurations).
+# same tools and shell hooks.  Robust to platforms that provision
+# the host-matching user after cloud-init has run (orbstack does
+# this on some configurations).
 #
 # Layout this script lays down:
-#   /nix/var/nix/profiles/system-tools/    cachix, direnv, nix-direnv,
-#                                          starship, git, gnumake.
-#   /etc/profile.d/nix-system-tools.sh     PATH + TERM + DIRENV_CONFIG
-#                                          + interactive direnv +
-#                                          starship hooks.
-#   /etc/direnv/{direnvrc,direnv.toml}     System-wide direnv config.
+#   /nix/var/nix/profiles/system-tools/    cachix, git, gnumake,
+#                                          starship.
+#   /etc/profile.d/nix-system-tools.sh     PATH + TERM + interactive
+#                                          starship hook.
 #
 # Apply: `orb create ubuntu my-vm --user-data cloud-init.yaml`.
 #
@@ -109,13 +107,11 @@ write_files:
         profile add \
           --profile "$SYSTEM_PROFILE" \
           nixpkgs#cachix \
-          nixpkgs#direnv \
           nixpkgs#git \
           nixpkgs#gnumake \
-          nixpkgs#nix-direnv \
           nixpkgs#starship
 
-      # ---- 3. /etc/profile.d entry — PATH + TERM + DIRENV_CONFIG ----
+      # ---- 3. /etc/profile.d entry — PATH + TERM + starship hook ----
       # /etc/profile sources /etc/profile.d/* for every login shell.
       # Ubuntu's /etc/bash.bashrc only covers non-login interactive
       # shells, so login shells (e.g. `orb -m vm`) would miss hooks
@@ -127,33 +123,16 @@ write_files:
       fi
       # Nix pure shells default TERM to "dumb" — force a sane default.
       export TERM="${TERM:-xterm-256color}"
-      # direnv reads its config from $DIRENV_CONFIG.
-      export DIRENV_CONFIG=/etc/direnv
 
       case $- in
         *i*)
           if [ -n "${BASH_VERSION:-}" ]; then
-            command -v direnv   >/dev/null 2>&1 && eval "$(direnv hook bash)"
             command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
           fi
           ;;
       esac
       PROFILED
       chmod 0644 /etc/profile.d/nix-system-tools.sh
-
-      # ---- 4. System-wide direnv config (/etc/direnv) ----
-      mkdir -p /etc/direnv
-      cat > /etc/direnv/direnvrc <<'DIRENVRC'
-      # nix-direnv: `use flake` / `use nix` direnv stdlib for nix
-      # projects.
-      source /nix/var/nix/profiles/system-tools/share/nix-direnv/direnvrc
-      DIRENVRC
-      cat > /etc/direnv/direnv.toml <<'DIRENVTOML'
-      [global]
-      # Suppress the "direnv: export +VAR1 +VAR2 ..." banner on
-      # every `cd` into a direnv-enabled project.
-      hide_env_diff = true
-      DIRENVTOML
 
 runcmd:
   - /usr/local/sbin/bootstrap-nix-dev.sh

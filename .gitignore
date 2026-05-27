@@ -12,12 +12,14 @@
 # Claude Code per-project state — keep it out of the repo
 /.claude/
 
-# direnv / nix-direnv per-project state (profile gc-roots, env cache).
+# We don't ship .envrc, but be defensive: if a developer keeps a
+# personal one (e.g. for editor LSP wiring), nix-direnv's runtime
+# state shouldn't sneak into commits.
 /.direnv/
 
 # Makefile-managed gc-roots for `nix develop -i --profile` dispatch.
-# One entry per TARGET; kept out of .direnv/ so nix-direnv's reload
-# cleanup doesn't wipe them.
+# One entry per ARCH; pins the dev-shell closure so nix-store gc
+# doesn't reclaim it between Makefile invocations.
 /.gcroots/
 
 # Editor / OS noise

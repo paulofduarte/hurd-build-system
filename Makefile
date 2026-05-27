@@ -495,14 +495,10 @@ _PARENT_FLAGS := $(filter -%,$(_PARENT_ARGV))
 _NULL :=
 _SP   := $(_NULL) $(_NULL)
 
-# Persistent gc-root for the dispatched dev shell.  Stored under
-# .gcroots/ (NOT .direnv/) because nix-direnv's _nix_clean_old_gcroots
-# wipes all `.direnv/flake-profile*` files on every .envrc reload —
-# any profile we created there for a non-current ARCH would get
-# nuked, taking its referenced store paths off the gc-protected set.
-# Our .gcroots/ is direnv-immune and accumulates one entry per target.
-# Both still pin the same store paths as direnv's profile when the
-# ARCH matches (content-addressed), so no store-duplication cost.
+# Persistent gc-root for the dispatched dev shell — pins the store
+# closure for the current ARCH so nix-store gc doesn't reclaim it
+# between Makefile invocations.  One entry per ARCH; switching
+# targets just adds another sibling without invalidating the others.
 _FLAKE_PROFILE := .gcroots/$(ARCH)
 
 _RUN_PASSTHROUGH := \
