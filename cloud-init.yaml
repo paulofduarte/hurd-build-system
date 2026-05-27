@@ -1,41 +1,18 @@
 #cloud-config
 #
-# Bootstrap a Linux VM (orbstack-style) for nix-based dev work on
-# this project.  System-wide setup — every user gets the same tools,
-# the same shell hooks, the same direnv config.  Robust to orbstack's
-# late-stage user provisioning (the host-matching user is created
-# after cloud-init in some configurations).
+# Bootstrap a Linux VM (orbstack, AWS, GCP, libvirt, …) for nix-based
+# dev work on this project.  System-wide setup — every user gets the
+# same tools, shell hooks, and direnv config.  Robust to platforms
+# that provision the host-matching user after cloud-init has run
+# (orbstack does this on some configurations).
 #
 # Layout this script lays down:
-#
-#   /nix/var/nix/profiles/system-tools/   nix profile holding cachix,
-#                                         direnv, nix-direnv, starship.
-#                                         Kept separate from `default/`
-#                                         (the nix daemon's profile
-#                                         for nix itself) so daemon-
-#                                         managed upgrades don't fight
-#                                         with our user tooling.
-#   /etc/profile.d/nix-system-tools.sh    Adds system-tools/bin to PATH,
-#                                         sets TERM, points direnv at
-#                                         /etc/direnv, and (for
-#                                         interactive shells only) wires
-#                                         direnv + starship hooks.
-#                                         /etc/profile.d/* is sourced
-#                                         by login shells (orb -m vm);
-#                                         /etc/bash.bashrc would catch
-#                                         non-login interactive shells
-#                                         on Ubuntu but isn't loaded
-#                                         for login shells, so the
-#                                         hooks live here instead and
-#                                         guard themselves with `$-`.
-#   /etc/direnv/direnvrc                  System direnv plugin file —
-#                                         sources nix-direnv.
-#   /etc/direnv/direnv.toml               System direnv settings;
-#                                         hides the env-diff banner.
-#
-# For emulated VMs (orbstack x86_64 on aarch64 host via rosetta), the
-# script auto-detects rosetta and disables nix's seccomp BPF filter,
-# which the emulation layer can't honour.  Native VMs keep the filter.
+#   /nix/var/nix/profiles/system-tools/    cachix, direnv, nix-direnv,
+#                                          starship, git, gnumake.
+#   /etc/profile.d/nix-system-tools.sh     PATH + TERM + DIRENV_CONFIG
+#                                          + interactive direnv +
+#                                          starship hooks.
+#   /etc/direnv/{direnvrc,direnv.toml}     System-wide direnv config.
 #
 # Apply: `orb create ubuntu my-vm --user-data cloud-init.yaml`.
 #
@@ -47,8 +24,7 @@
 #
 # Why write_files + runcmd: cloud-init runs `runcmd` items under
 # /bin/sh (dash on Ubuntu), which rejects `set -o pipefail`.  We write
-# the script with a bash shebang and exec it from runcmd so pipefail
-# works for the `curl … | sh` install line.
+# the script with a bash shebang and exec it from runcmd.
 
 write_files:
   - path: /usr/local/sbin/bootstrap-nix-dev.sh
@@ -58,100 +34,77 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
 
+      # Project's cachix cache.  Keep in sync with the nixConfig block
+      # in flake.nix and the workflow under .github/workflows/.
+      CACHIX_SUBSTITUTER="https://hurd-build-system.cachix.org"
+      CACHIX_PUBLIC_KEY="hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE="
+
       NIX=/nix/var/nix/profiles/default/bin/nix
       SYSTEM_PROFILE=/nix/var/nix/profiles/system-tools
 
       # ---- 1. Install upstream nix (multi-user, daemon-managed) ----
       #
-      # Use the official nix.dev installer for consistency with the
-      # CI workflow (which uses cachix/install-nix-action — also
-      # upstream nix).
+      # The upstream installer exposes two hooks for shipping a custom
+      # /etc/nix/nix.conf as part of an automated provision:
       #
-      # The installer's `place_nix_configuration()` step appends the
-      # contents of the $NIX_EXTRA_CONF environment variable to
-      # /etc/nix/nix.conf as it's being written, so any settings we
-      # put there land in nix.conf BEFORE the installer's bootstrap
-      # build kicks off.  This matters most on rosetta-emulated x86_64
-      # VMs: rosetta can't honour seccomp BPF, so the bootstrap build
-      # fails with "unable to load seccomp BPF program: Invalid
-      # argument" unless `filter-syscalls = false` is already in the
-      # daemon's effective config.  NIX_EXTRA_CONF is exactly the
-      # hook we need; no fork-installer detour required.
+      #   $NIX_EXTRA_CONF     Merged into the nix.conf the installer
+      #                       writes.  Use for settings that need to
+      #                       be in nix.conf *after* the install:
+      #                       substituters, trust lists, experimental
+      #                       features, build limits, etc.
       #
-      # Settings we lay down (same set we'd previously appended after
-      # the install):
+      #   /etc/nix/nix.conf   Pre-existing file picked up by
+      #   (pre-written)       nix-daemon when systemd first starts it
+      #                       — earlier than the installer's own
+      #                       nix.conf write.  Use for settings that
+      #                       must take effect *during* the install.
+      #                       The installer overwrites this file with
+      #                       its merged version, so anything you
+      #                       want to persist must also be in
+      #                       $NIX_EXTRA_CONF.
       #
-      # - experimental-features: enable flakes + nix-command CLI.
-      # - trusted-users: @sudo on Debian/Ubuntu, @wheel on RHEL/Fedora/
-      #   Arch — list both so this YAML works across distros.
-      # - accept-flake-config: auto-accept flake nixConfig values on
-      #   this VM so direnv (non-interactive) doesn't hang on a trust
-      #   prompt for `extra-substituters`.
-      # - extra-substituters / extra-trusted-public-keys: pre-trust
-      #   the project's cachix cache at the daemon level (values
-      #   match the flake's nixConfig).
-      # - filter-syscalls = false (rosetta-emulated VMs only):
-      #   appended conditionally, see below.
-      NIX_EXTRA_CONF=$'experimental-features = nix-command flakes
-      trusted-users = @sudo @wheel
-      accept-flake-config = true
-      extra-substituters = https://hurd-build-system.cachix.org
-      extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE='
+      # Both are upstream-nix features; no fork installer needed.
+      NIX_EXTRA_CONF=$(printf '%s\n' \
+        'experimental-features = nix-command flakes' \
+        'trusted-users = @sudo @wheel' \
+        'accept-flake-config = true' \
+        "extra-substituters = ${CACHIX_SUBSTITUTER}" \
+        "extra-trusted-public-keys = ${CACHIX_PUBLIC_KEY}")
 
-      # Detect when we're running under emulation.  orbstack registers
-      # rosetta as a binfmt_misc handler in *both* directions:
-      #   - on an x86_64 VM (the rosetta marker is THE emulator)
-      #   - on an aarch64 VM (so x86_64 binaries inside the otherwise-
-      #     native VM can still run via rosetta translation)
-      # Only the first case actually needs filter-syscalls disabled
-      # — the second has a fully native aarch64 kernel that supports
-      # seccomp BPF normally.  Check `uname -m` to disambiguate.
+      # Emulated x86_64 VMs (orbstack on an aarch64 host via rosetta)
+      # need `filter-syscalls = false` in the daemon's effective
+      # config from its very first start — the installer's bootstrap
+      # step runs the daemon before writing its own nix.conf, and
+      # rosetta can't honour seccomp BPF.  Pre-write nix.conf in that
+      # case so the setting is live before the daemon starts.  Native
+      # VMs keep the stricter default.
+      #
+      # `uname -m` disambiguates: orbstack registers the rosetta
+      # binfmt_misc handler on aarch64 VMs too (for x86_64 binaries
+      # inside an otherwise-native VM), and those don't need the
+      # workaround.
       if [ "$(uname -m)" = "x86_64" ] && [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
-        NIX_EXTRA_CONF="${NIX_EXTRA_CONF}"$'\nfilter-syscalls = false'
+        NIX_EXTRA_CONF="${NIX_EXTRA_CONF}
+      filter-syscalls = false"
 
-        # On emulated VMs, pre-create /etc/nix/nix.conf so the
-        # nix-daemon picks up `filter-syscalls = false` the moment
-        # systemd starts it.  Without this, the installer starts the
-        # daemon BEFORE writing its own nix.conf via
-        # `place_nix_configuration`, runs an early daemon operation
-        # to bootstrap the default profile, and that operation tries
-        # to load a seccomp BPF filter rosetta can't honour ("error:
-        # unable to load seccomp BPF program: Invalid argument").
-        # Pre-writing nix.conf with the right setting closes that
-        # window; the installer later overwrites the file with the
-        # contents of NIX_EXTRA_CONF (which we've also set to include
-        # filter-syscalls = false), so the post-install state stays
-        # correct.  Pure native VMs don't need any of this.
         mkdir -p /etc/nix
         printf '%s\n' "$NIX_EXTRA_CONF" > /etc/nix/nix.conf
         echo "build-users-group = nixbld" >> /etc/nix/nix.conf
       fi
 
-      # Run the installer.
-      #
-      # - Process substitution `<(curl …)` rather than `curl … | sh`:
-      #   a pipe would clobber sh's stdin (the script body) with
-      #   /dev/null and curl would fail with "Failure writing output
-      #   to destination".  Process substitution gives sh the script
-      #   via an fd, leaving stdin available to redirect for the
-      #   script's own prompt reads.
-      # - HOME=/root because cloud-init's runcmd context doesn't set
-      #   HOME and the inner installer bails out without it.
-      # - stdin from /dev/null so the script's interactive
-      #   confirmation `read`s fall through on EOF (non-interactive).
+      # Process substitution `<(curl …)` rather than `curl … | sh`:
+      # the pipe form would clobber sh's stdin (the script body) with
+      # /dev/null and curl would fail.  HOME because the installer
+      # bails out without it.
       NIX_EXTRA_CONF="$NIX_EXTRA_CONF" \
       HOME=/root \
         sh <(curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install) \
           --daemon --no-channel-add </dev/null
 
       # ---- 2. Install dev tooling into a dedicated system profile ----
-      # Keeping these in their own profile (not `default/`, which is
-      # the nix-daemon's own profile for the nix binary itself) means
-      # `nix upgrade-nix` and similar daemon-managed profile actions
-      # don't conflict with our user-level tooling.  Running as root
-      # with no `--profile` would default to the per-user profile of
-      # whoever invoked cloud-init (root), which isn't what we want
-      # either.
+      # Separate from `default/` (the nix-daemon's own profile for the
+      # nix binary itself) so daemon-managed actions like
+      # `nix upgrade-nix` don't conflict with user tooling.
       "$NIX" --extra-experimental-features 'nix-command flakes' \
         profile add \
           --profile "$SYSTEM_PROFILE" \
@@ -163,32 +116,20 @@ write_files:
           nixpkgs#starship
 
       # ---- 3. /etc/profile.d entry — PATH + TERM + DIRENV_CONFIG ----
-      # Sourced by /etc/profile for every login shell on every account.
-      # DIRENV_CONFIG points direnv at /etc/direnv/ so the system-wide
-      # direnvrc + direnv.toml are picked up automatically.
+      # /etc/profile sources /etc/profile.d/* for every login shell.
+      # Ubuntu's /etc/bash.bashrc only covers non-login interactive
+      # shells, so login shells (e.g. `orb -m vm`) would miss hooks
+      # added there.  Putting everything here with a `case $-`
+      # interactive guard covers both.
       cat > /etc/profile.d/nix-system-tools.sh <<'PROFILED'
-      # System-wide tooling installed via Nix into
-      # /nix/var/nix/profiles/system-tools (cachix, direnv, nix-direnv,
-      # starship).  Provisioned by cloud-init at first boot.
       if [ -d /nix/var/nix/profiles/system-tools/bin ]; then
         export PATH="/nix/var/nix/profiles/system-tools/bin:$PATH"
       fi
-      # Nix pure shells default TERM to "dumb"; force a sane default
-      # so colour and TUI features keep working.
+      # Nix pure shells default TERM to "dumb" — force a sane default.
       export TERM="${TERM:-xterm-256color}"
-      # direnv reads its config from $DIRENV_CONFIG/direnvrc — point
-      # it at /etc/direnv/ so the nix-direnv plugin is picked up
-      # system-wide.
+      # direnv reads its config from $DIRENV_CONFIG.
       export DIRENV_CONFIG=/etc/direnv
 
-      # Interactive-shell hooks.  Ubuntu sources /etc/profile.d/* for
-      # *login* shells (e.g., `orb -m vm`) but NOT /etc/bash.bashrc —
-      # so the direnv+starship init that lives there would be missed
-      # by login shells without these copies.  Guarded by $- so we
-      # don't try to attach a PROMPT_COMMAND to non-interactive
-      # invocations (eg. systemd timers, cron, scripts).  Re-running
-      # `eval $(direnv hook bash)` on a shell that already sourced
-      # /etc/bash.bashrc is idempotent (just redefines _direnv_hook).
       case $- in
         *i*)
           if [ -n "${BASH_VERSION:-}" ]; then
@@ -201,12 +142,10 @@ write_files:
       chmod 0644 /etc/profile.d/nix-system-tools.sh
 
       # ---- 4. System-wide direnv config (/etc/direnv) ----
-      # /etc/profile.d/nix-system-tools.sh sets DIRENV_CONFIG to this
-      # dir, so direnv picks up both files for every user.
       mkdir -p /etc/direnv
       cat > /etc/direnv/direnvrc <<'DIRENVRC'
-      # Load nix-direnv from the system-tools profile.  Provides the
-      # `use flake` / `use nix` direnv stdlib for nix projects.
+      # nix-direnv: `use flake` / `use nix` direnv stdlib for nix
+      # projects.
       source /nix/var/nix/profiles/system-tools/share/nix-direnv/direnvrc
       DIRENVRC
       cat > /etc/direnv/direnv.toml <<'DIRENVTOML'
