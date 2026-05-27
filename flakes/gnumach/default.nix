@@ -9,14 +9,18 @@
 # with one nix derivation per target whose output is the bootable
 # kernel image + companion install tree.
 #
-# Output layout (whatever gnumach's `make install` produces, which
-# at minimum is):
-#   $out/boot/gnumach              bootable kernel (stripped binary on
-#                                  aarch64; ELF on i386/x86_64 — qemu's
-#                                  -kernel accepts the ELF directly).
-#   $out/boot/gnumach.elf          un-stripped ELF with debug symbols
-#                                  (for gdb / addr2line; qemu silently
-#                                  hangs if fed this on aarch64).
+# Output layout:
+#   $out/boot/gnumach              bootable kernel — raw binary
+#                                  (objcopy -O binary) on aarch64 so
+#                                  qemu's -kernel accepts it, ELF
+#                                  with debug info on i386/x86_64
+#                                  (qemu's -kernel handles ELF there).
+#   $out/boot/gnumach.elf          unstripped ELF with DWARF — only on
+#                                  aarch64, copied from the build dir
+#                                  in postInstall.  Pair to the raw
+#                                  binary above for gdb / addr2line.
+#                                  No need on i386/x86_64 since
+#                                  boot/gnumach is already the ELF.
 #   $out/include/mach/...          public headers (same as the headers
 #                                  sub-flake produces).
 #   $out/share/...                 .defs + .msgids.
@@ -133,13 +137,33 @@ let
         [ "--enable-dependency-tracking" ]
         ++ lib.optional (target.platform != null) "--enable-platform=${target.platform}";
 
-      # `make install` produces $out/boot/{gnumach,gnumach.elf} plus
-      # the public headers + .defs.  stdenv's default buildPhase
-      # ("make") handles the kernel link.
+      # `make install` produces $out/boot/gnumach plus the public
+      # headers + .defs.  stdenv's default buildPhase ("make")
+      # handles the kernel link.
       installPhase = ''
         runHook preInstall
         make install
         runHook postInstall
+      '';
+
+      # On aarch64, gnumach's `make install` ships only $out/boot/gnumach
+      # — a raw binary (objcopy -O binary, no ELF header) so qemu's
+      # -kernel accepts it.  The link intermediate `gnumach.elf` is the
+      # unstripped ELF with full DWARF, sitting in the build dir but
+      # not picked up by `make install`.  Copy it alongside so gdb /
+      # addr2line have something to work with, AND so the cross-host
+      # hash comparison in the toolchain-sanity-check workflow has a
+      # debug-info-bearing artefact to compare on aarch64 (the raw
+      # binary alone strips the DWARF where most legitimate cross-host
+      # determinism work happens via -fdebug-prefix-map above).
+      #
+      # On i386/x86_64 there is no gnumach.elf intermediate ($out/boot/
+      # gnumach is already the unstripped ELF), so the `[ -f ]` guard
+      # makes this a no-op there.
+      postInstall = ''
+        if [ -f gnumach.elf ] && [ ! -e $out/boot/gnumach.elf ]; then
+          install -m 0644 gnumach.elf $out/boot/gnumach.elf
+        fi
       '';
 
       # Kernel tests (`make check-mach`) need qemu + grub-mkrescue +

@@ -679,6 +679,12 @@ $(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
 	$(NIX_FLAKE) build .#gnumach-$(ARCH) -o $(NIX_MACH_RESULT)
 	@mkdir -p $(DIST)/boot
 	install -m 0644 $(NIX_MACH_RESULT)/boot/gnumach $(DIST_KERNEL)
+	@# aarch64-only: also ship the unstripped ELF for gdb / debugging.
+	@# The flake's postInstall puts it under boot/gnumach.elf; on
+	@# x86_64 / i686 it doesn't exist (boot/gnumach is already ELF).
+	@if [ -f $(NIX_MACH_RESULT)/boot/gnumach.elf ]; then \
+	  install -m 0644 $(NIX_MACH_RESULT)/boot/gnumach.elf $(DIST)/boot/gnumach.elf; \
+	fi
 	@# Refresh share/ each time so removed files don't linger.  The
 	@# cp -r preserves /nix/store epoch mtimes, so touch the tree
 	@# afterwards to give make sane staleness arithmetic.
