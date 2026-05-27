@@ -62,34 +62,24 @@ write_files:
       SYSTEM_PROFILE=/nix/var/nix/profiles/system-tools
 
       # ---- 1. Install upstream nix (multi-user, daemon-managed) ----
+      #
       # Use the official nix.dev installer for consistency with the
       # CI workflow (which uses cachix/install-nix-action — also
-      # upstream nix).  The Determinate Systems installer would also
-      # work and has nicer non-interactive ergonomics, but it ships
-      # the Determinate Nix fork — we keep that distinction off the
-      # critical path of this project so contributors' local-vs-CI
-      # behaviour matches.
+      # upstream nix).
       #
-      # The upstream multi-user installer's interactive prompts are
-      # suppressed by feeding the install script's stdin from
-      # /dev/null (the script reads confirmations via `read` and
-      # falls through on EOF).  Use process substitution `<(curl …)`
-      # rather than the more common pipe — a pipe `curl … | sh -s --
-      # … < /dev/null` would clobber sh's stdin (the script body)
-      # with /dev/null, causing curl to fail with "Failure writing
-      # output to destination".  Process substitution gives sh the
-      # script through a fd while leaving stdin available to redirect
-      # for the script's own prompt reads.
+      # The installer's `place_nix_configuration()` step appends the
+      # contents of the $NIX_EXTRA_CONF environment variable to
+      # /etc/nix/nix.conf as it's being written, so any settings we
+      # put there land in nix.conf BEFORE the installer's bootstrap
+      # build kicks off.  This matters most on rosetta-emulated x86_64
+      # VMs: rosetta can't honour seccomp BPF, so the bootstrap build
+      # fails with "unable to load seccomp BPF program: Invalid
+      # argument" unless `filter-syscalls = false` is already in the
+      # daemon's effective config.  NIX_EXTRA_CONF is exactly the
+      # hook we need; no fork-installer detour required.
       #
-      # Export HOME — cloud-init's runcmd context doesn't set it, and
-      # the inner installer script bails out with "$HOME is not set"
-      # otherwise.  root's home directory is the right value here.
-      HOME=/root sh <(curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install) \
-        --daemon --no-channel-add </dev/null
-
-      # Daemon config: the upstream installer writes a minimal
-      # /etc/nix/nix.conf.  Append the same settings we'd pass via
-      # --extra-conf on the Determinate installer.
+      # Settings we lay down (same set we'd previously appended after
+      # the install):
       #
       # - experimental-features: enable flakes + nix-command CLI.
       # - trusted-users: @sudo on Debian/Ubuntu, @wheel on RHEL/Fedora/
@@ -100,13 +90,13 @@ write_files:
       # - extra-substituters / extra-trusted-public-keys: pre-trust
       #   the project's cachix cache at the daemon level (values
       #   match the flake's nixConfig).
-      cat >> /etc/nix/nix.conf <<'NIXCONF'
-      experimental-features = nix-command flakes
+      # - filter-syscalls = false (rosetta-emulated VMs only):
+      #   appended conditionally, see below.
+      NIX_EXTRA_CONF=$'experimental-features = nix-command flakes
       trusted-users = @sudo @wheel
       accept-flake-config = true
       extra-substituters = https://hurd-build-system.cachix.org
-      extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
-      NIXCONF
+      extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE='
 
       # Detect when we're running under emulation.  orbstack registers
       # rosetta as a binfmt_misc handler in *both* directions:
@@ -117,11 +107,42 @@ write_files:
       # — the second has a fully native aarch64 kernel that supports
       # seccomp BPF normally.  Check `uname -m` to disambiguate.
       if [ "$(uname -m)" = "x86_64" ] && [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
-        echo "filter-syscalls = false" >> /etc/nix/nix.conf
+        NIX_EXTRA_CONF="${NIX_EXTRA_CONF}"$'\nfilter-syscalls = false'
+
+        # On emulated VMs, pre-create /etc/nix/nix.conf so the
+        # nix-daemon picks up `filter-syscalls = false` the moment
+        # systemd starts it.  Without this, the installer starts the
+        # daemon BEFORE writing its own nix.conf via
+        # `place_nix_configuration`, runs an early daemon operation
+        # to bootstrap the default profile, and that operation tries
+        # to load a seccomp BPF filter rosetta can't honour ("error:
+        # unable to load seccomp BPF program: Invalid argument").
+        # Pre-writing nix.conf with the right setting closes that
+        # window; the installer later overwrites the file with the
+        # contents of NIX_EXTRA_CONF (which we've also set to include
+        # filter-syscalls = false), so the post-install state stays
+        # correct.  Pure native VMs don't need any of this.
+        mkdir -p /etc/nix
+        printf '%s\n' "$NIX_EXTRA_CONF" > /etc/nix/nix.conf
+        echo "build-users-group = nixbld" >> /etc/nix/nix.conf
       fi
 
-      # Pick up the appended config — daemon re-reads on restart.
-      systemctl restart nix-daemon
+      # Run the installer.
+      #
+      # - Process substitution `<(curl …)` rather than `curl … | sh`:
+      #   a pipe would clobber sh's stdin (the script body) with
+      #   /dev/null and curl would fail with "Failure writing output
+      #   to destination".  Process substitution gives sh the script
+      #   via an fd, leaving stdin available to redirect for the
+      #   script's own prompt reads.
+      # - HOME=/root because cloud-init's runcmd context doesn't set
+      #   HOME and the inner installer bails out without it.
+      # - stdin from /dev/null so the script's interactive
+      #   confirmation `read`s fall through on EOF (non-interactive).
+      NIX_EXTRA_CONF="$NIX_EXTRA_CONF" \
+      HOME=/root \
+        sh <(curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install) \
+          --daemon --no-channel-add </dev/null
 
       # ---- 2. Install dev tooling into a dedicated system profile ----
       # Keeping these in their own profile (not `default/`, which is
