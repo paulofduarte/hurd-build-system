@@ -604,7 +604,16 @@ $(DIST_INCLUDE): flakes/gnumach-headers/default.nix flake.nix
 # config.status survives between invocations).
 mig: $(LOCAL_MIG)
 
-$(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE)
+# Src files are listed as prereqs so editing src/mig/foo.c triggers
+# this rule.  Without them, the rule's only "real" prereqs are
+# configure + the headers, neither of which moves on src edits — so
+# `make mig` after editing source would silently fall back to the
+# stale build.  We use `git ls-files` to exclude generated files
+# (configure, autom4te.cache/, ...) that would otherwise cause false
+# rebuilds.  Once the rule fires, mig's own automake dep tracking
+# decides what to recompile.
+MIG_SRC_FILES := $(addprefix $(MIG_SRC)/,$(shell cd $(MIG_SRC) 2>/dev/null && git ls-files))
+$(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool — it runs on the build host and
 	@# emits portable .c/.h.  The dev-shell's $CC is the cross
@@ -655,7 +664,11 @@ $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(LOCAL_MIG)
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
-$(GNUMACH_KERNEL): $(LOCAL_MIG) $(GNUMACH_CONFIGURED)
+# See the MIG_SRC_FILES rationale above — same problem, same fix.
+# Gnumach's own automake-generated .Po deps handle .c→.o; we just
+# need to make sure outer make actually enters the recipe.
+GNUMACH_SRC_FILES := $(addprefix $(GNUMACH_SRC)/,$(shell cd $(GNUMACH_SRC) 2>/dev/null && git ls-files))
+$(GNUMACH_KERNEL): $(LOCAL_MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 	cd $(GNUMACH_BUILD) && $(MAKE)
 
 # ---- dist-mach ----
