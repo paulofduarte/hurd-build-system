@@ -4,7 +4,7 @@ name: Cache cross-toolchains
 # (mig-<arch>, gnumach-headers-<arch>, and the full dev-shell closure
 # for every target).  Triggered whenever something that could alter
 # the derivation hashes changes — flake.nix, flake.lock, the per-arch
-# .nix files under toolchain/, or the workflow itself.
+# .nix files under flakes/, or the workflow itself.
 #
 # Each runner builds its own native host's view of every target
 # (since cross-toolchain hashes differ across build hosts), and the
@@ -16,7 +16,7 @@ on:
     paths:
       - flake.nix
       - flake.lock
-      - toolchain/**/*.nix
+      - flakes/**/*.nix
       - .github/workflows/cache-toolchains.yml
   workflow_dispatch:
 
