@@ -53,18 +53,18 @@ jobs:
           submodules: recursive
 
       - name: Install nix
-        # Use the Determinate Nix installer action — same Determinate
-        # Nix the project's cloud-init.yaml installs (>= 2.27, so
-        # `inputs.self.submodules = true` in flake.nix is understood).
-        # The cachix/install-nix-action equivalent ships with an
-        # older upstream nix that rejects that attribute.
-        uses: DeterminateSystems/nix-installer-action@main
+        # cachix/install-nix-action v31+ ships upstream nix 2.30.x,
+        # which supports the `inputs.self.submodules` flake attribute
+        # we use.  v30 (and earlier) shipped an older nix that
+        # rejected it.  v31 is the right pairing with cachix-action
+        # below — same maintainer, designed to compose.
+        uses: cachix/install-nix-action@v31
         with:
           # Match the daemon config the cloud-init.yaml lays down:
           # flakes on, auto-accept flake nixConfig (so the workflow
           # doesn't hang on a prompt for our own cache), and pre-trust
           # the project cache as a substituter at the daemon level.
-          extra-conf: |
+          extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
             extra-substituters = https://hurd-build-system.cachix.org
