@@ -11,9 +11,10 @@
 #   /nix/var/nix/profiles/system-tools/   nix profile holding cachix,
 #                                         direnv, nix-direnv, starship.
 #                                         Kept separate from `default/`
-#                                         so the Determinate Nix daemon
-#                                         can manage its own profile
-#                                         without our packages on top.
+#                                         (the nix daemon's profile
+#                                         for nix itself) so daemon-
+#                                         managed upgrades don't fight
+#                                         with our user tooling.
 #   /etc/profile.d/nix-system-tools.sh    Adds system-tools/bin to PATH,
 #                                         sets TERM, points direnv at
 #                                         /etc/direnv, and (for
@@ -60,24 +61,53 @@ write_files:
       NIX=/nix/var/nix/profiles/default/bin/nix
       SYSTEM_PROFILE=/nix/var/nix/profiles/system-tools
 
-      # ---- 1. Install nix (multi-user, daemon-managed) ----
-      EXTRA=(
-        --extra-conf "experimental-features = nix-command flakes"
-        # @sudo on Debian/Ubuntu, @wheel on RHEL/Fedora/Arch — list
-        # both so this YAML works across distros.
-        --extra-conf "trusted-users = @sudo @wheel"
-        # Pre-trust the project's cachix cache + auto-accept flake
-        # nixConfig.  Together these make `nix develop` on the project
-        # flow through without the "do you want to allow this
-        # extra-substituter?" prompt (which non-interactive callers
-        # like direnv can't answer and would hang on).  The substituter
-        # entries match the flake's nixConfig; `accept-flake-config`
-        # opts into any flake's nixConfig declaration on this VM
-        # (acceptable for a single-purpose dev box).
-        --extra-conf "accept-flake-config = true"
-        --extra-conf "extra-substituters = https://hurd-build-system.cachix.org"
-        --extra-conf "extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE="
-      )
+      # ---- 1. Install upstream nix (multi-user, daemon-managed) ----
+      # Use the official nix.dev installer for consistency with the
+      # CI workflow (which uses cachix/install-nix-action — also
+      # upstream nix).  The Determinate Systems installer would also
+      # work and has nicer non-interactive ergonomics, but it ships
+      # the Determinate Nix fork — we keep that distinction off the
+      # critical path of this project so contributors' local-vs-CI
+      # behaviour matches.
+      #
+      # The upstream multi-user installer's interactive prompts are
+      # suppressed by feeding the install script's stdin from
+      # /dev/null (the script reads confirmations via `read` and
+      # falls through on EOF).  Use process substitution `<(curl …)`
+      # rather than the more common pipe — a pipe `curl … | sh -s --
+      # … < /dev/null` would clobber sh's stdin (the script body)
+      # with /dev/null, causing curl to fail with "Failure writing
+      # output to destination".  Process substitution gives sh the
+      # script through a fd while leaving stdin available to redirect
+      # for the script's own prompt reads.
+      #
+      # Export HOME — cloud-init's runcmd context doesn't set it, and
+      # the inner installer script bails out with "$HOME is not set"
+      # otherwise.  root's home directory is the right value here.
+      HOME=/root sh <(curl --proto '=https' --tlsv1.2 -sSf -L https://nixos.org/nix/install) \
+        --daemon --no-channel-add </dev/null
+
+      # Daemon config: the upstream installer writes a minimal
+      # /etc/nix/nix.conf.  Append the same settings we'd pass via
+      # --extra-conf on the Determinate installer.
+      #
+      # - experimental-features: enable flakes + nix-command CLI.
+      # - trusted-users: @sudo on Debian/Ubuntu, @wheel on RHEL/Fedora/
+      #   Arch — list both so this YAML works across distros.
+      # - accept-flake-config: auto-accept flake nixConfig values on
+      #   this VM so direnv (non-interactive) doesn't hang on a trust
+      #   prompt for `extra-substituters`.
+      # - extra-substituters / extra-trusted-public-keys: pre-trust
+      #   the project's cachix cache at the daemon level (values
+      #   match the flake's nixConfig).
+      cat >> /etc/nix/nix.conf <<'NIXCONF'
+      experimental-features = nix-command flakes
+      trusted-users = @sudo @wheel
+      accept-flake-config = true
+      extra-substituters = https://hurd-build-system.cachix.org
+      extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
+      NIXCONF
+
       # Detect when we're running under emulation.  orbstack registers
       # rosetta as a binfmt_misc handler in *both* directions:
       #   - on an x86_64 VM (the rosetta marker is THE emulator)
@@ -87,17 +117,20 @@ write_files:
       # — the second has a fully native aarch64 kernel that supports
       # seccomp BPF normally.  Check `uname -m` to disambiguate.
       if [ "$(uname -m)" = "x86_64" ] && [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
-        EXTRA+=(--extra-conf "filter-syscalls = false")
+        echo "filter-syscalls = false" >> /etc/nix/nix.conf
       fi
-      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
-        | sh -s -- install linux --no-confirm "${EXTRA[@]}"
+
+      # Pick up the appended config — daemon re-reads on restart.
+      systemctl restart nix-daemon
 
       # ---- 2. Install dev tooling into a dedicated system profile ----
-      # Keeping these in their own profile (not `default/`) means the
-      # Determinate Nix daemon's profile upgrades don't fight with our
-      # packages.  Running as root with no `--profile` would default
-      # to the per-user profile of whoever invoked cloud-init (root),
-      # which isn't what we want either.
+      # Keeping these in their own profile (not `default/`, which is
+      # the nix-daemon's own profile for the nix binary itself) means
+      # `nix upgrade-nix` and similar daemon-managed profile actions
+      # don't conflict with our user-level tooling.  Running as root
+      # with no `--profile` would default to the per-user profile of
+      # whoever invoked cloud-init (root), which isn't what we want
+      # either.
       "$NIX" --extra-experimental-features 'nix-command flakes' \
         profile add \
           --profile "$SYSTEM_PROFILE" \
