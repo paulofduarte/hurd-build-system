@@ -134,6 +134,10 @@ let
       meta = with lib; {
         description = "GNU MIG cross-compiler for ${target.migTarget}";
         platforms = platforms.all;
+        # `nix run .#mig-<arch>` looks up bin/<mainProgram>; without
+        # this it derives the name from pname (mig-<migTarget>) and
+        # fails because the actual wrapper is <migTarget>-mig.
+        mainProgram = "${target.migTarget}-mig";
       };
     };
 in

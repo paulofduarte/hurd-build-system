@@ -252,6 +252,55 @@ fresh clones get only `origin`.
 | `clean-dist` | `rm -rf dist/$(ARCH)/` (current target only) |
 | `mrproper` | `rm -rf work/`, the project-root install dir (`.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
 
+### Invoking MIG directly
+
+MIG is a *host-arch* code-generator (it runs on your build machine
+and emits portable C/H stubs).  Because the binary is host-coupled,
+not target-coupled, it intentionally **doesn't ship under
+`dist/<target>/`** — that tree is keyed by target architecture
+(headers, kernel, …) and mixing in a host-arch tool muddles the
+contract.
+
+Three ways to get a working MIG, in order of how clean you want it:
+
+1. **`nix run`** — one-shot invocation, no install:
+
+   ```sh
+   # Generate user + server stubs from a .defs file, target aarch64
+   nix run .#mig-aarch64 -- \
+     -user out_user.c -server out_server.c -header out_user.h \
+     -sheader out_server.h \
+     path/to/foo.defs
+   ```
+
+   The `--` separates flake args from MIG's own argv.  `nix run`
+   builds the per-target derivation if it isn't already cached, then
+   invokes its primary `bin/<target>-gnu-mig` wrapper.
+
+2. **`nix build`** — install a stable gc-rooted symlink under
+   `flakes/mig/result-<target>/`:
+
+   ```sh
+   nix build .#mig-aarch64 -o flakes/mig/result-aarch64
+   ls flakes/mig/result-aarch64/bin/      # → aarch64-gnu-mig, aarch64-unknown-none-elf-mig
+   ./flakes/mig/result-aarch64/bin/aarch64-gnu-mig --help
+   ```
+
+   The wrapper resolves `migcom` via `dirname $0/../libexec/`, so it
+   works wherever you symlink it.  The cross-prefixed alias
+   (`<crossPrefix>-mig`) is what gnumach's `AC_CHECK_TOOL` discovers
+   on PATH.
+
+3. **`make mig`** — in-tree iterative build under
+   `work/mig/<target>/` for active MIG development.  Same wrapper +
+   layout as (2), built incrementally from `src/mig/` after edits
+   without going through nix each time.  Pick this only if you're
+   editing MIG itself.
+
+For embedding MIG into an external build, prefer (2) — the result
+symlink has a stable `<target>-gnu-mig` name your downstream
+configure / makefiles can put on PATH.
+
 ## Directory layout
 
 ```
@@ -280,13 +329,14 @@ fresh clones get only `origin`.
 │                                   #   dispatch.sh + scenario scripts + lib/ helpers
 ├── .sidekick/                      # helper-VM artefacts (vmlinuz + initramfs.cpio.gz, gitignored)
 ├── dist/<target>/                  # clean install tree — real copies, tarball-able (gitignored)
-│   ├── boot/gnumach                # kernel (copy, not symlink)
-│   ├── bin/<target>-gnu-mig        # MIG wrapper (copy of nix-built)
-│   ├── libexec/<target>-gnu-migcom # MIG codegen binary (copy of nix-built)
+│   ├── boot/gnumach                # kernel (raw binary on aarch64, ELF on x86_64/i686)
+│   ├── boot/gnumach.elf            # aarch64 only — unstripped ELF with DWARF for gdb/addr2line
 │   ├── include/                    # gnumach public headers (cp -r from nix-built)
 │   └── share/                      # docs from the gnumach package
 │       ├── info/mach.info*         # GNU Mach reference manual (~408K Info pages)
 │       └── msgids/gnumach.msgids   # RPC message-ID table for trace decoders
+│                                   # MIG is host-arch (not target-arch) so it's not bundled here.
+│                                   # See "Invoking MIG directly" below.
 ├── .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
 └── LICENSE                         # GPL-2.0
 ```
