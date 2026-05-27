@@ -25,9 +25,28 @@
     # with "Path 'src/<repo>' in the repository ... is not tracked by
     # Git."  Available since nix 2.27 (Feb 2025).
     self.submodules = true;
+
+    # Parallel flake inputs pointing at the same submodule worktrees.
+    # We DON'T use these as `src` (the submodule via self.submodules
+    # above is the source of truth for build content) — we only read
+    # their `.rev` / `.shortRev` / `.lastModifiedDate` for the version
+    # string composed in PACKAGE_VERSION.  nix flakes don't vendor
+    # `.git` directories under any `submodules=1` setting, so this
+    # was the only way to expose submodule commit metadata to pure
+    # eval.  `flake.lock` pins the rev to whatever the submodule HEAD
+    # was at the last `nix flake update` — keep it in sync with the
+    # actual submodule via `make update-srcs` (see Makefile).
+    gnumach-src = {
+      url = "git+file:./src/gnumach";
+      flake = false;
+    };
+    mig-src = {
+      url = "git+file:./src/mig";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, gnumach-src, mig-src, ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` — independent of host.
@@ -144,6 +163,14 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+
+          # Shared lib for version composition + reproducibility attrs.
+          # See flakes/lib/default.nix for the full design.  Sub-flakes
+          # consume from here so the 5-component PACKAGE_VERSION format
+          # stays consistent across all derivations (gnumach, mig, and
+          # any future ones: hurd, glibc, …).
+          helpers = import ./flakes/lib { lib = nixpkgs.lib; };
+
           # Each sub-flake owns its per-target loop + source path
           # (../../src/<repo>) and returns the full attrset.  Root just
           # passes in the shared target spec and merges what comes back.
@@ -155,20 +182,30 @@
           # construction.  Without it, `nix build .#mig-<arch>` and
           # `.#gnumach-headers-<arch>` would skip the overlay and
           # fail on x86_64-darwin with the bundled-config.sub bug.
+          #
+          # `self` is passed down so sub-flakes can:
+          #   - derive their build-rev/build-date via the helpers
+          #   - call helpers.mkSubmoduleGitData self to obtain a
+          #     narrowed filesystem input containing just .gitmodules
+          #     + .git/modules/<path>/ (so unrelated outer-repo edits
+          #     don't invalidate per-target derivations)
           gnumachHeaders = import ./flakes/gnumach-headers {
             inherit pkgs system targets;
             lib = nixpkgs.lib;
             mkCrossPkgs = crossGcc.mkCrossPkgs;
+            srcInput = gnumach-src;
           };
           mig = import ./flakes/mig {
-            inherit pkgs system targets gnumachHeaders;
+            inherit pkgs system targets gnumachHeaders self helpers;
             lib = nixpkgs.lib;
             mkCrossPkgs = crossGcc.mkCrossPkgs;
+            srcInput = mig-src;
           };
           gnumach = import ./flakes/gnumach {
-            inherit pkgs system targets mig;
+            inherit pkgs system targets mig self helpers;
             lib = nixpkgs.lib;
             mkCrossPkgs = crossGcc.mkCrossPkgs;
+            srcInput = gnumach-src;
           };
         in
         {

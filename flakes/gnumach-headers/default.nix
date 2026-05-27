@@ -38,7 +38,7 @@
 #     never invoked during install-data; point it at /bin/true so the
 #     check passes without dragging MIG into this derivation's inputs.
 
-{ pkgs, lib, system, targets, mkCrossPkgs }:
+{ pkgs, lib, system, targets, mkCrossPkgs, srcInput }:
 
 let
   mkOne = name: target:
@@ -49,7 +49,11 @@ let
       pname   = "gnumach-headers-${target.migTarget}";
       version = "src";
 
-      src = ../../src/gnumach;
+      # Use the locked flake input (committed rev) rather than the
+      # path-relative `../../src/gnumach` which would also include
+      # any uncommitted edits to the submodule worktree.  Keeps the
+      # build content honest to flake.lock.
+      src = srcInput;
 
       # Native build tools for autoreconf + configure.  Cross-stdenv's cc
       # already provides the target compiler that configure's checks need.

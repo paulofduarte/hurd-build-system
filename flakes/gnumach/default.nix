@@ -57,20 +57,42 @@
 # qemu, neither of which the sandbox provides.  Until then, kernel
 # tests stay under the parent Makefile's `check-mach` target.
 
-{ pkgs, lib, system, targets, mig, mkCrossPkgs }:
+{ pkgs, lib, system, targets, mig, mkCrossPkgs, self, helpers, srcInput }:
 
 let
+  # Upstream version parsed from version.m4 (AC_PACKAGE_VERSION).  If
+  # upstream bumps the m4 file, the parser picks it up automatically.
+  upstreamVersion = helpers.parseM4Version ../../src/gnumach/version.m4;
+
+  # 5-component PACKAGE_VERSION composed at eval time — fully pure.
+  # Format: <upstream>+<date>+<fork-id>+<src-hash>+build+<build-hash>.
+  # See flakes/lib/default.nix for the data-source breakdown.
+  fullVersion = helpers.composeVersion {
+    inherit upstreamVersion srcInput self;
+    submodulePath = "src/gnumach";
+  };
+
   mkOne = name: target:
     let
       crossMig = mig."mig-${name}";
       crossPkgs = mkCrossPkgs system target;
       cc = crossPkgs.stdenv.cc;
+      pname = "gnumach-${target.migTarget}";
     in
-    crossPkgs.stdenv.mkDerivation {
-      pname   = "gnumach-${target.migTarget}";
-      version = "src";
+    crossPkgs.stdenv.mkDerivation ({
+      inherit pname;
 
-      src = ../../src/gnumach;
+      # Drives both the store path suffix and (via the sed below) the
+      # binary's PACKAGE_VERSION — same string, traceable on both sides.
+      version = fullVersion;
+
+      # Use the locked flake input rather than the path-relative
+      # `../../src/gnumach`.  The latter would happily vendor any
+      # uncommitted edits to the submodule worktree, making the
+      # built binary and the metadata-derived version string disagree
+      # (verified empirically — see commit history).  This way the
+      # built bytes always match what `srcInput.shortRev` claims.
+      src = srcInput;
 
       # Native build tools (autoreconf + the MIG wrapper).  Cross-stdenv
       # already supplies the target compiler + binutils that the kernel
@@ -116,8 +138,17 @@ let
         "-fdebug-prefix-map=${cc.bintools}=/cross-binutils-wrapper"
       ];
 
+      # Splice the eval-time-composed version into version.m4 before
+      # autoreconf.  ${fullVersion} is the 5-component string composed
+      # from upstream-m4 + submodule input metadata + .gitmodules +
+      # self — all known at flake eval time.
       preConfigure = ''
         rm -f configure aclocal.m4
+        sed -i.bak \
+          -e 's|m4_define(\[AC_PACKAGE_VERSION\],\[[^]]*\])|m4_define([AC_PACKAGE_VERSION],[${fullVersion}])|' \
+          version.m4
+        rm version.m4.bak
+        grep AC_PACKAGE_VERSION version.m4
         autoreconf -i
       '';
 
@@ -179,6 +210,6 @@ let
         description = "GNU Mach microkernel for ${target.migTarget}";
         platforms = platforms.all;
       };
-    };
+    } // helpers.mkReproAttrs { inherit self pname; });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-${name}" (mkOne name target)) targets
