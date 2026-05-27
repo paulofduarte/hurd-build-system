@@ -131,15 +131,14 @@
       # in src/<repo> and the next `nix build` will rebuild.
       # `nix run` apps — see flakes/run/default.nix.  One per cross
       # arch (aarch64 / i686 / x86_64); each parses scenario + flags
-      # and exec's tools/dispatch.sh.  The kernel comes from the
-      # nix-built `gnumach-<arch>` package (cachix-cached), so this
-      # path doesn't need a clone or a make invocation.
+      # and exec's flakes/run/dispatch.sh.  The kernel comes from
+      # the nix-built `gnumach-<arch>` package (cachix-cached), so
+      # this path doesn't need a clone or a make invocation.
       apps = forAllSystems (system: import ./flakes/run {
         inherit (nixpkgs) lib;
         pkgs = nixpkgs.legacyPackages.${system};
         inherit system targets crossGcc;
         packages = self.packages.${system};
-        toolsSrc = ./tools;
       });
 
       packages = forAllSystems (system:

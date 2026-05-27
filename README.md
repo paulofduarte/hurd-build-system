@@ -193,7 +193,7 @@ The `nix run` path uses the nix-built kernel from the project's cachix cache.  D
 | `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists) |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`) |
 
-See `make run-help` for the cheat sheet, and `tools/README.md` for
+See `make run-help` for the cheat sheet, and `flakes/run/README.md` for
 how the harness is structured and how to add new scenarios.
 
 ## Working with the submodules
@@ -277,7 +277,9 @@ fresh clones get only `origin`.
 │   ├── mig/.mig-<target>-installed # Makefile staleness stamps (gitignored)
 │   ├── gnumach/default.nix         # per-target kernel derivation (clean reproducible build)
 │   ├── gnumach/result-*            # per-target gc-root symlinks (gitignored)
-│   └── sidekick/                   # nix derivation for the helper VM (Alpine fetch)
+│   ├── sidekick/                   # nix derivation for the helper VM (Alpine fetch)
+│   └── run/                        # `nix run` + `make run` harness: default.nix wraps
+│                                   #   dispatch.sh + scenario scripts + lib/ helpers
 ├── .sidekick/                      # helper-VM artefacts (vmlinuz + initramfs.cpio.gz, gitignored)
 ├── dist/<target>/                  # clean install tree — real copies, tarball-able (gitignored)
 │   ├── boot/gnumach                # kernel (copy, not symlink)
@@ -289,7 +291,6 @@ fresh clones get only `origin`.
 │       └── msgids/gnumach.msgids   # RPC message-ID table for trace decoders
 ├── .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
 ├── .direnv/                        # nix-direnv per-project state (gitignored)
-├── tools/                          # `make run` harness scenarios + libs
 └── LICENSE                         # GPL-2.0
 ```
 

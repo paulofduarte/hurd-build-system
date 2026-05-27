@@ -9,10 +9,11 @@
 #   x86_64        → boot scenario for x86_64
 #
 # Each app is a wrapper that parses scenario + flags, sets the env
-# the harness expects, and exec's tools/dispatch.sh.  Same dispatch
-# code path that `make run` uses — same scenario scripts, same
-# behaviour — just the kernel comes from the nix-built
-# `gnumach-<arch>` package instead of the in-tree work/ build.
+# the harness expects, and exec's ./dispatch.sh (sibling file).
+# Same dispatch code path that `make run` uses — same scenario
+# scripts, same behaviour — just the kernel comes from the
+# nix-built `gnumach-<arch>` package instead of the in-tree work/
+# build.
 #
 # Cache for distro images lives at
 # `$XDG_CACHE_HOME/hurd-build-system/test-images/` (defaulting to
@@ -30,7 +31,7 @@
 #   --help, -h      usage
 #   -- ARGS         everything after `--` passes through to qemu
 
-{ pkgs, lib, system, targets, packages, crossGcc, toolsSrc }:
+{ pkgs, lib, system, targets, packages, crossGcc }:
 
 let
   # Which arches we expose as `nix run` targets.  Xen variants don't
@@ -127,12 +128,16 @@ let
           # Distro URLs from the shared source-of-truth — same file
           # the Makefile's `run:` recipe sources.
           # shellcheck source=/dev/null
-          . ${toolsSrc}/lib/distro-urls.sh
+          . ${./lib/distro-urls.sh}
           export HURD_DEBIAN_X86_64_URL HURD_DEBIAN_I686_URL \
                  HURD_GENTOO_X86_64_URL HURD_GENTOO_I686_URL \
                  HURD_GUIX_I686_URL HURD_GUIX_X86_64_URL
 
-          exec ${toolsSrc}/dispatch.sh "$SCENARIO" ''${qemu_args[@]+"''${qemu_args[@]}"}
+          # dispatch.sh + its sibling scenarios + lib/ all live in
+          # this directory.  Copy as a single store path so the
+          # dispatch script's $(dirname "$0")/lib/... resolves
+          # correctly when invoked from /nix/store.
+          exec ${./.}/dispatch.sh "$SCENARIO" ''${qemu_args[@]+"''${qemu_args[@]}"}
         '';
       };
     in

@@ -12,7 +12,8 @@ you touch any of it.
 ## Layout
 
 ```
-tools/
+flakes/run/
+├── default.nix             # nix-app wrapper (per-arch writeShellApplication)
 ├── dispatch.sh             # entry point — validates env, exec's scenario
 ├── boot.sh                 # SCENARIO=boot: bare kernel (direct -kernel,
 │                           #   or GRUB-on-ISO via sidekick for x86_64)
@@ -23,6 +24,7 @@ tools/
 └── lib/
     ├── common.sh           # die(), scenario_check_target(), print_qemu_hint()
     ├── arch-flags.sh       # arch_qemu_for_target(), arch_apply_accel_if_requested()
+    ├── distro-urls.sh      # HURD_*_URL definitions (sourced by Makefile + nix-app)
     ├── hurd-common.sh      # fetch/overlay/vanilla helpers (no exec — see below)
     └── sidekick.sh         # host-side sidekick-VM orchestrator
                             #   (overlay_kernel + prepare_grub + make_iso)
@@ -70,11 +72,12 @@ exec "$QEMU" ... "${extra_qemu_args[@]}"
 
 ### Adding a new scenario
 
-1. Drop `tools/<scenario>.sh` following the template above.
+1. Drop `flakes/run/<scenario>.sh` following the template above.
 2. `chmod +x` it.
 3. That's it — `dispatch.sh` discovers scenarios by `find`'ing executable
-   `*.sh` files under `tools/`.  `make run SCENARIO=<scenario>` works
-   immediately.  `--help` and "unknown scenario" listings update automatically.
+   `*.sh` files in its own directory.  `make run SCENARIO=<scenario>`
+   works immediately.  `--help` and "unknown scenario" listings update
+   automatically.
 
 If the scenario needs the sidekick helper VM (i.e., it reads modules
 from a qcow2, or builds a GRUB ISO for x86_64 inject), also add its

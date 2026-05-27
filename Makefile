@@ -59,7 +59,7 @@ MIG := $(MIG_TARGET)-mig
 endif
 
 # Default SCENARIO so `make run` works without an explicit override.
-# The inner tools/dispatch.sh also defaults to boot, but the make-level
+# The inner flakes/run/dispatch.sh also defaults to boot, but the make-level
 # _RUN_PREREQS rule below needs the value at *parse time* — without
 # this default, `make ARCH=x86_64 run` doesn't pick up the
 # x86_64+boot → sidekick prereq and the harness errors out.
@@ -124,7 +124,7 @@ SIDEKICK_KERNEL := $(SIDEKICK)/vmlinuz
 SIDEKICK_INITRD := $(SIDEKICK)/initramfs.cpio.gz
 SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 
-# Hurd distro image URLs live in tools/lib/distro-urls.sh (shared
+# Hurd distro image URLs live in flakes/run/lib/distro-urls.sh (shared
 # with the `nix run` apps — single source of truth).  We don't read
 # them into make variables; the `run:` recipe sources the file
 # inline so dispatch.sh sees them via the environment.
@@ -766,7 +766,7 @@ check: check-mach
 #   RUN_KEEP_OVERLAY=1  reuse the per-run qcow2 overlay across runs
 #   RUN_ARGS="..."      extra flags appended to qemu (e.g., "-s -S")
 #
-# Prereqs depend on (SCENARIO, RUN_VANILLA).  tools/dispatch.sh
+# Prereqs depend on (SCENARIO, RUN_VANILLA).  flakes/run/dispatch.sh
 # rejects RUN_VANILLA=1 + SCENARIO=boot upfront (no distro kernel
 # to fall back to), so the only case where the kernel isn't needed
 # is RUN_VANILLA=1 + hurd-*.  Everything else requires `mach`.
@@ -795,7 +795,7 @@ _RUN_PREREQS := \
 # Each run is NOT idempotent, so no _SENTINEL entry — every invocation
 # re-enters dispatch and re-checks `mach` (skipped if fresh).
 run: $(_RUN_PREREQS)
-	@. ./tools/lib/distro-urls.sh && \
+	@. ./flakes/run/lib/distro-urls.sh && \
 	 GNUMACH_KERNEL="$(GNUMACH_KERNEL)" \
 	 ARCH="$(ARCH)" \
 	 WORK="$(WORK)" \
@@ -811,13 +811,13 @@ run: $(_RUN_PREREQS)
 	 HURD_GENTOO_I686_URL="$$HURD_GENTOO_I686_URL" \
 	 HURD_GUIX_I686_URL="$$HURD_GUIX_I686_URL" \
 	 HURD_GUIX_X86_64_URL="$$HURD_GUIX_X86_64_URL" \
-	 ./tools/dispatch.sh "$(SCENARIO)" $(RUN_ARGS)
+	 ./flakes/run/dispatch.sh "$(SCENARIO)" $(RUN_ARGS)
 
 # `run-help` has no prereqs — dispatch.sh handles --help before any
 # env validation, so the help text works from a clean checkout without
 # a built kernel.
 run-help:
-	@./tools/dispatch.sh --help
+	@./flakes/run/dispatch.sh --help
 
 endif # NEED_DISPATCH
 

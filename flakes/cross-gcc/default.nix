@@ -111,7 +111,7 @@ let
         pkgs.git           # read-only ops + `git clean -fdX` for mrproper
         pkgs.nix           # so the Makefile can re-dispatch into a different target shell
         pkgs.qemu          # provides qemu-system-* (incl. qemu-img) for running the kernel
-        pkgs.curl          # tools/hurd-*.sh fetches distro images over HTTPS
+        pkgs.curl          # flakes/run/hurd-*.sh fetches distro images over HTTPS
         pkgs.which         # gnumach's run-qemu.sh test runner uses `which` to gate test execution
       ]
       # gnumach's kernel-side `make check` on x86 builds a multiboot
