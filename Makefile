@@ -124,29 +124,10 @@ SIDEKICK_KERNEL := $(SIDEKICK)/vmlinuz
 SIDEKICK_INITRD := $(SIDEKICK)/initramfs.cpio.gz
 SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 
-# Hurd distro image URLs — referenced by tools/hurd-*.sh.
-# Naming uses our build-system convention (X86_64 / I686); where the
-# distro uses its own arch nomenclature, the mapping lives ONLY inside
-# the URL string.
-# Debian: `latest/hurd-{amd64,i386}/debian-hurd.img.tar.gz` is a versionless
-# 302-redirect to the most recently published dated image (e.g.
-# debian-hurd-amd64-YYYYMMDD.img.tar.gz).  Same trade-off as Gentoo — the
-# cached copy doesn't auto-refresh; `rm -rf work/test-images/debian/<ARCH>/`
-# forces a re-fetch.  Standalone modules (ext2fs.static, exec.static) live
-# in the same dir.  Note: Debian does NOT publish ld.so.1 standalone, and
-# doesn't need it — exec.static is fully statically linked.
-HURD_DEBIAN_X86_64_URL := https://cdimage.debian.org/cdimage/ports/latest/hurd-amd64/debian-hurd.img.tar.gz
-HURD_DEBIAN_I686_URL   := https://cdimage.debian.org/cdimage/ports/latest/hurd-i386/debian-hurd.img.tar.gz
-HURD_GENTOO_X86_64_URL := https://distfiles.gentoo.org/experimental/amd64/hurd/hurd-x86_64-preview.qcow2
-HURD_GENTOO_I686_URL   := https://distfiles.gentoo.org/experimental/x86/hurd/hurd-i686-preview.qcow2
-# Guix: /search/latest/image is Cuirass's auto-latest endpoint — server-side
-# redirect to the most recent successful build with a fetchable artefact.
-# `system:x86_64-linux` refers to the BUILD HOST (Guix only operates x86_64-linux
-# build farms for Hurd images), NOT the target arch — the target arch is
-# encoded only in the qcow2 filename.  hurd64-barebones.qcow2 artefacts are
-# aggressively GC'd by Guix CI; expect 500 most of the time for x86_64.
-HURD_GUIX_I686_URL     := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd-barebones.qcow2
-HURD_GUIX_X86_64_URL   := https://ci.guix.gnu.org/search/latest/image?query=spec:images+status:success+system:x86_64-linux+hurd64-barebones.qcow2
+# Hurd distro image URLs live in tools/lib/distro-urls.sh (shared
+# with the `nix run` apps — single source of truth).  We don't read
+# them into make variables; the `run:` recipe sources the file
+# inline so dispatch.sh sees them via the environment.
 
 # No separate stamps — dist files are real copies (not symlinks into
 # /nix/store), so each file's mtime is the cp time and make's regular
@@ -529,6 +510,7 @@ _RUN_PASSTHROUGH := \
   RUN_VANILLA=$(RUN_VANILLA) \
   RUN_ACCEL=$(RUN_ACCEL) \
   RUN_KEEP_OVERLAY=$(RUN_KEEP_OVERLAY) \
+  RUN_REFRESH=$(RUN_REFRESH) \
   RUN_ARGS=$(subst $(_SP),\$(_SP),$(RUN_ARGS))
 
 # We intentionally do NOT forward $(MAKEOVERRIDES) here.  Two
@@ -784,32 +766,28 @@ check: check-mach
 #   RUN_KEEP_OVERLAY=1  reuse the per-run qcow2 overlay across runs
 #   RUN_ARGS="..."      extra flags appended to qemu (e.g., "-s -S")
 #
-# Prereqs depend on (SCENARIO, RUN_VANILLA):
-#   mach       — required by all scenarios EXCEPT the
-#                "RUN_VANILLA=1 + Hurd scenario" combination (vanilla
-#                Hurd boots the distro's bundled kernel — no need to
-#                build ours).  For `boot` (or any unrecognized scenario)
-#                RUN_VANILLA is meaningless and mach is always required
-#                — this guard prevents the cryptic "could not load
-#                kernel image" qemu error from RUN_VANILLA=1 SCENARIO=boot.
+# Prereqs depend on (SCENARIO, RUN_VANILLA).  tools/dispatch.sh
+# rejects RUN_VANILLA=1 + SCENARIO=boot upfront (no distro kernel
+# to fall back to), so the only case where the kernel isn't needed
+# is RUN_VANILLA=1 + hurd-*.  Everything else requires `mach`.
+#
+#   mach       — needed for all non-vanilla scenarios.
 #   sidekick   — needed for ANY hurd-* scenario (regenerates the
 #                qcow2's grub.cfg so it boots on serial under
 #                -nographic; non-vanilla also overlays our kernel).
 #                Also needed for boot + ARCH=x86_64 (qemu's -kernel
 #                rejects 64-bit ELFs, see D18; routes through
 #                GRUB-on-ISO via mkiso).
-#   mach       — needed for all non-vanilla scenarios.  Vanilla
-#                skips it (booting the distro's bundled kernel —
-#                no need to build ours).
 #
 # Cells (evaluated at Makefile-parse time):
-#   RUN_VANILLA=1 + hurd-*                          → sidekick
-#   boot + ARCH=i686/aarch64                      → mach
-#   boot + ARCH=x86_64                            → mach sidekick
-#   non-vanilla hurd-*                              → mach sidekick
+#   RUN_VANILLA=1 + hurd-*               → sidekick
+#   RUN_VANILLA=1 + boot                 → (rejected by dispatch.sh; no prereq matters)
+#   boot + ARCH=i686/aarch64             → mach
+#   boot + ARCH=x86_64                   → mach sidekick
+#   non-vanilla hurd-*                   → mach sidekick
 _RUN_PREREQS := \
-  $(if $(and $(filter 1,$(RUN_VANILLA)),$(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO))), \
-    sidekick, \
+  $(if $(filter 1,$(RUN_VANILLA)), \
+    $(if $(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO)),sidekick), \
     mach \
     $(if $(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO)),sidekick, \
       $(if $(and $(filter x86_64,$(ARCH)),$(filter boot,$(SCENARIO))),sidekick)))
@@ -817,20 +795,22 @@ _RUN_PREREQS := \
 # Each run is NOT idempotent, so no _SENTINEL entry — every invocation
 # re-enters dispatch and re-checks `mach` (skipped if fresh).
 run: $(_RUN_PREREQS)
-	@GNUMACH_KERNEL="$(GNUMACH_KERNEL)" \
+	@. ./tools/lib/distro-urls.sh && \
+	 GNUMACH_KERNEL="$(GNUMACH_KERNEL)" \
 	 ARCH="$(ARCH)" \
 	 WORK="$(WORK)" \
 	 RUN_VANILLA="$(RUN_VANILLA)" \
 	 RUN_ACCEL="$(RUN_ACCEL)" \
 	 RUN_KEEP_OVERLAY="$(RUN_KEEP_OVERLAY)" \
+	 RUN_REFRESH="$(RUN_REFRESH)" \
 	 SIDEKICK_KERNEL="$(SIDEKICK_KERNEL)" \
 	 SIDEKICK_INITRD="$(SIDEKICK_INITRD)" \
-	 HURD_DEBIAN_X86_64_URL="$(HURD_DEBIAN_X86_64_URL)" \
-	 HURD_DEBIAN_I686_URL="$(HURD_DEBIAN_I686_URL)" \
-	 HURD_GENTOO_X86_64_URL="$(HURD_GENTOO_X86_64_URL)" \
-	 HURD_GENTOO_I686_URL="$(HURD_GENTOO_I686_URL)" \
-	 HURD_GUIX_I686_URL="$(HURD_GUIX_I686_URL)" \
-	 HURD_GUIX_X86_64_URL="$(HURD_GUIX_X86_64_URL)" \
+	 HURD_DEBIAN_X86_64_URL="$$HURD_DEBIAN_X86_64_URL" \
+	 HURD_DEBIAN_I686_URL="$$HURD_DEBIAN_I686_URL" \
+	 HURD_GENTOO_X86_64_URL="$$HURD_GENTOO_X86_64_URL" \
+	 HURD_GENTOO_I686_URL="$$HURD_GENTOO_I686_URL" \
+	 HURD_GUIX_I686_URL="$$HURD_GUIX_I686_URL" \
+	 HURD_GUIX_X86_64_URL="$$HURD_GUIX_X86_64_URL" \
 	 ./tools/dispatch.sh "$(SCENARIO)" $(RUN_ARGS)
 
 # `run-help` has no prereqs — dispatch.sh handles --help before any

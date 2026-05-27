@@ -4,10 +4,23 @@
 
 # hurd_cache_dir <distro> <target>
 #   Echoes $WORK/test-images/<distro>/<target>/, creating it as a side
-#   effect. Idempotent. Callers use $(hurd_cache_dir …) — be aware that
-#   the mkdir runs as part of the call even when the dir already exists.
+#   effect.  Idempotent.  Callers use $(hurd_cache_dir …) — be aware
+#   that the mkdir runs as part of the call even when the dir already
+#   exists.
+#
+#   RUN_REFRESH=1 wipes the dir before recreating it — forces every
+#   downstream fetch_once / fetch_via_resolve to re-download.  Scoped
+#   per (distro, target) so unrelated cached images stay put.  Useful
+#   when upstream rotated the image (Debian / Gentoo / Guix all
+#   serve at stable URLs that point at moving content; the
+#   `[ -s "$dest" ] && return 0` short-circuit in fetch_once would
+#   otherwise reuse a stale copy forever).
 hurd_cache_dir() {
   local dir="$WORK/test-images/$1/$2"
+  if [ "${RUN_REFRESH:-}" = "1" ] && [ -d "$dir" ]; then
+    echo "RUN_REFRESH=1 — wiping cached $1/$2 images" >&2
+    rm -rf "$dir"
+  fi
   mkdir -p "$dir"
   echo "$dir"
 }

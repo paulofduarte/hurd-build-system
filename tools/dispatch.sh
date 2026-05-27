@@ -18,6 +18,7 @@ Options (all env-style; default in parens):
   RUN_VANILLA=1        boot the distro's bundled kernel (Hurd scenarios only)
   RUN_ACCEL=1          enable -accel hvf/kvm when host arch matches ARCH
   RUN_KEEP_OVERLAY=1   reuse the per-run qcow2 overlay across invocations
+  RUN_REFRESH=1        wipe the scenario's cached distro image and re-fetch
   RUN_ARGS="..."       extra flags appended to the qemu invocation
 
 Available scenarios:
@@ -41,6 +42,19 @@ if [ ! -x "$script" ]; then
   echo "available scenarios:" >&2
   find "$scenarios_dir" -maxdepth 1 -name '*.sh' -not -name 'dispatch.sh' \
     | sed 's|.*/||; s|\.sh$||' | sort | sed 's/^/  /' >&2
+  exit 2
+fi
+
+# Cross-scenario sanity: RUN_VANILLA only applies to hurd-* scenarios
+# (it swaps our kernel out for the distro's bundled one).  With
+# SCENARIO=boot there's no distro kernel to fall back to — boot mode
+# is defined as "qemu -kernel <ours>".  Reject the combination loudly
+# so users don't accidentally think the flag did something.
+if [ "$scenario" = "boot" ] && [ "${RUN_VANILLA:-}" = "1" ]; then
+  echo "RUN_VANILLA=1 / --vanilla has no effect with SCENARIO=boot." >&2
+  echo "boot mode uses our kernel directly (qemu -kernel) — there's no" >&2
+  echo "distro kernel to fall back to.  Either pick a Hurd scenario" >&2
+  echo "(hurd-debian / hurd-gentoo / hurd-guix) or drop the flag." >&2
   exit 2
 fi
 

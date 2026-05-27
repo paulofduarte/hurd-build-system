@@ -147,15 +147,33 @@ make                    # now uses the make inside the shell
 ### 3. Run
 
 ```sh
-make run                                            # boot scenario, host's default ARCH
-make run ARCH=aarch64 SCENARIO=boot               # explicit; bare kernel via qemu -kernel
-make run ARCH=x86_64 SCENARIO=hurd-debian         # Debian Hurd amd64 + our x86_64 kernel
-make run ARCH=i686 SCENARIO=hurd-gentoo           # Gentoo Hurd i686 + our i686 kernel
-make run ARCH=i686 SCENARIO=hurd-guix             # Guix childhurd 32-bit + our i686 kernel
-RUN_VANILLA=1 make run ARCH=i686 SCENARIO=hurd-debian   # boot distro's bundled kernel instead
-RUN_ARGS="-s -S" make run ARCH=aarch64            # qemu waits for gdb on :1234
-RUN_ACCEL=1 make run                                # -accel hvf/kvm when host matches ARCH
+make run                                                 # boot scenario, host's default ARCH
+make run ARCH=aarch64 SCENARIO=boot                      # explicit; bare kernel via qemu -kernel
+make run ARCH=x86_64 SCENARIO=hurd-debian                # Debian Hurd amd64 + our x86_64 kernel
+make run ARCH=i686 SCENARIO=hurd-gentoo                  # Gentoo Hurd i686 + our i686 kernel
+make run ARCH=i686 SCENARIO=hurd-guix                    # Guix childhurd 32-bit + our i686 kernel
+make run ARCH=i686 SCENARIO=hurd-debian RUN_VANILLA=1    # boot distro's bundled kernel instead
+make run ARCH=aarch64 RUN_ARGS="-s -S"                   # qemu waits for gdb on :1234
+make run RUN_ACCEL=1                                     # -accel hvf/kvm when host matches ARCH
+make run ARCH=x86_64 SCENARIO=hurd-debian RUN_REFRESH=1  # force re-fetch of cached distro image
 ```
+
+All knobs (`ARCH`, `SCENARIO`, `RUN_*`) accept either form — `make run VAR=value` (shown above) or `VAR=value make run` (env-style).  Pick whichever reads better.
+
+Or via `nix run` (no clone needed — uses the cachix-cached nix-built kernel):
+
+```sh
+nix run github:paulofduarte/hurd-build-system                     # boot, host's arch
+nix run github:paulofduarte/hurd-build-system#aarch64             # boot, aarch64
+nix run github:paulofduarte/hurd-build-system#x86_64 hurd-debian  # Debian Hurd x86_64
+nix run github:paulofduarte/hurd-build-system#x86_64 hurd-debian --accel
+nix run github:paulofduarte/hurd-build-system#i686 hurd-debian --vanilla
+nix run github:paulofduarte/hurd-build-system#aarch64 boot --refresh
+nix run github:paulofduarte/hurd-build-system#aarch64 -- -- -s -S    # everything after `--` passes to qemu
+nix run github:paulofduarte/hurd-build-system#aarch64 --help
+```
+
+The `nix run` path uses the nix-built kernel from the project's cachix cache.  Distro images cache at `$XDG_CACHE_HOME/hurd-build-system/test-images/`.
 
 **Scenarios:**
 
