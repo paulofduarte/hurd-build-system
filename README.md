@@ -321,6 +321,21 @@ make cache-push TARGET=x86_64      # a specific arch
 `cachix authtoken <token>` once per host is enough; push is
 authenticated, pull is anonymous.
 
+**Continuous cache maintenance via GitHub Actions.**  The workflow at
+`.github/workflows/cache-toolchains.yml` re-populates the cache
+automatically whenever `flake.nix`, `flake.lock`, or anything in
+`toolchain/**/*.nix` lands on `main`.  It runs a matrix across all
+four supported host arches — `x86_64-linux` (`ubuntu-latest`),
+`aarch64-linux` (`ubuntu-24.04-arm`), `aarch64-darwin`
+(`macos-latest`), `x86_64-darwin` (`macos-13`) — and pushes every
+target's dev-shell closure plus mig and gnumach-headers builds.
+
+To enable the workflow, add the cachix auth token to the repo's
+GitHub secrets as `CACHIX_AUTH_TOKEN` (from
+[app.cachix.org/personal-auth-tokens](https://app.cachix.org/personal-auth-tokens)).
+Trigger manually via the Actions tab → "Cache cross-toolchains" →
+"Run workflow" if you want to refresh without a flake change.
+
 ### Direnv (optional)
 
 If you use [direnv](https://direnv.net/) + nix-direnv, the project's

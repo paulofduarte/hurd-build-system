@@ -1,0 +1,100 @@
+name: Cache cross-toolchains
+
+# Populate hurd-build-system.cachix.org with per-target cross-toolchains
+# (mig-<arch>, gnumach-headers-<arch>, and the full dev-shell closure
+# for every target).  Triggered whenever something that could alter
+# the derivation hashes changes — flake.nix, flake.lock, the per-arch
+# .nix files under toolchain/, or the workflow itself.
+#
+# Each runner builds its own native host's view of every target
+# (since cross-toolchain hashes differ across build hosts), and the
+# cachix-action's post-build hook uploads anything new as it's built.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - toolchain/**/*.nix
+      - .github/workflows/cache-toolchains.yml
+  workflow_dispatch:
+
+# If a newer commit lands while this is running, supersede the older
+# job — we only care about the cache reflecting the latest main.
+concurrency:
+  group: cache-toolchains-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  populate:
+    name: ${{ matrix.system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            system: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+          - runner: macos-latest
+            system: aarch64-darwin
+          - runner: macos-13
+            system: x86_64-darwin
+    runs-on: ${{ matrix.runner }}
+    # Cross-GCC bootstraps from source can take ~30 min on the slower
+    # runners (especially aarch64-cross on x86_64 hosts); leave headroom.
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install nix
+        uses: cachix/install-nix-action@v30
+        with:
+          # Match the daemon config the cloud-init.yaml lays down:
+          # flakes on, auto-accept flake nixConfig (so the workflow
+          # doesn't hang on a prompt for our own cache), and pre-trust
+          # the project cache as a substituter at the daemon level.
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            extra-substituters = https://hurd-build-system.cachix.org
+            extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
+
+      - name: Configure cachix push
+        uses: cachix/cachix-action@v15
+        with:
+          name: hurd-build-system
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          # Don't push back paths already on cache.nixos.org — keeps
+          # the cachix free-tier footprint to just the things upstream
+          # doesn't have (i.e., our cross-toolchains).
+          skipPush: false
+
+      - name: Build dev-shell closures for every target
+        run: |
+          set -euo pipefail
+          for target in aarch64 i686 x86_64 i686-xen x86_64-xen; do
+            echo "::group::dev-shell for .#${target}"
+            # `nix develop -i` realises the full closure of the dev
+            # shell, including the cross-toolchain.  The post-build
+            # hook configured by cachix-action pushes new paths as
+            # they're built.
+            nix develop -i ".#${target}" --command true
+            echo "::endgroup::"
+          done
+
+      - name: Build per-target mig + gnumach-headers
+        run: |
+          set -euo pipefail
+          for target in aarch64 i686 x86_64 i686-xen x86_64-xen; do
+            echo "::group::packages for ${target}"
+            nix build --no-link \
+              ".#mig-${target}" \
+              ".#gnumach-headers-${target}"
+            echo "::endgroup::"
+          done
