@@ -17,9 +17,15 @@
 #
 # The default user is auto-detected as the first uid >= 1000.
 #
-# Apply with `orb create ubuntu my-vm -u cloud-init.yaml` (or whichever
-# orb invocation matches your tooling).  After cloud-init completes,
-# log out and back in for the bash hooks to take effect.
+# Apply with `orb create ubuntu my-vm --user-data cloud-init.yaml`
+# (or the short form `-c cloud-init.yaml`).  After cloud-init
+# completes, log out and back in for the bash hooks to take effect.
+#
+# Debug if it doesn't seem to run:
+#   orb shell my-vm                          # enter the VM
+#   sudo cloud-init status --long            # current state + reason
+#   sudo cat /var/log/cloud-init.log         # full init log
+#   sudo cat /var/log/cloud-init-output.log  # stdout/stderr from runcmd
 
 runcmd:
   - |

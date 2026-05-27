@@ -351,15 +351,28 @@ user-data, the VM boots fully wired:
   `/proc/sys/fs/binfmt_misc/rosetta`.  Native VMs keep the seccomp
   filter enabled.
 
-Apply when creating an orbstack machine:
+Apply when creating an orbstack machine — the flag is `--user-data`
+(long) or `-c` (short):
 
 ```sh
-orb create ubuntu my-hurd-vm -u cloud-init.yaml
+orb create ubuntu my-hurd-vm --user-data cloud-init.yaml
+# or:
+orb create ubuntu my-hurd-vm -c cloud-init.yaml
 ```
 
 After boot, log out and back in once (so the bash hooks load), then
 `cd` into a clone of this repo with direnv allow'd and the cross
 toolchains stream in from cachix in seconds.
+
+If cloud-init doesn't seem to have run, inspect the logs inside the
+VM:
+
+```sh
+orb shell my-hurd-vm
+sudo cloud-init status --long             # current state + reason
+sudo cat /var/log/cloud-init.log          # full init log
+sudo cat /var/log/cloud-init-output.log   # stdout/stderr from runcmd
+```
 
 ### Mtime-based short-circuit
 
