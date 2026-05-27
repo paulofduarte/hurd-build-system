@@ -7,7 +7,7 @@
 # the sidekick's grub.cfg regenerator flattens that indirection
 # before extracting the boot recipe.
 #
-# Known image issue (TARGET=x86_64 only — i686 boots cleanly):
+# Known image issue (ARCH=x86_64 only — i686 boots cleanly):
 # the amd64 preview image's openrc hangs in the boot runlevel after
 # the `servers` service errors out.  Root cause: rumpdisk's bundled
 # NetBSD rump kernel probes the entire PCI bus and tries to attach
@@ -23,17 +23,17 @@ set -euo pipefail
 . "$(dirname "$0")/lib/sidekick.sh"
 
 scenario_check_target "hurd-gentoo" "x86_64 i686"
-arch_qemu_for_target "$TARGET"
+arch_qemu_for_target "$ARCH"
 arch_apply_accel_if_requested
 
 extra_qemu_args=("$@")
 
-case "$TARGET" in
+case "$ARCH" in
   x86_64) url="$HURD_GENTOO_X86_64_URL" ;;
   i686)   url="$HURD_GENTOO_I686_URL" ;;
 esac
 
-cache="$(hurd_cache_dir gentoo "$TARGET")"
+cache="$(hurd_cache_dir gentoo "$ARCH")"
 qcow2="$cache/$(basename "$url")"
 hurd_fetch_once_verified "$url" "$qcow2" "$url.sha512"
 

@@ -124,7 +124,7 @@ git submodule update --init --recursive
 
 ```sh
 make                    # builds for the host's native arch
-make TARGET=x86_64      # cross-build for a specific target
+make ARCH=x86_64      # cross-build for a specific target
 make help               # lists all targets (no nix needed for this one)
 ```
 
@@ -147,19 +147,19 @@ make                    # now uses the make inside the shell
 ### 3. Run
 
 ```sh
-make run                                            # boot scenario, host's default TARGET
-make run TARGET=aarch64 SCENARIO=boot               # explicit; bare kernel via qemu -kernel
-make run TARGET=x86_64 SCENARIO=hurd-debian         # Debian Hurd amd64 + our x86_64 kernel
-make run TARGET=i686 SCENARIO=hurd-gentoo           # Gentoo Hurd i686 + our i686 kernel
-make run TARGET=i686 SCENARIO=hurd-guix             # Guix childhurd 32-bit + our i686 kernel
-RUN_VANILLA=1 make run TARGET=i686 SCENARIO=hurd-debian   # boot distro's bundled kernel instead
-RUN_ARGS="-s -S" make run TARGET=aarch64            # qemu waits for gdb on :1234
-RUN_ACCEL=1 make run                                # -accel hvf/kvm when host matches TARGET
+make run                                            # boot scenario, host's default ARCH
+make run ARCH=aarch64 SCENARIO=boot               # explicit; bare kernel via qemu -kernel
+make run ARCH=x86_64 SCENARIO=hurd-debian         # Debian Hurd amd64 + our x86_64 kernel
+make run ARCH=i686 SCENARIO=hurd-gentoo           # Gentoo Hurd i686 + our i686 kernel
+make run ARCH=i686 SCENARIO=hurd-guix             # Guix childhurd 32-bit + our i686 kernel
+RUN_VANILLA=1 make run ARCH=i686 SCENARIO=hurd-debian   # boot distro's bundled kernel instead
+RUN_ARGS="-s -S" make run ARCH=aarch64            # qemu waits for gdb on :1234
+RUN_ACCEL=1 make run                                # -accel hvf/kvm when host matches ARCH
 ```
 
 **Scenarios:**
 
-| Scenario | Supported TARGETs | What it boots |
+| Scenario | Supported ARCHs | What it boots |
 |---|---|---|
 | `boot` | `aarch64`, `x86_64`, `i686` | Bare kernel: i686/aarch64 via direct `-kernel`; x86_64 via sidekick-built GRUB ISO (qemu's `-kernel` rejects 64-bit ELFs) |
 | `hurd-debian` | `x86_64`, `i686` | Sidekick overlays our gnumach onto Debian's bundled kernel path inside a qcow2 overlay + regenerates a serial-clean grub.cfg; disk's own GRUB drives multiboot |
@@ -171,7 +171,7 @@ RUN_ACCEL=1 make run                                # -accel hvf/kvm when host m
 | Flag | Effect |
 |---|---|
 | `RUN_VANILLA=1` | Boot the distro's bundled kernel instead of ours (Hurd scenarios only; sidekick still regenerates grub.cfg for serial output) |
-| `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); x86_64 hosts accelerate both x86_64 and i686 targets, others require host arch == `TARGET` |
+| `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); x86_64 hosts accelerate both x86_64 and i686 targets, others require host arch == `ARCH` |
 | `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists) |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`) |
 
@@ -219,19 +219,19 @@ fresh clones get only `origin`.
 |---|---|
 | `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
 | `prepare` | `autoreconf -i` on `src/gnumach` (MIG no longer needs local autoreconf — its nix derivation handles it) |
-| `dist-headers` | symlink the gnumach public headers from the nix-built `gnumach-headers-<TARGET>` package into `dist/$(TARGET)/include` |
-| `toolchain` | `dist-headers` + symlink the nix-built `mig-<TARGET>` wrapper into `.bin/<arch>-gnu-mig` |
+| `dist-headers` | symlink the gnumach public headers from the nix-built `gnumach-headers-<ARCH>` package into `dist/$(ARCH)/include` |
+| `toolchain` | `dist-headers` + symlink the nix-built `mig-<ARCH>` wrapper into `.bin/<arch>-gnu-mig` |
 | `mach` | build the gnumach kernel binary |
-| `dist-mach` | install gnumach into `dist/$(TARGET)/` |
+| `dist-mach` | install gnumach into `dist/$(ARCH)/` |
 | `dist` | install everything (currently `dist-mach`; will grow) |
 | `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
 | `check-mach` | the actual kernel-tests recipe `check` delegates to |
 | `run` | boot the built kernel in qemu — see the [Run](#3-run) section for scenarios/flags |
-| `run-help` | print all `make run` options (`TARGET`/`SCENARIO`/`RUN_*`) |
+| `run-help` | print all `make run` options (`ARCH`/`SCENARIO`/`RUN_*`) |
 | `sidekick` | build the helper VM (x86_64 Alpine — used by Hurd scenarios for ext2 extraction + grub-mkrescue ISO assembly; auto-built on demand) |
-| `cache-push` | push the current `$(TARGET)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
+| `cache-push` | push the current `$(ARCH)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
-| `clean-dist` | `rm -rf dist/$(TARGET)/` (current target only) |
+| `clean-dist` | `rm -rf dist/$(ARCH)/` (current target only) |
 | `mrproper` | `rm -rf work/`, the project-root install dirs (`.bin/`, `.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig}/result-*`) + install stamps (`flakes/mig/.mig-*-installed`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,sidekick}/` are preserved. |
 
 ## Directory layout
@@ -242,7 +242,7 @@ fresh clones get only `origin`.
 ├── flake.lock                      # pinned nixpkgs (nixos-25.11)
 ├── Makefile                        # orchestration: always dispatches through `nix develop -i`
 ├── cloud-init.yaml                 # bootstrap recipe for any cloud-init-capable Linux VM
-├── .envrc                          # nix-direnv hook (`use flake .#${TARGET:-aarch64}`)
+├── .envrc                          # nix-direnv hook (`use flake .#${ARCH:-aarch64}`)
 ├── src/
 │   ├── gnumach/                    # submodule → paulofduarte/gnumach @ aarch64-tests
 │   └── mig/                        # submodule → paulofduarte/mig @ master
@@ -288,7 +288,7 @@ Each shell exports:
 - `CC`, `LD`, `AR`, `NM`, `RANLIB`, `STRIP`, `OBJCOPY` — the cross binutils
 - `TARGET_CC` — same as `CC`, used by MIG's `cpu.sym` build
 - `MIG` — the cross MIG binary name (e.g. `aarch64-gnu-mig`)
-- `TARGET`, `GNUMACH_HOST` — target identity for the Makefile
+- `ARCH`, `GNUMACH_HOST` — target identity for the Makefile
 - `CFLAGS="-std=gnu17 -g -O2"` — pin pre-C23 semantics for older Mach code
 
 ### Transparent dispatch
@@ -314,8 +314,8 @@ bootstrapping each one (~20 min/target → ~30 s/target).
 To populate the cache after a fresh cross-toolchain build:
 
 ```sh
-make cache-push                    # current TARGET
-make cache-push TARGET=x86_64      # a specific arch
+make cache-push                    # current ARCH
+make cache-push ARCH=x86_64      # a specific arch
 ```
 
 `cachix authtoken <token>` once per host is enough; push is
@@ -339,8 +339,8 @@ Trigger manually via the Actions tab → "Cache cross-toolchains" →
 ### Direnv (optional)
 
 If you use [direnv](https://direnv.net/) + nix-direnv, the project's
-`.envrc` activates `.#${TARGET:-aarch64}` automatically when you `cd`
-into the repo.  Set `TARGET` in your shell before `cd` to pick a
+`.envrc` activates `.#${ARCH:-aarch64}` automatically when you `cd`
+into the repo.  Set `ARCH` in your shell before `cd` to pick a
 different default for that direnv-driven shell.  The Makefile's
 dispatch is unaffected — it always enters its own isolated shell per
 `make` invocation.
@@ -432,11 +432,11 @@ automatically because they're gitignored.
 Build directories, install prefixes, and stamps are per-target:
 
 ```sh
-make TARGET=aarch64    dist  # → dist/aarch64/
-make TARGET=x86_64     dist  # → dist/x86_64/      (PC-AT)
-make TARGET=x86_64-xen dist  # → dist/x86_64-xen/  (Xen domU)
-make TARGET=i686       dist  # → dist/i686/        (PC-AT)
-make TARGET=i686-xen   dist  # → dist/i686-xen/    (Xen domU)
+make ARCH=aarch64    dist  # → dist/aarch64/
+make ARCH=x86_64     dist  # → dist/x86_64/      (PC-AT)
+make ARCH=x86_64-xen dist  # → dist/x86_64-xen/  (Xen domU)
+make ARCH=i686       dist  # → dist/i686/        (PC-AT)
+make ARCH=i686-xen   dist  # → dist/i686-xen/    (Xen domU)
 ```
 
 The shared `toolchain/` directory holds all MIG variants side by side
@@ -556,7 +556,7 @@ inside our `flakes/mig/default.nix` derivation by passing
 ### Upstream gaps we work around
 
 **gnumach kernel test suite.** `make check-mach` forwards into
-gnumach's own `make check` for the current TARGET.  The harness
+gnumach's own `make check` for the current ARCH.  The harness
 builds a GRUB-bootable ISO via `grub-mkrescue` and runs it under
 `qemu-system-i386 / x86_64`; the parent Makefile passes
 `USER_MIG=$(MIG_INSTALLED)` (the nix-built mig wrapper) to gnumach's

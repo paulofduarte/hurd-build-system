@@ -154,7 +154,7 @@ let
         export MIG=${target.migTarget}-mig
 
         # Target identity for the top-level Makefile.
-        export TARGET=${name}
+        export ARCH=${name}
         export GNUMACH_HOST=${target.crossSystem}
         export MIG_TARGET=${target.migTarget}
         ${if target.platform != null

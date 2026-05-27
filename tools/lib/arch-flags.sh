@@ -4,7 +4,7 @@
 # (src/gnumach/tests/user-qemu.mk lines ~208-225); keep in sync when
 # upstream bumps the pinned CPU models or memory caps.
 
-# arch_qemu_for_target <TARGET>
+# arch_qemu_for_target <ARCH>
 #   Sets: QEMU, QEMU_MACHINE, QEMU_CPU, QEMU_MEM, QEMU_CONSOLE
 #
 #   - CPU `-v1` suffix pins the qemu CPU-model version: future qemu
@@ -28,12 +28,12 @@ arch_qemu_for_target() {
              QEMU_CPU=core2duo-v1; QEMU_MEM=2047; QEMU_CONSOLE=com0 ;;
     i686)    QEMU=qemu-system-i386;    QEMU_MACHINE=""
              QEMU_CPU=pentium3-v1; QEMU_MEM=2047; QEMU_CONSOLE=com0 ;;
-    *) die "arch_qemu_for_target: unsupported TARGET=$1" ;;
+    *) die "arch_qemu_for_target: unsupported ARCH=$1" ;;
   esac
 }
 
 # arch_apply_accel_if_requested
-#   If $RUN_ACCEL=1 AND host arch matches $TARGET, append `-accel hvf`
+#   If $RUN_ACCEL=1 AND host arch matches $ARCH, append `-accel hvf`
 #   (darwin) or `-accel kvm` (linux) to $QEMU_MACHINE and override
 #   $QEMU_CPU to "host". Otherwise no-op (with a warning on
 #   arch mismatch or unsupported platform).
@@ -67,11 +67,11 @@ arch_apply_accel_if_requested() {
   #   i686   host:  i686 only (32-bit host can't run 64-bit guests)
   #   aarch64 host: aarch64 only (different ISA family from x86)
   local accel_ok=0
-  case "$host_arch:$TARGET" in
+  case "$host_arch:$ARCH" in
     x86_64:x86_64|x86_64:i686|i686:i686|aarch64:aarch64) accel_ok=1 ;;
   esac
   if [ "$accel_ok" != "1" ]; then
-    echo "RUN_ACCEL=1 ignored: host $host_arch cannot accelerate TARGET=$TARGET. Falling back to TCG." >&2
+    echo "RUN_ACCEL=1 ignored: host $host_arch cannot accelerate ARCH=$ARCH. Falling back to TCG." >&2
     return 0
   fi
 

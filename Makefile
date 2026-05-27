@@ -2,7 +2,7 @@
 #
 # Usage:
 #   make                  build for the host's native arch (default)
-#   make TARGET=x86_64    cross-build for a different target
+#   make ARCH=x86_64    cross-build for a different target
 #   make help             list all targets (works even without nix)
 #
 # If invoked outside the Nix dev shell — or inside the WRONG target's shell —
@@ -37,10 +37,10 @@ NIX_INSTALL_URL := https://nix.dev/install-nix
 # Tooling detection
 NIX := $(shell command -v nix 2>/dev/null)
 
-# TARGET resolution: env > cmdline > host CPU default.
-ifndef TARGET
+# ARCH resolution: env > cmdline > host CPU default.
+ifndef ARCH
 _HOST_CPU := $(shell uname -m)
-TARGET := \
+ARCH := \
   $(if $(filter arm64 aarch64,$(_HOST_CPU)),aarch64, \
   $(if $(filter x86_64,$(_HOST_CPU)),x86_64, \
   $(if $(filter i386 i486 i586 i686,$(_HOST_CPU)),i686, \
@@ -49,10 +49,10 @@ endif
 
 # Default MIG_TARGET / MIG binary name when invoked outside the dev shell
 # (the shell itself exports the right values). Strip any platform suffix
-# from TARGET (e.g. i686-xen -> i686) since MIG only cares about CPU ABI;
+# from ARCH (e.g. i686-xen -> i686) since MIG only cares about CPU ABI;
 # Xen and PC-AT share the same MIG binary.
 ifndef MIG_TARGET
-MIG_TARGET := $(firstword $(subst -, ,$(TARGET)))-gnu
+MIG_TARGET := $(firstword $(subst -, ,$(ARCH)))-gnu
 endif
 ifndef MIG
 MIG := $(MIG_TARGET)-mig
@@ -61,7 +61,7 @@ endif
 # Default SCENARIO so `make run` works without an explicit override.
 # The inner tools/dispatch.sh also defaults to boot, but the make-level
 # _RUN_PREREQS rule below needs the value at *parse time* — without
-# this default, `make TARGET=x86_64 run` doesn't pick up the
+# this default, `make ARCH=x86_64 run` doesn't pick up the
 # x86_64+boot → sidekick prereq and the harness errors out.
 SCENARIO ?= boot
 
@@ -77,10 +77,10 @@ FLAKES        := $(PROJ)/flakes
 BIN           := $(PROJ)/.bin
 SIDEKICK      := $(PROJ)/.sidekick
 DIST_ROOT     := $(PROJ)/dist
-DIST          := $(DIST_ROOT)/$(TARGET)
+DIST          := $(DIST_ROOT)/$(ARCH)
 
 GNUMACH_SRC   := $(SRC)/gnumach
-GNUMACH_BUILD := $(WORK)/gnumach/$(TARGET)
+GNUMACH_BUILD := $(WORK)/gnumach/$(ARCH)
 MIG_SRC       := $(SRC)/mig
 
 GNUMACH_CONFIGURED := $(GNUMACH_BUILD)/config.status
@@ -95,8 +95,8 @@ GNUMACH_KERNEL     := $(GNUMACH_BUILD)/gnumach
 # (kept for the dev-shell PATH convention) just re-targets the wrapper
 # binary inside that result.  These are regenerated cheaply on every
 # build — nix decides whether to rebuild the underlying derivation.
-NIX_HEADERS_RESULT := $(FLAKES)/gnumach-headers/result-$(TARGET)
-NIX_MIG_RESULT     := $(FLAKES)/mig/result-$(TARGET)
+NIX_HEADERS_RESULT := $(FLAKES)/gnumach-headers/result-$(ARCH)
+NIX_MIG_RESULT     := $(FLAKES)/mig/result-$(ARCH)
 MIG_INSTALLED      := $(BIN)/$(MIG)
 
 # Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
@@ -114,7 +114,7 @@ SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 # Debian: `latest/hurd-{amd64,i386}/debian-hurd.img.tar.gz` is a versionless
 # 302-redirect to the most recently published dated image (e.g.
 # debian-hurd-amd64-YYYYMMDD.img.tar.gz).  Same trade-off as Gentoo — the
-# cached copy doesn't auto-refresh; `rm -rf work/test-images/debian/<TARGET>/`
+# cached copy doesn't auto-refresh; `rm -rf work/test-images/debian/<ARCH>/`
 # forces a re-fetch.  Standalone modules (ext2fs.static, exec.static) live
 # in the same dir.  Note: Debian does NOT publish ld.so.1 standalone, and
 # doesn't need it — exec.static is fully statically linked.
@@ -146,7 +146,7 @@ HURD_GUIX_X86_64_URL   := https://ci.guix.gnu.org/search/latest/image?query=spec
 # (the sub-flake that owns the install), HEADERS_STAMP / DIST_MACH_STAMP
 # under $(DIST) (the destination of the install they track).
 HEADERS_STAMP      := $(DIST)/.headers-installed
-MIG_STAMP          := $(FLAKES)/mig/.mig-$(TARGET)-installed
+MIG_STAMP          := $(FLAKES)/mig/.mig-$(ARCH)-installed
 DIST_MACH_STAMP    := $(DIST)/.mach-installed
 
 # Defensive parse-time check.  The stamps are make's mtime anchor for the
@@ -172,22 +172,22 @@ endif
 # ---- Help (always-on) ----
 .PHONY: help
 help:
-	@echo "Targets (for TARGET=$(TARGET)):"
+	@echo "Targets (for ARCH=$(ARCH)):"
 	@echo "  all              build the gnumach kernel (default)"
 	@echo "  prepare          autoreconf the source trees"
-	@echo "  dist-headers     link gnumach public headers under ./dist/$(TARGET)/include (via nix)"
+	@echo "  dist-headers     link gnumach public headers under ./dist/$(ARCH)/include (via nix)"
 	@echo "  toolchain        dist-headers + link MIG under .bin/ (via nix)"
 	@echo "  mach             build gnumach kernel"
-	@echo "  dist-mach        install gnumach into ./dist/$(TARGET)/"
+	@echo "  dist-mach        install gnumach into ./dist/$(ARCH)/"
 	@echo "  dist             install everything (== dist-mach for now)"
 	@echo "  check            run upstream test suites (== check-mach; MIG tests run inline via nix)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
-	@echo "  run-help         show all 'make run' options (TARGET/SCENARIO/RUN_*)"
+	@echo "  run-help         show all 'make run' options (ARCH/SCENARIO/RUN_*)"
 	@echo "  sidekick         build the helper VM (x86_64 Alpine, used by Hurd scenarios)"
-	@echo "  cache-push       push the $(TARGET) dev-shell closure to the project cachix cache"
+	@echo "  cache-push       push the $(ARCH) dev-shell closure to the project cachix cache"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
-	@echo "  clean-dist       rm -rf dist/$(TARGET)/ (just this target)"
+	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
 	@echo "  mrproper         rm -rf work/ + .bin/ + .sidekick/ + all dist/ + flake gc-roots/stamps"
 	@if [ -z "$(NIX)" ]; then \
 	  echo ""; \
@@ -276,7 +276,7 @@ $(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flak
 $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
 # ---- cache-push (always-on, arch-independent) ----
-# Push the current TARGET's dev-shell closure to the project's cachix
+# Push the current ARCH's dev-shell closure to the project's cachix
 # cache.  Walks the closure explicitly (`nix path-info --recursive`)
 # rather than relying on `cachix watch-exec`'s "new paths since command
 # started" detection — so it correctly pushes toolchains that were
@@ -285,9 +285,9 @@ $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 # want collaborators to skip that rebuild on their machines.
 #
 # Scope is intentionally single-target: `make cache-push` pushes
-# `$(TARGET)` (default aarch64 on aarch64 hosts).  Want a different
-# target?  `make cache-push TARGET=i686` etc. — picking up the
-# existing TARGET-resolution logic from the top of this Makefile.
+# `$(ARCH)` (default aarch64 on aarch64 hosts).  Want a different
+# target?  `make cache-push ARCH=i686` etc. — picking up the
+# existing ARCH-resolution logic from the top of this Makefile.
 # This avoids accidentally triggering a cross-arch toolchain build
 # for an arch you don't actively care about.
 #
@@ -301,13 +301,13 @@ cache-push:
 	@command -v cachix >/dev/null 2>&1 || \
 	  { echo "cache-push: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
-	echo "==> Pushing dev-shell closure for $$system / $(TARGET) to '$(_CACHE_NAME)'"; \
+	echo "==> Pushing dev-shell closure for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
 	shell=$$($(NIX) --accept-flake-config eval --raw \
-	  ".#devShells.$$system.$(TARGET).outPath" 2>/dev/null) || \
-	  { echo "    eval failed (is TARGET=$(TARGET) a valid flake output?)" >&2; exit 1; }; \
+	  ".#devShells.$$system.$(ARCH).outPath" 2>/dev/null) || \
+	  { echo "    eval failed (is ARCH=$(ARCH) a valid flake output?)" >&2; exit 1; }; \
 	echo "  realising closure"; \
 	$(NIX) --accept-flake-config build --no-link \
-	  ".#devShells.$$system.$(TARGET).inputDerivation" >/dev/null 2>&1 || \
+	  ".#devShells.$$system.$(ARCH).inputDerivation" >/dev/null 2>&1 || \
 	  { echo "    build failed" >&2; exit 1; }; \
 	echo "  pushing"; \
 	$(NIX) --accept-flake-config path-info --recursive "$$shell" 2>/dev/null \
@@ -481,7 +481,7 @@ $(_BUILD_GOALS): _no_nix
 	@:
 
 else
-# ----- Nix available: dispatch through `nix develop -i .#$(TARGET)` ---
+# ----- Nix available: dispatch through `nix develop -i .#$(ARCH)` ---
 .DEFAULT_GOAL := _dispatch
 .PHONY: _dispatch
 
@@ -510,8 +510,8 @@ _PARENT_FLAGS := $(filter -%,$(_PARENT_ARGV))
 # gets dropped on its way into the recipe.  MAKEOVERRIDES only
 # carries `NAME=val` set on the make *command line*, not env vars —
 # so vars the user supplied in env form would silently vanish unless
-# we explicitly forward each one.  TARGET survives because it's used
-# at parse time (`.#$(TARGET)` selector) AND re-exported by the
+# we explicitly forward each one.  ARCH survives because it's used
+# at parse time (`.#$(ARCH)` selector) AND re-exported by the
 # dev-shell shellHook; everything else needs to be listed here.
 #
 # If you add a new run-time knob the scenario script reads from env
@@ -528,12 +528,12 @@ _SP   := $(_NULL) $(_NULL)
 # Persistent gc-root for the dispatched dev shell.  Stored under
 # .gcroots/ (NOT .direnv/) because nix-direnv's _nix_clean_old_gcroots
 # wipes all `.direnv/flake-profile*` files on every .envrc reload —
-# any profile we created there for a non-current TARGET would get
+# any profile we created there for a non-current ARCH would get
 # nuked, taking its referenced store paths off the gc-protected set.
 # Our .gcroots/ is direnv-immune and accumulates one entry per target.
 # Both still pin the same store paths as direnv's profile when the
-# TARGET matches (content-addressed), so no store-duplication cost.
-_FLAKE_PROFILE := .gcroots/$(TARGET)
+# ARCH matches (content-addressed), so no store-duplication cost.
+_FLAKE_PROFILE := .gcroots/$(ARCH)
 
 _RUN_PASSTHROUGH := \
   SCENARIO=$(SCENARIO) \
@@ -556,7 +556,7 @@ _RUN_PASSTHROUGH := \
 _dispatch:
 	@mkdir -p $(dir $(_FLAKE_PROFILE))
 	+@$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  develop -i --profile "$(_FLAKE_PROFILE)" .#$(TARGET) \
+	  develop -i --profile "$(_FLAKE_PROFILE)" .#$(ARCH) \
 	  --command make --no-print-directory _MAKE_INNER=1 $(_PARENT_FLAGS) \
 	    $(_RUN_PASSTHROUGH) $(_BUILD_GOALS)
 
@@ -570,11 +570,11 @@ else
 # ============================================================
 
 # Driven by environment variables that the Nix dev shell exports:
-#   TARGET, GNUMACH_HOST, MIG, CC, LD, AR, NM, RANLIB, STRIP, OBJCOPY,
+#   ARCH, GNUMACH_HOST, MIG, CC, LD, AR, NM, RANLIB, STRIP, OBJCOPY,
 #   TARGET_CC, CFLAGS
 
 # ---- Sanity: must be inside a target dev shell ----
-REQUIRED_VARS := TARGET GNUMACH_HOST MIG MIG_TARGET CC CFLAGS
+REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC CFLAGS
 
 $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#aarch64' (or .#x86_64 / .#x86_64-xen / .#i686 / .#i686-xen))))
@@ -600,7 +600,7 @@ dist: dist-mach
 # the downstream ./configure chain doesn't fire spuriously. -fi (force)
 # would unconditionally touch every output, defeating that.
 #
-# MIG no longer has a local autoreconf step — `nix build .#mig-$(TARGET)`
+# MIG no longer has a local autoreconf step — `nix build .#mig-$(ARCH)`
 # autoreconfs inside its sandbox.
 prepare: $(GNUMACH_SRC)/configure
 
@@ -608,7 +608,7 @@ $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac
 	cd $(GNUMACH_SRC) && autoreconf -i
 
 # ---- dist-headers ----
-# Public Mach headers come from `nix build .#gnumach-headers-$(TARGET)`.
+# Public Mach headers come from `nix build .#gnumach-headers-$(ARCH)`.
 # The stamp is the makefile-tracked artifact (regular file, real mtime
 # we set via touch); $(NIX_HEADERS_RESULT) is a /nix/store symlink whose
 # stat() resolves to epoch — useless for make's mtime arithmetic — and
@@ -618,13 +618,13 @@ dist-headers: $(HEADERS_STAMP)
 $(HEADERS_STAMP): flakes/gnumach-headers/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_HEADERS_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  build .#gnumach-headers-$(TARGET) -o $(NIX_HEADERS_RESULT)
+	  build .#gnumach-headers-$(ARCH) -o $(NIX_HEADERS_RESULT)
 	@mkdir -p $(DIST)
 	ln -sfn $(NIX_HEADERS_RESULT)/include $(DIST)/include
 	@touch $@
 
 # ---- toolchain ----
-# MIG comes from `nix build .#mig-$(TARGET)`.  Its test-suite runs
+# MIG comes from `nix build .#mig-$(ARCH)`.  Its test-suite runs
 # inline (doCheck = true), so a successful build means tests passed.
 #
 # We install a tiny shell shim at $(BIN)/<MIG_TARGET>-mig that
@@ -642,7 +642,7 @@ toolchain: dist-headers $(MIG_STAMP)
 $(MIG_STAMP): flakes/mig/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_MIG_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  build .#mig-$(TARGET) -o $(NIX_MIG_RESULT)
+	  build .#mig-$(ARCH) -o $(NIX_MIG_RESULT)
 	@mkdir -p $(BIN)
 	@store=$$(readlink $(NIX_MIG_RESULT)); \
 	  printf '#!/bin/sh\nexec %s "$$@"\n' \
@@ -689,7 +689,7 @@ $(DIST_MACH_STAMP): $(GNUMACH_KERNEL)
 # No _SENTINEL entries — running a test suite is not idempotent, so we
 # always dispatch and let the inner make decide.
 
-# The kernel test suite runs on every TARGET we support; xen variants
+# The kernel test suite runs on every ARCH we support; xen variants
 # self-skip via gnumach's tests/Makefrag.am (`if !PLATFORM_xen` wraps
 # the whole tests block) so they no-op without our help.
 #
@@ -706,8 +706,8 @@ $(DIST_MACH_STAMP): $(GNUMACH_KERNEL)
 # mid-pipeline at `<tool>: command not found`.
 ifeq ($(shell uname -s),Darwin)
 check-mach:
-	@echo "==> check-mach ($(TARGET)): ERROR — darwin host is not supported." >&2
-ifeq ($(TARGET),aarch64)
+	@echo "==> check-mach ($(ARCH)): ERROR — darwin host is not supported." >&2
+ifeq ($(ARCH),aarch64)
 	@echo "    aarch64 tests boot through u-boot, which nixpkgs only" >&2
 	@echo "    builds on linux (ubootQemuAarch64 / ubootTools are" >&2
 	@echo "    linux-only; upstream u-boot doesn't compile cleanly" >&2
@@ -723,15 +723,15 @@ endif
 	@exit 1
 else
 check-mach: mach
-	@echo "==> check-mach ($(TARGET)): running gnumach 'make check' in $(GNUMACH_BUILD)"
+	@echo "==> check-mach ($(ARCH)): running gnumach 'make check' in $(GNUMACH_BUILD)"
 	cd $(GNUMACH_BUILD) && $(MAKE) check
 endif
 
 check: check-mach
 
 # ---- run ----
-# `make run TARGET=<arch> SCENARIO=<name>` — ad-hoc qemu launch against
-# the kernel we just built.  Architecture comes from TARGET (same
+# `make run ARCH=<arch> SCENARIO=<name>` — ad-hoc qemu launch against
+# the kernel we just built.  Architecture comes from ARCH (same
 # convention as everything else in this build); SCENARIO selects what
 # to do with the built kernel:
 #
@@ -742,7 +742,7 @@ check: check-mach
 #
 # Modifier flags:
 #   RUN_VANILLA=1       boot the distro's bundled kernel (Hurd only)
-#   RUN_ACCEL=1         -accel hvf/kvm when host arch matches TARGET
+#   RUN_ACCEL=1         -accel hvf/kvm when host arch matches ARCH
 #   RUN_KEEP_OVERLAY=1  reuse the per-run qcow2 overlay across runs
 #   RUN_ARGS="..."      extra flags appended to qemu (e.g., "-s -S")
 #
@@ -757,7 +757,7 @@ check: check-mach
 #   sidekick   — needed for ANY hurd-* scenario (regenerates the
 #                qcow2's grub.cfg so it boots on serial under
 #                -nographic; non-vanilla also overlays our kernel).
-#                Also needed for boot + TARGET=x86_64 (qemu's -kernel
+#                Also needed for boot + ARCH=x86_64 (qemu's -kernel
 #                rejects 64-bit ELFs, see D18; routes through
 #                GRUB-on-ISO via mkiso).
 #   mach       — needed for all non-vanilla scenarios.  Vanilla
@@ -766,21 +766,21 @@ check: check-mach
 #
 # Cells (evaluated at Makefile-parse time):
 #   RUN_VANILLA=1 + hurd-*                          → sidekick
-#   boot + TARGET=i686/aarch64                      → mach
-#   boot + TARGET=x86_64                            → mach sidekick
+#   boot + ARCH=i686/aarch64                      → mach
+#   boot + ARCH=x86_64                            → mach sidekick
 #   non-vanilla hurd-*                              → mach sidekick
 _RUN_PREREQS := \
   $(if $(and $(filter 1,$(RUN_VANILLA)),$(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO))), \
     sidekick, \
     mach \
     $(if $(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO)),sidekick, \
-      $(if $(and $(filter x86_64,$(TARGET)),$(filter boot,$(SCENARIO))),sidekick)))
+      $(if $(and $(filter x86_64,$(ARCH)),$(filter boot,$(SCENARIO))),sidekick)))
 
 # Each run is NOT idempotent, so no _SENTINEL entry — every invocation
 # re-enters dispatch and re-checks `mach` (skipped if fresh).
 run: $(_RUN_PREREQS)
 	@GNUMACH_KERNEL="$(GNUMACH_KERNEL)" \
-	 TARGET="$(TARGET)" \
+	 ARCH="$(ARCH)" \
 	 WORK="$(WORK)" \
 	 RUN_VANILLA="$(RUN_VANILLA)" \
 	 RUN_ACCEL="$(RUN_ACCEL)" \

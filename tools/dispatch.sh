@@ -10,13 +10,13 @@ scenarios_dir="$(dirname "$0")"
 # that `run` does). Handle it before env validation.
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   cat <<EOF
-Usage: make run [TARGET=<arch>] [SCENARIO=<name>] [opts]
+Usage: make run [ARCH=<arch>] [SCENARIO=<name>] [opts]
 
 Options (all env-style; default in parens):
-  TARGET=<arch>        aarch64|x86_64|i686 (host arch)
+  ARCH=<arch>        aarch64|x86_64|i686 (host arch)
   SCENARIO=<name>      boot|hurd-debian|hurd-gentoo|hurd-guix (boot)
   RUN_VANILLA=1        boot the distro's bundled kernel (Hurd scenarios only)
-  RUN_ACCEL=1          enable -accel hvf/kvm when host arch matches TARGET
+  RUN_ACCEL=1          enable -accel hvf/kvm when host arch matches ARCH
   RUN_KEEP_OVERLAY=1   reuse the per-run qcow2 overlay across invocations
   RUN_ARGS="..."       extra flags appended to the qemu invocation
 
@@ -27,7 +27,7 @@ EOF
   exit 0
 fi
 
-: "${TARGET:?TARGET required (set by Makefile)}"
+: "${ARCH:?ARCH required (set by Makefile)}"
 : "${GNUMACH_KERNEL:?GNUMACH_KERNEL required (set by Makefile)}"
 : "${WORK:?WORK required (set by Makefile)}"
 
@@ -44,7 +44,7 @@ if [ ! -x "$script" ]; then
   exit 2
 fi
 
-# Per-scenario TARGET validation happens inside each scenario via
+# Per-scenario ARCH validation happens inside each scenario via
 # scenario_check_target "<scenario_name>" "<supported_targets>"
 # (defined in lib/common.sh; calls die on mismatch).
 

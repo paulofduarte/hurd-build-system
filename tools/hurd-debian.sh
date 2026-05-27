@@ -12,17 +12,17 @@ set -euo pipefail
 . "$(dirname "$0")/lib/sidekick.sh"
 
 scenario_check_target "hurd-debian" "x86_64 i686"
-arch_qemu_for_target "$TARGET"
+arch_qemu_for_target "$ARCH"
 arch_apply_accel_if_requested
 
 extra_qemu_args=("$@")   # RUN_ARGS pass-through
 
-case "$TARGET" in
+case "$ARCH" in
   x86_64) url="$HURD_DEBIAN_X86_64_URL" ;;
   i686)   url="$HURD_DEBIAN_I686_URL" ;;
 esac
 
-cache="$(hurd_cache_dir debian "$TARGET")"
+cache="$(hurd_cache_dir debian "$ARCH")"
 hurd_fetch_once "$url" "$cache/debian-hurd.img.tar.gz"
 
 # Tarball contains a dated .img; discover the real name (see D12).

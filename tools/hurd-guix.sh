@@ -9,10 +9,10 @@
 #
 # URL uses Cuirass's /search/latest/image endpoint (auto-resolves to
 # the latest successful build with a fetchable artefact; never goes
-# stale).  TARGET=x86_64 usually returns upstream 500 because Guix CI
+# stale).  ARCH=x86_64 usually returns upstream 500 because Guix CI
 # aggressively garbage-collects 64-bit qcow2 artefacts; the GC
 # explanation is surfaced inline via $guix_x86_64_hint when that
-# path fails.  TARGET=i686 is reliably available.
+# path fails.  ARCH=i686 is reliably available.
 set -euo pipefail
 . "$(dirname "$0")/lib/common.sh"
 . "$(dirname "$0")/lib/arch-flags.sh"
@@ -20,7 +20,7 @@ set -euo pipefail
 . "$(dirname "$0")/lib/sidekick.sh"
 
 scenario_check_target "hurd-guix" "x86_64 i686"
-arch_qemu_for_target "$TARGET"
+arch_qemu_for_target "$ARCH"
 QEMU_MACHINE="-M q35"            # Guix qcow2 hangs on i440fx — even with our
                                   # minimal regenerated grub.cfg (verified
                                   # 2026-05-25 on Linux).  q35 is required;
@@ -32,7 +32,7 @@ arch_apply_accel_if_requested    # appends -accel to QEMU_MACHINE if RUN_ACCEL=1
 
 extra_qemu_args=("$@")           # capture RUN_ARGS pass-through
 
-case "$TARGET" in
+case "$ARCH" in
   x86_64) url="$HURD_GUIX_X86_64_URL"; qcow2_name="hurd64-barebones.qcow2" ;;
   i686)   url="$HURD_GUIX_I686_URL";   qcow2_name="hurd-barebones.qcow2"   ;;
 esac
@@ -45,10 +45,10 @@ not a harness bug.
 Options:
   - Re-try later (Guix CI rebuilds 64-bit Hurd periodically)
   - Use the 32-bit variant instead:
-        make run TARGET=i686 SCENARIO=hurd-guix"
-[ "$TARGET" = x86_64 ] && hint="$guix_x86_64_hint" || hint=""
+        make run ARCH=i686 SCENARIO=hurd-guix"
+[ "$ARCH" = x86_64 ] && hint="$guix_x86_64_hint" || hint=""
 
-cache="$(hurd_cache_dir guix "$TARGET")"
+cache="$(hurd_cache_dir guix "$ARCH")"
 qcow2="$cache/$qcow2_name"
 hurd_fetch_via_resolve "$url" "$qcow2" "$cache/last-target" "$hint"
 

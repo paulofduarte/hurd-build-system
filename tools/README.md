@@ -1,7 +1,7 @@
 # `make run` harness
 
 Ad-hoc qemu launches against the kernel built by the parent
-Makefile. Architecture comes from `TARGET`; scenario from `SCENARIO`.
+Makefile. Architecture comes from `ARCH`; scenario from `SCENARIO`.
 See the parent `README.md` Run section for the user-facing matrix
 and `make run-help` for the full cheat sheet.
 
@@ -40,7 +40,7 @@ The sidekick helper VM itself lives in `flakes/sidekick/` — see the
 ## How a scenario script is shaped
 
 Each scenario script is ~15-30 declarative lines: source the libs,
-declare `supported_targets`, dispatch on `$TARGET`, call helpers.
+declare `supported_targets`, dispatch on `$ARCH`, call helpers.
 `boot.sh` (~12 lines) is the minimal template; the Hurd scripts add
 a fetch step and a vanilla/inject branch.
 
@@ -51,8 +51,8 @@ set -euo pipefail
 . "$(dirname "$0")/lib/arch-flags.sh"
 # (+ lib/hurd-common.sh / lib/sidekick.sh for Hurd scenarios)
 
-scenario_check_target "<scenario-name>" "<space-separated TARGETs>"
-arch_qemu_for_target "$TARGET"        # sets QEMU, QEMU_MACHINE, QEMU_CPU, QEMU_MEM, QEMU_CONSOLE
+scenario_check_target "<scenario-name>" "<space-separated ARCHs>"
+arch_qemu_for_target "$ARCH"        # sets QEMU, QEMU_MACHINE, QEMU_CPU, QEMU_MEM, QEMU_CONSOLE
 arch_apply_accel_if_requested         # may append -accel + override QEMU_CPU when RUN_ACCEL=1
 
 extra_qemu_args=("$@")                # capture RUN_ARGS pass-through
@@ -60,7 +60,7 @@ extra_qemu_args=("$@")                # capture RUN_ARGS pass-through
 # (optional) scenario-specific QEMU_MACHINE override, e.g.:
 # QEMU_MACHINE="-M q35"
 
-case "$TARGET" in ... esac             # pick URLs / paths
+case "$ARCH" in ... esac             # pick URLs / paths
 
 # (optional Hurd) vanilla-mode short-circuit:
 # hurd_maybe_vanilla_exec "$QEMU" ...  "${extra_qemu_args[@]}"
@@ -81,13 +81,13 @@ from a qcow2, or builds a GRUB ISO for x86_64 inject), also add its
 name to the `sidekick` prereq filter in the parent Makefile's
 `_RUN_PREREQS` expression.
 
-### Adding a new distro + TARGET combo to an existing scenario
+### Adding a new distro + ARCH combo to an existing scenario
 
 1. Add the URL to the parent Makefile (alongside the existing `HURD_*_URL`
    block).
 2. Export it from the `run:` recipe (add a line to the env-vars block).
-3. Add a case branch to the scenario script's `case "$TARGET" in …` block.
-4. If the scenario supports a new TARGET, add it to the `supported_targets`
+3. Add a case branch to the scenario script's `case "$ARCH" in …` block.
+4. If the scenario supports a new ARCH, add it to the `supported_targets`
    string in the `scenario_check_target` call.
 
 ## Modifier flags
@@ -99,13 +99,13 @@ passthrough* below for why.
 | Flag | Effect |
 |---|---|
 | `RUN_VANILLA=1` | Boot the distro's bundled kernel via internal GRUB (Hurd scenarios only — boot scenario ignores the flag) |
-| `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); requires host arch == `TARGET`, falls back to TCG with a warning otherwise |
+| `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); requires host arch == `ARCH`, falls back to TCG with a warning otherwise |
 | `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists; default discards) |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`, `-d int,cpu_reset`) |
 
 ### Dispatch passthrough — adding a new env knob
 
-`make run` dispatches through `nix develop -i .#$(TARGET)` to enter
+`make run` dispatches through `nix develop -i .#$(ARCH)` to enter
 the per-arch nix dev shell.  The `-i` flag means "isolated" — the
 inner shell starts with a clean env, so arbitrary env vars set by
 the caller are wiped on the way in.
@@ -113,8 +113,8 @@ the caller are wiped on the way in.
 Two things survive:
 
 1. **The dev-shell shellHook's exports.**  Per-target nix shells
-   re-export `TARGET`, `TARGET_CC`, `MIG_TARGET`, `CFLAGS`, etc.  That's why `TARGET=i686 make run` works without
-   needing explicit forwarding — the outer make parses `.#$(TARGET)`
+   re-export `ARCH`, `TARGET_CC`, `MIG_TARGET`, `CFLAGS`, etc.  That's why `ARCH=i686 make run` works without
+   needing explicit forwarding — the outer make parses `.#$(ARCH)`
    to select the shell, and the shell rebuilds the env.
 
 2. **Variables explicitly forwarded by the dispatch recipe.**  See
@@ -268,7 +268,7 @@ to the guest, not to qemu — that's why it doesn't terminate the VM.
 
 The harness prints a one-line hint to stderr right before exec'ing
 qemu (via `print_qemu_hint` in `lib/common.sh`) and ALSO sets the
-terminal title to "qemu · <scenario> · TARGET=<arch> · Ctrl-A X to
+terminal title to "qemu · <scenario> · ARCH=<arch> · Ctrl-A X to
 quit" using an OSC 0 escape sequence. The stderr hint scrolls away
 quickly under heavy kernel output (a panic loop on `boot` floods in
 sub-second); the title bar persists no matter how much the guest
@@ -295,11 +295,11 @@ builds typically have a fetchable `/download/<id>` — the
 `/search/latest/image` endpoint correctly returns 500.
 
 The `hurd-guix.sh` script passes the GC-explanation hint as the 4th
-arg to `hurd_fetch_via_resolve` only for `TARGET=x86_64`; on the
+arg to `hurd_fetch_via_resolve` only for `ARCH=x86_64`; on the
 common 500 path, users see the explanation + the fallback hint
-(use `TARGET=i686` instead) inline.
+(use `ARCH=i686` instead) inline.
 
-The `TARGET=i686` 32-bit path is reliably available.
+The `ARCH=i686` 32-bit path is reliably available.
 
 ### Gentoo's qcow2 URL is versionless
 
@@ -309,7 +309,7 @@ same URL we silently keep the cached file — there's no
 checksum-delta auto-refresh. To force a re-fetch:
 
 ```sh
-rm -rf work/test-images/gentoo/<TARGET>/
+rm -rf work/test-images/gentoo/<ARCH>/
 ```
 
 A future enhancement could re-fetch the `.sha512` periodically and
@@ -336,7 +336,7 @@ kernel image" error from the alternative interpretation.
 
 ### Known image issues per scenario
 
-- **`hurd-gentoo` + `TARGET=x86_64`** hangs in openrc's `servers`
+- **`hurd-gentoo` + `ARCH=x86_64`** hangs in openrc's `servers`
   service after rumpdisk's rump kernel fails to attach the qemu
   e1000 NIC (`wm0`) — Gentoo's own wiki flags amd64 as "less stable
   so far than x86".  i686 boots cleanly.  Image bug, not a harness
