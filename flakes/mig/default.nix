@@ -114,6 +114,24 @@ let
         "TESTS_ENVIRONMENT=CFLAGS=-I${gnumach-headers}/include"
       ];
 
+      # Add a cross-toolchain-prefixed alias next to the primary binary.
+      # Two naming conventions intersect on MIG:
+      #   - Primary: <migTarget>-mig (e.g. aarch64-gnu-mig) — what
+      #     `./configure --target=<migTarget>` produces, and what every
+      #     Hurd-side consumer (the userland servers, glibc) expects
+      #     because they configure with --host=<arch>-gnu.
+      #   - Alias: <crossPrefix>mig (e.g. aarch64-unknown-none-elf-mig)
+      #     — what gnumach's `AC_CHECK_TOOL([MIG], [mig])` searches for
+      #     when the kernel is cross-built with a bare-metal toolchain
+      #     (--host=<crossPrefix>).  Without this alias, gnumach's
+      #     configure falls through to MIG=:, codegen no-ops, and the
+      #     first compile fails on a missing .server.h.
+      # Both consumers self-discover via PATH; no `MIG=` override needed.
+      postInstall = ''
+        ln -s ${target.migTarget}-mig \
+          $out/bin/${toolPrefix}mig
+      '';
+
       passthru = { inherit target; };
 
       meta = with lib; {
