@@ -34,30 +34,38 @@ let
   # `updateAutotoolsGnuConfigScriptsHook` from defaultNativeBuildInputs
   # (verified on master + nixos-unstable as of 2026-05-27 — and 26.05 is
   # the last nixpkgs release to support x86_64-darwin, so this won't be
-  # fixed upstream).  Without that hook, GCC 14's bundled 2021-vintage
-  # config.sub stays in the source tree, and it rejects the cross triple
-  # `aarch64-unknown-none-elf` with "Kernel `none' not known to work with
-  # OS `elf'" — the Aug-2023 gnu-config patch that added that case is
-  # only in nixpkgs' replacement config.sub (`gnu-config-2024-01-01`),
-  # not in GCC's bundled one.
+  # fixed upstream).  Without that hook, the affected derivations' own
+  # bundled 2021-vintage config.sub stays in the source tree, and it
+  # rejects the cross triples `{aarch64,x86_64,i686}-unknown-none-elf`
+  # with "Kernel `none' not known to work with OS `elf'" — the Aug-2023
+  # gnu-config patch that added that case is only in nixpkgs' replacement
+  # config.sub (`gnu-config-2024-01-01`), not in the bundled ones.
   #
-  # Two cross-GCC derivations participate in the bootstrap: the final
-  # `gcc14` and the stage-1 `gccWithoutTargetLibc` (built first, used to
-  # compile newlib).  Both share the same broken bundled config.sub and
-  # need the hook.  Override `.cc` via the wrapper's own `.override` so
-  # the wrap-time args (`bintools`, `libc`, `withoutTargetLibc`) stay
-  # intact.
+  # Three derivations in the cross-toolchain bootstrap need the hook
+  # added explicitly:
+  #
+  #   gcc14                — final cross-GCC.
+  #   gccWithoutTargetLibc — stage-1 GCC, used to compile newlib.
+  #   newlib               — the bare-metal libc; cross-GCC builds depend
+  #                          on it.
+  #
+  # The two GCCs are wrapped-CC derivations: re-route via the wrapper's
+  # `.override { cc = ... }` so the wrap-time args (`bintools`, `libc`,
+  # `withoutTargetLibc`) stay intact.  newlib is a plain derivation, so
+  # `.overrideAttrs` adds the hook to its nativeBuildInputs directly.
   overlay = final: prev:
     let
-      withConfigSubHook = wrapped: wrapped.override {
-        cc = wrapped.cc.overrideAttrs (old: {
-          nativeBuildInputs = (old.nativeBuildInputs or [])
-            ++ [ prev.buildPackages.updateAutotoolsGnuConfigScriptsHook ];
-        });
+      hook = prev.buildPackages.updateAutotoolsGnuConfigScriptsHook;
+      addHookAttrs = drv: drv.overrideAttrs (old: {
+        nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ hook ];
+      });
+      addHookToCc = wrapped: wrapped.override {
+        cc = addHookAttrs wrapped.cc;
       };
     in {
-      gcc14                = withConfigSubHook prev.gcc14;
-      gccWithoutTargetLibc = withConfigSubHook prev.gccWithoutTargetLibc;
+      gcc14                = addHookToCc prev.gcc14;
+      gccWithoutTargetLibc = addHookToCc prev.gccWithoutTargetLibc;
+      newlib               = addHookAttrs prev.newlib;
     };
 
   mkDevShell = system: name: target:
