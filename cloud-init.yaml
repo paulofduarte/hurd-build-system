@@ -56,6 +56,14 @@ write_files:
       EXTRA=(
         --extra-conf "experimental-features = nix-command flakes"
         --extra-conf "trusted-users = @sudo"
+        # Pre-trust the project's cachix cache at the daemon level so
+        # `nix develop` doesn't prompt the user to allow the flake's
+        # `nixConfig.extra-substituters` on first run (which would
+        # hang non-interactive callers like direnv).  Values match
+        # the flake's nixConfig exactly — nix sees them as already
+        # configured and skips the trust prompt.
+        --extra-conf "extra-substituters = https://hurd-build-system.cachix.org"
+        --extra-conf "extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE="
       )
       # orbstack registers rosetta as a binfmt_misc handler inside
       # x86_64 VMs running on Apple Silicon hosts.  Its presence is a
