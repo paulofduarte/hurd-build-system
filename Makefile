@@ -37,6 +37,11 @@ NIX_INSTALL_URL := https://nix.dev/install-nix
 # Tooling detection
 NIX := $(shell command -v nix 2>/dev/null)
 
+# Shorthand for `nix build` / `develop` / `eval` — enables nix-command
+# + flakes per invocation so users don't have to set this in nix.conf
+# globally.  Every nix call below that needs flakes uses this.
+NIX_FLAKE := $(NIX) --extra-experimental-features 'nix-command flakes'
+
 # ARCH resolution: env > cmdline > host CPU default.
 ifndef ARCH
 _HOST_CPU := $(shell uname -m)
@@ -228,8 +233,7 @@ sidekick: $(SIDEKICK_STAMP)
 $(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flakes/sidekick/init.sh
 	@mkdir -p $(dir $(SIDEKICK_KERNEL))
 	@echo "  SIDEKICK  building helper VM (x86_64 Alpine + grub-mkrescue + busybox)…"
-	$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  build .#sidekick \
+	$(NIX_FLAKE) build .#sidekick \
 	  -o $(SIDEKICK)/result
 	cp -f $(SIDEKICK)/result/vmlinuz             $(SIDEKICK_KERNEL)
 	cp -f $(SIDEKICK)/result/initramfs.cpio.gz   $(SIDEKICK_INITRD)
@@ -466,8 +470,9 @@ _PARENT_ARGV  := $(shell ps -p $$PPID -o args= 2>/dev/null)
 _PARENT_FLAGS := $(filter -%,$(_PARENT_ARGV))
 
 # Three things to know about the recipe below:
-#   - --extra-experimental-features enables nix-command + flakes per
-#     invocation, so we don't require the user to enable them globally.
+#   - $(NIX_FLAKE) is `nix --extra-experimental-features 'nix-command
+#     flakes'` (see the variable's defining comment) — so we don't
+#     require the user to enable these features globally in nix.conf.
 #   - We invoke bare `make` (not $(MAKE)) inside the shell so it resolves
 #     via PATH to the nix-provided GNU Make 4.4+ (FIFO jobserver). $(MAKE)
 #     would bake in the path of the *outer* make — on macOS that's the
@@ -522,8 +527,7 @@ _RUN_PASSTHROUGH := \
 
 _dispatch:
 	@mkdir -p $(dir $(_FLAKE_PROFILE))
-	+@$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  develop -i --profile "$(_FLAKE_PROFILE)" .#$(ARCH) \
+	+@$(NIX_FLAKE) develop -i --profile "$(_FLAKE_PROFILE)" .#$(ARCH) \
 	  --command make --no-print-directory _MAKE_INNER=1 $(_PARENT_FLAGS) \
 	    $(_RUN_PASSTHROUGH) $(_BUILD_GOALS)
 
@@ -585,8 +589,7 @@ dist-headers: $(DIST_INCLUDE)
 
 $(DIST_INCLUDE): flakes/gnumach-headers/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_HEADERS_RESULT))
-	$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  build .#gnumach-headers-$(ARCH) -o $(NIX_HEADERS_RESULT)
+	$(NIX_FLAKE) build .#gnumach-headers-$(ARCH) -o $(NIX_HEADERS_RESULT)
 	@mkdir -p $(DIST)
 	@rm -rf $(DIST_INCLUDE)
 	cp -r $(NIX_HEADERS_RESULT)/include $(DIST_INCLUDE)
@@ -604,15 +607,19 @@ $(DIST_INCLUDE): flakes/gnumach-headers/default.nix flake.nix
 # config.status survives between invocations).
 mig: $(LOCAL_MIG)
 
-# Src files are listed as prereqs so editing src/mig/foo.c triggers
-# this rule.  Without them, the rule's only "real" prereqs are
-# configure + the headers, neither of which moves on src edits — so
-# `make mig` after editing source would silently fall back to the
-# stale build.  We use `git ls-files` to exclude generated files
-# (configure, autom4te.cache/, ...) that would otherwise cause false
-# rebuilds.  Once the rule fires, mig's own automake dep tracking
-# decides what to recompile.
-MIG_SRC_FILES := $(addprefix $(MIG_SRC)/,$(shell cd $(MIG_SRC) 2>/dev/null && git ls-files))
+# $(call _tracked_files,<dir>) — every git-tracked file under <dir>,
+# as absolute paths.  Used by the mig + mach rules to list src as
+# prereqs so editing src/foo.c triggers the in-tree rebuild.  Without
+# this, those rules' only "real" prereqs are configure + headers,
+# neither of which moves on src edits — `make mig`/`make mach` after
+# editing source would silently fall back to the stale build.  We
+# rely on `git ls-files` so generated files (configure, .deps/,
+# autom4te.cache/, ...) don't cause spurious rebuilds.  Once the
+# rule fires, the inner build's own automake dep tracking handles
+# the fine-grained .c→.o decisions.
+_tracked_files = $(addprefix $(1)/,$(shell cd $(1) 2>/dev/null && git ls-files))
+
+MIG_SRC_FILES := $(call _tracked_files,$(MIG_SRC))
 $(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool — it runs on the build host and
@@ -643,8 +650,7 @@ dist-mig: $(DIST_MIG)
 
 $(DIST_MIG): flakes/mig/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_MIG_RESULT))
-	$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  build .#mig-$(ARCH) -o $(NIX_MIG_RESULT)
+	$(NIX_FLAKE) build .#mig-$(ARCH) -o $(NIX_MIG_RESULT)
 	@mkdir -p $(DIST)/bin $(DIST)/libexec
 	install -m 0755 $(NIX_MIG_RESULT)/bin/$(MIG_TARGET)-mig $(DIST_MIG)
 	install -m 0755 $(NIX_MIG_RESULT)/libexec/$(MIG_TARGET)-migcom $(DIST_MIGCOM)
@@ -664,10 +670,8 @@ $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(LOCAL_MIG)
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
-# See the MIG_SRC_FILES rationale above — same problem, same fix.
-# Gnumach's own automake-generated .Po deps handle .c→.o; we just
-# need to make sure outer make actually enters the recipe.
-GNUMACH_SRC_FILES := $(addprefix $(GNUMACH_SRC)/,$(shell cd $(GNUMACH_SRC) 2>/dev/null && git ls-files))
+# Src prereqs via $(_tracked_files) — see its defining comment above.
+GNUMACH_SRC_FILES := $(call _tracked_files,$(GNUMACH_SRC))
 $(GNUMACH_KERNEL): $(LOCAL_MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 	cd $(GNUMACH_BUILD) && $(MAKE)
 
@@ -691,8 +695,7 @@ dist-mach: $(DIST_KERNEL)
 
 $(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_MACH_RESULT))
-	$(NIX) --extra-experimental-features 'nix-command flakes' \
-	  build .#gnumach-$(ARCH) -o $(NIX_MACH_RESULT)
+	$(NIX_FLAKE) build .#gnumach-$(ARCH) -o $(NIX_MACH_RESULT)
 	@mkdir -p $(DIST)/boot
 	install -m 0644 $(NIX_MACH_RESULT)/boot/gnumach $(DIST_KERNEL)
 	@# Refresh share/ each time so removed files don't linger.  The
