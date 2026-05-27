@@ -169,13 +169,13 @@ let
         export TARGET_CC=${toolPrefix}gcc
 
         # Target identity for the top-level Makefile.  MIG itself is a
-        # *built* artefact (from `make mig` or `make dist-mig`) — the
-        # Makefile derives its absolute path from MIG_TARGET when it
-        # needs it, so the dev shell doesn't put MIG on PATH or export
-        # a bare-name `MIG=` (which would resolve to nothing).  When
-        # you need the wrapper interactively, point at
+        # *built* artefact (from `make mig` or `nix build .#mig-<arch>`)
+        # — the Makefile derives its absolute path from MIG_TARGET when
+        # it needs it, so the dev shell doesn't put MIG on PATH or
+        # export a bare-name `MIG=` (which would resolve to nothing).
+        # When you need the wrapper interactively, point at
         # ./work/mig/$ARCH/install/bin/$MIG_TARGET-mig (in-tree) or
-        # ./dist/$ARCH/bin/$MIG_TARGET-mig (dist).
+        # the nix-built result-$ARCH symlink under flakes/mig/.
         export ARCH=${name}
         export GNUMACH_HOST=${target.crossSystem}
         export MIG_TARGET=${target.migTarget}

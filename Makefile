@@ -105,20 +105,21 @@ LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG)
 # gc-root symlink at <path> pointing into /nix/store.  Each `dist-*`
 # rule copies real bytes out of these into the user-visible $(DIST)
 # tree, so dist/<arch>/ is a self-contained release prefix — no
-# symlinks back into /nix/store for the kernel or headers (the MIG
-# wrapper script still embeds a /nix/store *string* near its top,
-# but doesn't reference it at runtime; lookup is $0-relative).
+# symlinks back into /nix/store for the kernel or headers.
 NIX_HEADERS_RESULT := $(FLAKES)/gnumach-headers/result-$(ARCH)
-NIX_MIG_RESULT     := $(FLAKES)/mig/result-$(ARCH)
 NIX_MACH_RESULT    := $(FLAKES)/gnumach/result-$(ARCH)
 
 # Dist artefacts — real copies, so each file's mtime is the cp time
 # and make's regular mtime arithmetic just works (no separate stamp
 # files needed, no /nix/store epoch-mtime trap).  These ARE the
 # make rule targets.
+#
+# Note: MIG is intentionally NOT shipped in dist/.  It's a host-arch
+# native binary (built per build host); mixing it with the target-arch
+# kernel + headers in a single tree makes no sense for a release.
+# Use `nix build .#mig-<arch>` or `make mig` (in-tree dev build) to
+# get the wrapper when you need it.
 DIST_INCLUDE := $(DIST)/include
-DIST_MIG     := $(DIST)/bin/$(MIG)
-DIST_MIGCOM  := $(DIST)/libexec/$(MIG_TARGET)-migcom
 DIST_KERNEL  := $(DIST)/boot/gnumach
 
 # Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
@@ -147,10 +148,10 @@ help:
 	@echo "  prepare          autoreconf the source trees"
 	@echo "  dist-headers     copy gnumach public headers into ./dist/$(ARCH)/include (via nix)"
 	@echo "  mig              build MIG in-tree under ./work/mig/$(ARCH)/ (incremental — for MIG iteration)"
-	@echo "  dist-mig         copy clean nix-built MIG into ./dist/$(ARCH)/{bin,libexec}/"
+	@echo "                   (clean nix-built MIG is available via 'nix build .#mig-$(ARCH)')"
 	@echo "  mach             build gnumach kernel in-tree under ./work/gnumach/$(ARCH)/ (incremental — for kernel iteration)"
 	@echo "  dist-mach        copy clean nix-built kernel into ./dist/$(ARCH)/boot/gnumach"
-	@echo "  dist             produce a tarball-ready ./dist/$(ARCH)/ (headers + mig + kernel)"
+	@echo "  dist             produce a tarball-ready ./dist/$(ARCH)/ (headers + kernel; mig is host-arch, not bundled)"
 	@echo "  check            run upstream test suites (== check-mach; MIG tests run inline via nix)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
@@ -322,9 +323,8 @@ _PREPARE_FILES   := $(GNUMACH_SRC)/configure
 _HEADERS_FILES   := $(DIST_INCLUDE)
 _MIG_FILES       := $(_HEADERS_FILES) $(LOCAL_MIG)
 _MACH_FILES      := $(_MIG_FILES) $(GNUMACH_KERNEL)
-_DIST_MIG_FILES  := $(DIST_MIG) $(DIST_MIGCOM)
 _DIST_MACH_FILES := $(DIST_KERNEL)
-_DIST_FILES      := $(_HEADERS_FILES) $(_DIST_MIG_FILES) $(_DIST_MACH_FILES)
+_DIST_FILES      := $(_HEADERS_FILES) $(_DIST_MACH_FILES)
 
 _SENTINEL.prepare      := $(_PREPARE_FILES)
 _PRIMARY.prepare       := $(_PREPARE_FILES)
@@ -337,10 +337,6 @@ _WATCH.dist-headers    := $(GNUMACH_SRC)/include flakes/gnumach-headers
 _SENTINEL.mig          := $(_MIG_FILES)
 _PRIMARY.mig           := $(LOCAL_MIG)
 _WATCH.mig             := $(MIG_SRC) flakes/mig
-
-_SENTINEL.dist-mig     := $(_DIST_MIG_FILES)
-_PRIMARY.dist-mig      := $(DIST_MIG)
-_WATCH.dist-mig        := $(MIG_SRC) flakes/mig
 
 _SENTINEL.mach         := $(_MACH_FILES)
 _PRIMARY.mach          := $(GNUMACH_KERNEL)
@@ -550,7 +546,7 @@ REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC CFLAGS
 $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#aarch64' (or .#x86_64 / .#x86_64-xen / .#i686 / .#i686-xen))))
 
-.PHONY: all dist prepare dist-headers mig dist-mig mach dist-mach \
+.PHONY: all dist prepare dist-headers mig mach dist-mach \
         check check-mach run run-help
 
 # Explicit default — `help` (defined above) would otherwise win the
@@ -563,7 +559,7 @@ $(foreach v,$(REQUIRED_VARS), \
 # `dist-hurd` here).
 all: mach
 
-dist: dist-headers dist-mig dist-mach
+dist: dist-headers dist-mach
 
 # ---- prepare ----
 # `autoreconf -i` (no -f): install missing aux files and regenerate ONLY
@@ -640,21 +636,6 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 $(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
 	cd $(MIG_SRC) && autoreconf -i
 
-# ---- dist-mig ----
-# Clean nix-built MIG — wrapper and migcom copied into $(DIST)/{bin,
-# libexec}/ as real files.  The wrapper computes its libexec via
-# dirname-$0/../libexec at runtime, so this layout works whether
-# dist/ stays here or gets tarballed and extracted elsewhere.
-# Install -m sets executable mode (defaults differ across platforms).
-dist-mig: $(DIST_MIG)
-
-$(DIST_MIG): flakes/mig/default.nix flake.nix
-	@mkdir -p $(dir $(NIX_MIG_RESULT))
-	$(NIX_FLAKE) build .#mig-$(ARCH) -o $(NIX_MIG_RESULT)
-	@mkdir -p $(DIST)/bin $(DIST)/libexec
-	install -m 0755 $(NIX_MIG_RESULT)/bin/$(MIG_TARGET)-mig $(DIST_MIG)
-	install -m 0755 $(NIX_MIG_RESULT)/libexec/$(MIG_TARGET)-migcom $(DIST_MIGCOM)
-
 # ---- mach ----
 # In-tree kernel build under $(GNUMACH_BUILD), using the in-tree MIG
 # from `make mig`.  USER_MIG/MIG point at $(LOCAL_MIG) explicitly so
@@ -716,7 +697,8 @@ $(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
 #
 # MIG's own test-suite has no make target — it runs inline via doCheck=true
 # on every `nix build .#mig-<arch>`, which is transitively triggered by
-# `make dist-mig` / `make dist-mach` / `make dist`.
+# `make dist-mach` / `make dist` (the gnumach derivation depends on mig
+# via the cross-toolchain).
 #
 # No _SENTINEL entries — running a test suite is not idempotent, so we
 # always dispatch and let the inner make decide.
