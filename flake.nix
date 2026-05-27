@@ -91,6 +91,28 @@
           crossPkgs = import nixpkgs {
             localSystem = { inherit system; };
             crossSystem = target.crossSystem;
+            # x86_64-darwin's stdenv is the only one missing
+            # `updateAutotoolsGnuConfigScriptsHook` from defaultNativeBuildInputs
+            # (verified on master + nixos-unstable as of 2026-05-27 — and 26.05
+            # is the last nixpkgs release to support x86_64-darwin, so this
+            # won't be fixed upstream).  Without that hook, GCC 14's bundled
+            # 2021-vintage config.sub stays in the source tree, and it rejects
+            # the cross triple `aarch64-unknown-none-elf` with "Kernel `none'
+            # not known to work with OS `elf'" — the Aug-2023 gnu-config patch
+            # that added that case is only in nixpkgs' replacement config.sub,
+            # (`gnu-config-2024-01-01`), not in GCC's bundled one.
+            #
+            # `gcc-unwrapped` at the pkgs top level is just an alias to
+            # `gcc14.cc`, so overriding it doesn't propagate — re-wrap the
+            # underlying cc with the hook added and bind it back as `gcc14`.
+            overlays = nixpkgs.lib.optionals (system == "x86_64-darwin") [
+              (final: prev: {
+                gcc14 = final.wrapCC (prev.gcc14.cc.overrideAttrs (old: {
+                  nativeBuildInputs = (old.nativeBuildInputs or [])
+                    ++ [ final.buildPackages.updateAutotoolsGnuConfigScriptsHook ];
+                }));
+              })
+            ];
           };
 
           # The cross-toolchain's binary prefix (e.g. "aarch64-unknown-none-elf-").
