@@ -54,7 +54,7 @@ jobs:
 
     steps:
       - name: Checkout (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -77,7 +77,7 @@ jobs:
             extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
 
       - name: Configure cachix push
-        uses: cachix/cachix-action@v15
+        uses: cachix/cachix-action@v17
         with:
           name: hurd-build-system
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
