@@ -135,16 +135,22 @@ sidekick_prepare_grub() {
 #   Idempotent — re-runs only when the staging dir or grub.cfg differ
 #   from what produced the existing ISO.
 sidekick_make_iso() {
-  local out_iso="$1" staging="$2" grub_cfg="$3"
+  local out_iso="$1" staging="$2" grub_cfg="$3" cache_key="${4:-}"
   local work="$(dirname "$out_iso")/iso-build"
   local stamp="$out_iso.stamp"
 
-  # Cache check: invalidate if staging mtime or grub_cfg hash changed
-  local cfg_hash
-  cfg_hash=$(printf '%s' "$grub_cfg" | sha256_stdin)
+  # Cache check: a content-addressed key over (caller-provided
+  # cache_key) + grub.cfg.  Mtimes are useless here — the caller
+  # (boot.sh and friends) typically rebuilds the staging dir from
+  # scratch on every run, so a `[ stamp -nt staging ]` test would
+  # always miss.  Instead the caller passes a string that uniquely
+  # identifies the staging content (e.g. the kernel's nix-store
+  # path, which is content-addressed); we hash that together with
+  # grub.cfg and the ISO is reused as long as both match.
+  local cache_hash
+  cache_hash=$(printf '%s\n%s' "$cache_key" "$grub_cfg" | sha256_stdin)
   if [ -f "$out_iso" ] && [ -f "$stamp" ] \
-      && [ "$stamp" -nt "$staging" ] \
-      && [ "$(cat "$stamp" 2>/dev/null)" = "$cfg_hash" ]; then
+      && [ "$(cat "$stamp" 2>/dev/null)" = "$cache_hash" ]; then
     return 0
   fi
 
@@ -166,5 +172,5 @@ sidekick_make_iso() {
   [ -s "$work/out.iso" ] || die "sidekick mkiso failed: $work/out.iso missing/empty (qemu exited 0 but grub-mkrescue likely errored — re-run with RUN_ARGS=-monitor=stdio for inspection)"
   mv "$work/out.iso" "$out_iso"
   rm -rf "$work"
-  printf '%s' "$cfg_hash" > "$stamp"
+  printf '%s' "$cache_hash" > "$stamp"
 }

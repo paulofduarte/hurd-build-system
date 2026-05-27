@@ -30,7 +30,12 @@ if [ "$ARCH" = "x86_64" ]; then
     printf '  boot\n'
     printf '}\n'
   )
-  sidekick_make_iso "$iso" "$staging" "$grub_cfg"
+  # Cache key = the kernel's nix-store path (content-addressed when
+  # via `nix run`, so it changes iff the kernel content changes;
+  # when via `make run` it's a $WORK path that updates on rebuild).
+  # sidekick_make_iso hashes this + grub.cfg to decide whether the
+  # ISO can be reused.
+  sidekick_make_iso "$iso" "$staging" "$grub_cfg" "$GNUMACH_KERNEL"
 
   # -no-reboot: gnumach's `boot` test prints "Hello" then exits.  Without
   # this, qemu cycles back to GRUB and the user sees a phantom second
