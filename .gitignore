@@ -4,11 +4,11 @@
 /.bin/
 /.sidekick/
 
-# Inside the toolchain sub-flakes: nix-build gc-roots (result-*) and
-# per-target install stamps (.*-installed).  Everything else under
-# toolchain/ is source and stays tracked.
-/toolchain/**/result*
-/toolchain/**/.*-installed
+# Inside the sub-flakes: nix-build gc-roots (result-*) and per-target
+# install stamps (.*-installed).  Everything else under flakes/ is
+# source and stays tracked.
+/flakes/**/result*
+/flakes/**/.*-installed
 
 # Claude Code per-project state — keep it out of the repo
 /.claude/

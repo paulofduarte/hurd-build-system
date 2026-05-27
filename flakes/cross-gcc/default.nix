@@ -92,7 +92,7 @@ let
         pkgs.git           # read-only ops + `git clean -fdX` for mrproper
         pkgs.nix           # so the Makefile can re-dispatch into a different target shell
         pkgs.qemu          # provides qemu-system-* (incl. qemu-img) for running the kernel
-        pkgs.curl          # tools/run/hurd-*.sh fetches distro images over HTTPS
+        pkgs.curl          # tools/hurd-*.sh fetches distro images over HTTPS
         pkgs.which         # gnumach's run-qemu.sh test runner uses `which` to gate test execution
       ]
       # gnumach's kernel-side `make check` on x86 builds a multiboot
@@ -174,7 +174,7 @@ let
 
         # Locally-installed tools (the MIG wrapper symlinks, mainly).
         # Lives at the repo root, separate from the tracked sub-flake
-        # sources under toolchain/.  Enter the dev shell from the
+        # sources under flakes/.  Enter the dev shell from the
         # project root for this to resolve correctly.
         export PATH="$PWD/.bin:$PATH"
       '';

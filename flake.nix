@@ -82,10 +82,10 @@
         };
       };
 
-      # Cross-toolchain dev-shell builder.  See toolchain/cross-gcc for the
+      # Cross-toolchain dev-shell builder.  See flakes/cross-gcc for the
       # mkDevShell function, the x86_64-darwin config.sub overlay, and the
       # host-system → default-target mapping.
-      crossGcc = import ./toolchain/cross-gcc { inherit nixpkgs; };
+      crossGcc = import ./flakes/cross-gcc { inherit nixpkgs; };
     in
     {
       # `default` picks the target whose CPU matches the host, so `nix develop`
@@ -129,17 +129,17 @@
           # passes in the shared target spec and merges what comes back.
           # `inputs.self.submodules = true` (top of file) is what makes
           # the submodule content visible in the store.
-          gnumachHeaders = import ./toolchain/gnumach-headers {
+          gnumachHeaders = import ./flakes/gnumach-headers {
             inherit pkgs system targets;
             lib = nixpkgs.lib;
           };
-          migs = import ./toolchain/mig {
+          migs = import ./flakes/mig {
             inherit pkgs system targets gnumachHeaders;
             lib = nixpkgs.lib;
           };
         in
         {
-          sidekick = import ./tools/sidekick/default.nix { inherit pkgs; };
+          sidekick = import ./flakes/sidekick/default.nix { inherit pkgs; };
         } // gnumachHeaders // migs);
     };
 }

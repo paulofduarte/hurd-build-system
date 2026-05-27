@@ -31,7 +31,7 @@
 # `inputs.self.submodules = true;` is what makes the submodule content
 # visible to the nix store at fingerprint time.
 #
-# `gnumachHeaders` is the attrset returned by toolchain/gnumach-headers
+# `gnumachHeaders` is the attrset returned by flakes/gnumach-headers
 # (the sibling sub-flake).  We look up "gnumach-headers-<name>" for the
 # matching target so cpu.sym sees <mach/message.h>.
 #

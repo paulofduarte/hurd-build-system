@@ -2,7 +2,7 @@
 #
 # Closure of (busybox-static + kmod + e2fsprogs + grub + grub-bios +
 # xorriso + mtools + linux-virt), resolved via the v3.21 APKINDEX.
-# Regenerate with tools/sidekick/refresh-packages.sh (write that
+# Regenerate with flakes/sidekick/refresh-packages.sh (write that
 # helper if you want to bump versions).
 #
 # Hashes verify content; HTTPS-fetched from dl-cdn.alpinelinux.org.

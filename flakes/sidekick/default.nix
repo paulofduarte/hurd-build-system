@@ -13,7 +13,7 @@
 #   initramfs.cpio.gz   minimal Alpine rootfs + /init dispatcher
 #
 # The VM dispatches on SIDEKICK_OP=<extract|mkiso> in the kernel
-# cmdline.  See tools/sidekick/init.sh.
+# cmdline.  See flakes/sidekick/init.sh.
 
 { pkgs }:
 

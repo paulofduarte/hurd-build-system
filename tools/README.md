@@ -12,7 +12,7 @@ you touch any of it.
 ## Layout
 
 ```
-tools/run/
+tools/
 ├── dispatch.sh             # entry point — validates env, exec's scenario
 ├── boot.sh                 # SCENARIO=boot: bare kernel (direct -kernel,
 │                           #   or GRUB-on-ISO via sidekick for x86_64)
@@ -34,7 +34,7 @@ serial-clean grub.cfg from the disk's existing recipe), then boot it
 with plain `qemu -drive`.  No more host-side `-kernel`/`-initrd`
 construction or per-distro module-chain reverse engineering.
 
-The sidekick helper VM itself lives in `tools/sidekick/` — see the
+The sidekick helper VM itself lives in `flakes/sidekick/` — see the
 [Sidekick helper VM](#sidekick-helper-vm) section below.
 
 ## How a scenario script is shaped
@@ -70,10 +70,10 @@ exec "$QEMU" ... "${extra_qemu_args[@]}"
 
 ### Adding a new scenario
 
-1. Drop `tools/run/<scenario>.sh` following the template above.
+1. Drop `tools/<scenario>.sh` following the template above.
 2. `chmod +x` it.
 3. That's it — `dispatch.sh` discovers scenarios by `find`'ing executable
-   `*.sh` files under `tools/run/`.  `make run SCENARIO=<scenario>` works
+   `*.sh` files under `tools/`.  `make run SCENARIO=<scenario>` works
    immediately.  `--help` and "unknown scenario" listings update automatically.
 
 If the scenario needs the sidekick helper VM (i.e., it reads modules
@@ -187,11 +187,11 @@ joins backslash-continued module lines (Debian).
 
 ### How it's built
 
-`tools/sidekick/default.nix` is a nix derivation (exposed as
+`flakes/sidekick/default.nix` is a nix derivation (exposed as
 `packages.<system>.sidekick` in the root flake) that:
 
 1. `fetchurl`s pinned Alpine 3.21 x86_64 APKs (listed with sha256s
-   in `tools/sidekick/packages.nix`) — kernel + busybox + kmod +
+   in `flakes/sidekick/packages.nix`) — kernel + busybox + kmod +
    e2fsprogs + grub + grub-bios + xorriso + mtools + their deps.
 2. `tar` + `cpio` + `gzip` (POSIX-only tools, work on darwin) to
    unpack APKs into a rootfs, lay in our `/init` dispatcher, and
@@ -210,7 +210,7 @@ Output paths after `make sidekick`:
 
 ### `/init` dispatcher
 
-`tools/sidekick/init.sh` is PID 1 inside the VM. It reads
+`flakes/sidekick/init.sh` is PID 1 inside the VM. It reads
 `SIDEKICK_OP=` from the kernel cmdline and dispatches:
 
 - `SIDEKICK_OP=overlay-kernel`: mount the first writable ext
@@ -246,7 +246,7 @@ via per-overlay stamps. Acceptable.
 
 ### Refresh after Alpine version bumps
 
-Bump versions + sha256s in `tools/sidekick/packages.nix`. Easiest
+Bump versions + sha256s in `flakes/sidekick/packages.nix`. Easiest
 way: download the new APKs, run `shasum -a 256`, paste. Or write a
 small `refresh-packages.sh` that walks the Alpine APKINDEX (we did
 this once to seed the file; the resulting hashes are in git).

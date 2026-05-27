@@ -175,7 +175,7 @@ RUN_ACCEL=1 make run                                # -accel hvf/kvm when host m
 | `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists) |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`) |
 
-See `make run-help` for the cheat sheet, and `tools/run/README.md` for
+See `make run-help` for the cheat sheet, and `tools/README.md` for
 how the harness is structured and how to add new scenarios.
 
 ## Working with the submodules
@@ -232,7 +232,7 @@ fresh clones get only `origin`.
 | `cache-push` | push the current `$(TARGET)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(TARGET)/` (current target only) |
-| `mrproper` | `rm -rf work/`, the project-root install dirs (`.bin/`, `.sidekick/`), the toolchain gc-roots (`toolchain/{gnumach-headers,mig}/result-*`) + install stamps (`toolchain/mig/.mig-*-installed`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `toolchain/{cross-gcc,gnumach-headers,mig}/` are preserved. |
+| `mrproper` | `rm -rf work/`, the project-root install dirs (`.bin/`, `.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig}/result-*`) + install stamps (`flakes/mig/.mig-*-installed`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,sidekick}/` are preserved. |
 
 ## Directory layout
 
@@ -248,14 +248,15 @@ fresh clones get only `origin`.
 │   └── mig/                        # submodule → paulofduarte/mig @ master
 ├── work/                           # local build directories (gitignored)
 │   └── gnumach/<target>/
-├── toolchain/                      # nix sub-flakes for the cross toolchain (source-only)
+├── flakes/                         # nix sub-flakes (source-only)
 │   ├── cross-gcc/default.nix       # mkDevShell + x86_64-darwin config.sub overlay
 │   ├── gnumach-headers/default.nix # per-target headers derivation
 │   ├── gnumach-headers/result-*    # per-target gc-root symlinks (gitignored)
 │   ├── mig/default.nix             # per-target MIG derivation
 │   ├── mig/result-*                # per-target gc-root symlinks (gitignored)
-│   └── mig/.mig-<target>-installed # Makefile staleness stamps (gitignored)
-├── .bin/<target>-gnu-mig           # PATH-discovery symlinks → mig/result-* (gitignored)
+│   ├── mig/.mig-<target>-installed # Makefile staleness stamps (gitignored)
+│   └── sidekick/                   # nix derivation for the helper VM (Alpine fetch)
+├── .bin/<target>-gnu-mig           # PATH-discovery symlinks → flakes/mig/result-* (gitignored)
 ├── .sidekick/                      # helper-VM artefacts (vmlinuz + initramfs.cpio.gz, gitignored)
 ├── dist/<target>/                  # final install prefix (gitignored)
 │   ├── boot/gnumach
@@ -263,9 +264,7 @@ fresh clones get only `origin`.
 │   └── .{headers,mach}-installed   # staleness stamps
 ├── .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
 ├── .direnv/                        # nix-direnv per-project state (gitignored)
-├── tools/                          # build-time utilities (in-repo)
-│   ├── run/                        # `make run` harness scenarios + libs
-│   └── sidekick/                   # nix derivation for the helper VM (Alpine fetch)
+├── tools/                          # `make run` harness scenarios + libs
 └── LICENSE                         # GPL-2.0
 ```
 
@@ -550,7 +549,7 @@ suite:
 **mig.** No carried patches.  `src/mig` tracks vanilla `master` from
 savannah.  The kernel test-harness CFLAGS issue (stock
 `tests/test_lib.sh` overwriting external `CFLAGS`) is worked around
-inside our `toolchain/mig/default.nix` derivation by passing
+inside our `flakes/mig/default.nix` derivation by passing
 `TESTS_ENVIRONMENT="CFLAGS=-I${gnumach-headers}/include"` on the
 `make check` invocation, so we don't need a fork patch for it.
 

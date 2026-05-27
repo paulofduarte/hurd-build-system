@@ -58,15 +58,15 @@ ifndef MIG
 MIG := $(MIG_TARGET)-mig
 endif
 
-# Layout.  TOOLCHAIN is source-only (the nix sub-flakes for cross-gcc,
-# gnumach-headers, and mig).  BIN holds dev-shell-visible wrapper
+# Layout.  FLAKES is source-only (the nix sub-flakes for cross-gcc,
+# gnumach-headers, mig, sidekick).  BIN holds dev-shell-visible wrapper
 # symlinks; SIDEKICK holds the x86_64 helper-VM artefacts.  Both BIN
-# and SIDEKICK are gitignored at the repo root so toolchain/ stays
-# clean (no mixing of tracked sources with build outputs).
+# and SIDEKICK are gitignored at the repo root so flakes/ stays clean
+# (no mixing of tracked sources with build outputs).
 PROJ          := $(CURDIR)
 SRC           := $(PROJ)/src
 WORK          := $(PROJ)/work
-TOOLCHAIN     := $(PROJ)/toolchain
+FLAKES        := $(PROJ)/flakes
 BIN           := $(PROJ)/.bin
 SIDEKICK      := $(PROJ)/.sidekick
 DIST_ROOT     := $(PROJ)/dist
@@ -88,19 +88,19 @@ GNUMACH_KERNEL     := $(GNUMACH_BUILD)/gnumach
 # (kept for the dev-shell PATH convention) just re-targets the wrapper
 # binary inside that result.  These are regenerated cheaply on every
 # build — nix decides whether to rebuild the underlying derivation.
-NIX_HEADERS_RESULT := $(TOOLCHAIN)/gnumach-headers/result-$(TARGET)
-NIX_MIG_RESULT     := $(TOOLCHAIN)/mig/result-$(TARGET)
+NIX_HEADERS_RESULT := $(FLAKES)/gnumach-headers/result-$(TARGET)
+NIX_MIG_RESULT     := $(FLAKES)/mig/result-$(TARGET)
 MIG_INSTALLED      := $(BIN)/$(MIG)
 
 # Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
-# `packages.<system>.sidekick` output — see tools/sidekick/default.nix
-# and tools/sidekick/init.sh).  Used for ext2 module extraction
+# `packages.<system>.sidekick` output — see flakes/sidekick/default.nix
+# and flakes/sidekick/init.sh).  Used for ext2 module extraction
 # (Gentoo/Guix) and grub-mkrescue ISO assembly (x86_64 inject mode).
 SIDEKICK_KERNEL := $(SIDEKICK)/vmlinuz
 SIDEKICK_INITRD := $(SIDEKICK)/initramfs.cpio.gz
 SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 
-# Hurd distro image URLs — referenced by tools/run/hurd-*.sh.
+# Hurd distro image URLs — referenced by tools/hurd-*.sh.
 # Naming uses our build-system convention (X86_64 / I686); where the
 # distro uses its own arch nomenclature, the mapping lives ONLY inside
 # the URL string.
@@ -135,11 +135,11 @@ HURD_GUIX_X86_64_URL   := https://ci.guix.gnu.org/search/latest/image?query=spec
 #   the symlink would always look older than the prerequisites and the
 #   rule would re-fire.
 #
-# Stamps live with what they describe: MIG_STAMP under toolchain/mig/
+# Stamps live with what they describe: MIG_STAMP under flakes/mig/
 # (the sub-flake that owns the install), HEADERS_STAMP / DIST_MACH_STAMP
 # under $(DIST) (the destination of the install they track).
 HEADERS_STAMP      := $(DIST)/.headers-installed
-MIG_STAMP          := $(TOOLCHAIN)/mig/.mig-$(TARGET)-installed
+MIG_STAMP          := $(FLAKES)/mig/.mig-$(TARGET)-installed
 DIST_MACH_STAMP    := $(DIST)/.mach-installed
 
 # Defensive parse-time check.  The stamps are make's mtime anchor for the
@@ -181,7 +181,7 @@ help:
 	@echo "  cache-push       push the $(TARGET) dev-shell closure to the project cachix cache"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(TARGET)/ (just this target)"
-	@echo "  mrproper         rm -rf work/ + toolchain/ + all dist/ + all gitignored files"
+	@echo "  mrproper         rm -rf work/ + .bin/ + .sidekick/ + all dist/ + flake gc-roots/stamps"
 	@if [ -z "$(NIX)" ]; then \
 	  echo ""; \
 	  echo "Warning: nix is not installed. Targets require it."; \
@@ -213,8 +213,8 @@ clean:
 	@# MIG + gnumach-headers are built by nix; clean the per-target
 	@# gc-roots, install stamps, and the dev-shell PATH symlinks so the
 	@# next build re-pulls them from the store.
-	@rm -f $(TOOLCHAIN)/mig/result-* $(TOOLCHAIN)/gnumach-headers/result-*
-	@rm -f $(TOOLCHAIN)/mig/.mig-*-installed
+	@rm -f $(FLAKES)/mig/result-* $(FLAKES)/gnumach-headers/result-*
+	@rm -f $(FLAKES)/mig/.mig-*-installed
 	@rm -f $(BIN)/*-mig
 
 clean-dist:
@@ -222,16 +222,16 @@ clean-dist:
 
 # mrproper still nukes work/ wholesale — that's a deeper reset and we
 # expect users to invoke it when they want a clean slate including
-# configure state.  toolchain/ holds tracked flake source files
-# (toolchain/{cross-gcc,gnumach-headers,mig}/), so we can't `rm -rf`
-# it; instead, scrub only the gitignored bits inside (result-*
-# gc-roots, .mig-*-installed stamps) and drop the project-root install
-# directories ($(BIN) and $(SIDEKICK)) wholesale.
+# configure state.  flakes/ holds tracked source files
+# (flakes/{cross-gcc,gnumach-headers,mig,sidekick}/), so we can't
+# `rm -rf` it; instead, scrub only the gitignored bits inside
+# (result-* gc-roots, .mig-*-installed stamps) and drop the
+# project-root install directories ($(BIN) and $(SIDEKICK)) wholesale.
 mrproper:
 	rm -rf $(WORK)
 	rm -rf $(BIN) $(SIDEKICK)
-	rm -f  $(TOOLCHAIN)/gnumach-headers/result-* $(TOOLCHAIN)/mig/result-*
-	rm -f  $(TOOLCHAIN)/mig/.mig-*-installed
+	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-*
+	rm -f  $(FLAKES)/mig/.mig-*-installed
 	rm -rf $(DIST_ROOT)
 	git -C $(GNUMACH_SRC) clean -fdX
 	git -C $(MIG_SRC)     clean -fdX
@@ -243,7 +243,7 @@ mrproper:
 # scenarios).  Output is identical x86_64 Alpine on every build host
 # (no cross-compilation — we fetch prebuilt Alpine APKs), so the
 # initramfs is byte-identical on darwin / linux / arm64 / x86_64.
-# See tools/sidekick/{default.nix,packages.nix,init.sh}.
+# See flakes/sidekick/{default.nix,packages.nix,init.sh}.
 #
 # Stamp-file pattern (matches HEADERS_STAMP / DIST_MACH_STAMP
 # convention): one recipe produces both SIDEKICK_KERNEL and
@@ -253,7 +253,7 @@ mrproper:
 .PHONY: sidekick
 sidekick: $(SIDEKICK_STAMP)
 
-$(SIDEKICK_STAMP): tools/sidekick/default.nix tools/sidekick/packages.nix tools/sidekick/init.sh
+$(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flakes/sidekick/init.sh
 	@mkdir -p $(dir $(SIDEKICK_KERNEL))
 	@echo "  SIDEKICK  building helper VM (x86_64 Alpine + grub-mkrescue + busybox)…"
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
@@ -355,11 +355,11 @@ _WATCH.prepare         := $(GNUMACH_SRC)/configure.ac
 
 _SENTINEL.dist-headers := $(_HEADERS_FILES)
 _PRIMARY.dist-headers  := $(HEADERS_STAMP)
-_WATCH.dist-headers    := $(GNUMACH_SRC)/include toolchain/gnumach-headers
+_WATCH.dist-headers    := $(GNUMACH_SRC)/include flakes/gnumach-headers
 
 _SENTINEL.toolchain    := $(_TOOLCHAIN_FILES)
 _PRIMARY.toolchain     := $(MIG_STAMP)
-_WATCH.toolchain       := $(MIG_SRC) $(GNUMACH_SRC)/include toolchain/mig toolchain/gnumach-headers
+_WATCH.toolchain       := $(MIG_SRC) $(GNUMACH_SRC)/include flakes/mig flakes/gnumach-headers
 
 _SENTINEL.mach         := $(_MACH_FILES)
 _PRIMARY.mach          := $(GNUMACH_KERNEL)
@@ -608,7 +608,7 @@ $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac
 # $(DIST)/include is the user-facing legacy path that consumers expect.
 dist-headers: $(HEADERS_STAMP)
 
-$(HEADERS_STAMP): toolchain/gnumach-headers/default.nix flake.nix
+$(HEADERS_STAMP): flakes/gnumach-headers/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_HEADERS_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  build .#gnumach-headers-$(TARGET) -o $(NIX_HEADERS_RESULT)
@@ -619,20 +619,28 @@ $(HEADERS_STAMP): toolchain/gnumach-headers/default.nix flake.nix
 # ---- toolchain ----
 # MIG comes from `nix build .#mig-$(TARGET)`.  Its test-suite runs
 # inline (doCheck = true), so a successful build means tests passed.
-# We symlink the wrapper into $(BIN)/<MIG_TARGET>-mig so the dev
-# shell's PATH discovery (PATH=$PWD/.bin:...) finds it under the
-# legacy name.  The wrapper itself hardcodes its store prefix, so
-# it locates migcom in $(NIX_MIG_RESULT)/libexec without needing a
-# local libexec/.  Same stamp pattern as dist-headers above for the
-# same mtime reason.
+#
+# We install a tiny shell shim at $(BIN)/<MIG_TARGET>-mig that
+# `exec`s the store-path wrapper directly (NOT a symlink to it).
+# The MIG wrapper script uses `dirname "$0"` to locate its sibling
+# migcom under `../libexec/<arch>-gnu-migcom`; with a symlink in
+# $(BIN), $0 is the symlink path and the lookup lands at
+# `<repo>/libexec/...` (nonexistent).  With a shim, $0 becomes the
+# absolute store path and the wrapper finds migcom alongside itself
+# in the store.
+#
+# Same stamp pattern as dist-headers above for the same mtime reason.
 toolchain: dist-headers $(MIG_STAMP)
 
-$(MIG_STAMP): toolchain/mig/default.nix flake.nix
+$(MIG_STAMP): flakes/mig/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_MIG_RESULT))
 	$(NIX) --extra-experimental-features 'nix-command flakes' \
 	  build .#mig-$(TARGET) -o $(NIX_MIG_RESULT)
 	@mkdir -p $(BIN)
-	ln -sfn $(NIX_MIG_RESULT)/bin/$(MIG_TARGET)-mig $(MIG_INSTALLED)
+	@store=$$(readlink $(NIX_MIG_RESULT)); \
+	  printf '#!/bin/sh\nexec %s "$$@"\n' \
+	    "$$store/bin/$(MIG_TARGET)-mig" > $(MIG_INSTALLED); \
+	  chmod +x $(MIG_INSTALLED)
 	@touch $@
 
 # ---- mach ----
@@ -778,13 +786,13 @@ run: $(_RUN_PREREQS)
 	 HURD_GENTOO_I686_URL="$(HURD_GENTOO_I686_URL)" \
 	 HURD_GUIX_I686_URL="$(HURD_GUIX_I686_URL)" \
 	 HURD_GUIX_X86_64_URL="$(HURD_GUIX_X86_64_URL)" \
-	 ./tools/run/dispatch.sh "$(SCENARIO)" $(RUN_ARGS)
+	 ./tools/dispatch.sh "$(SCENARIO)" $(RUN_ARGS)
 
 # `run-help` has no prereqs — dispatch.sh handles --help before any
 # env validation, so the help text works from a clean checkout without
 # a built kernel.
 run-help:
-	@./tools/run/dispatch.sh --help
+	@./tools/dispatch.sh --help
 
 endif # NEED_DISPATCH
 
