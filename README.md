@@ -395,19 +395,41 @@ make cache-push ARCH=x86_64      # a specific arch
 authenticated, pull is anonymous.
 
 **Continuous cache maintenance via GitHub Actions.**  The workflow at
-`.github/workflows/cache-toolchains.yml` re-populates the cache
-automatically whenever `flake.nix`, `flake.lock`, or anything in
-`toolchain/**/*.nix` lands on `main`.  It runs a matrix across all
-four supported host arches — `x86_64-linux` (`ubuntu-latest`),
-`aarch64-linux` (`ubuntu-24.04-arm`), `aarch64-darwin`
-(`macos-latest`), `x86_64-darwin` (`macos-13`) — and pushes every
-target's dev-shell closure plus mig and gnumach-headers builds.
+`.github/workflows/cache-toolchains.yml` keeps the cache populated
+automatically whenever a toolchain-affecting file lands on `main`
+(`flake.nix`, `flake.lock`, `target-archs.nix`,
+`flakes/cross-toolchain/**`, `packages.nix`, or the workflow / its
+`setup-nix` action) — plus manual dispatch.  It runs in two stages:
 
-To enable the workflow, add the cachix auth token to the repo's
+- **`plan`** — one runner cross-evaluates every `(host × target)`
+  toolchain path (`packages.<host>.toolchain-<arch>`) and probes cachix
+  for each with `nix path-info --store` (a `.narinfo` lookup, no
+  download).  Cross-eval is pure, so a single runner decides for all
+  hosts; any host whose toolchains are all cached spins **no** runner.
+  The job emits a build matrix of only the missing host/target pairs.
+- **`populate`** — for each host in that matrix, builds only the missing
+  targets (`nix build .#toolchain-<arch>`) and pushes them.  The matrix
+  spans the four supported host arches: `x86_64-linux` (`ubuntu-latest`),
+  `aarch64-linux` (`ubuntu-24.04-arm`), `aarch64-darwin` (`macos-latest`),
+  `x86_64-darwin` (`macos-15-intel`).
+
+Only the cross-toolchain is cached — not mig / gnumach-headers / the
+kernel, which are cheap to build once the toolchain is in place.
+
+**Cross-host consistency check.**  When a cache run rebuilds ≥1 toolchain
+it triggers `.github/workflows/toolchain-sanity-check.yml`, which
+cross-builds `make dist` for every target on all four hosts.  A `compare`
+gate fails the run unless the hosts **agree** — byte-identical per-file
+hashes where a target builds, or an identical (normalised) error signature
+where it doesn't — which is what guards the byte-for-byte reproducibility
+the [version string](#versioning) advertises.  If a cache run rebuilt
+nothing, the toolchains are unchanged and the check is skipped.
+
+To enable the workflows, add the cachix auth token to the repo's
 GitHub secrets as `CACHIX_AUTH_TOKEN` (from
 [app.cachix.org/personal-auth-tokens](https://app.cachix.org/personal-auth-tokens)).
 Trigger manually via the Actions tab → "Cache cross-toolchains" →
-"Run workflow" if you want to refresh without a flake change.
+"Run workflow" to refresh without a flake change.
 
 ### Versioning
 
@@ -592,7 +614,7 @@ CPU-bound.
 | `aarch64-darwin`  | ✅ | ~30-60 s |
 | `aarch64-linux`   | ✅ | ~30-60 s |
 | `x86_64-linux`    | ✅ | ~30-60 s |
-| `x86_64-darwin`   | not yet | ~10-20 min (bootstraps cross-GCC) |
+| `x86_64-darwin`   | ✅ | ~30-60 s |
 
 After that, the toolchain lives in `/nix/store` and subsequent builds
 reuse it — that's where the ~40 s incremental figure above comes from.
