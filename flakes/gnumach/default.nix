@@ -32,9 +32,10 @@
 #                 --enable-platform= flag.  Null means the option is
 #                 omitted (aarch64 has no platform).
 #
-# Source comes from ../../src/gnumach (the git submodule).  The root
-# flake's `inputs.self.submodules = true;` is what makes the submodule
-# content visible to the nix store at fingerprint time.
+# Source comes from the pinned `gnumach-src` flake input (a github fork rev
+# locked in flake.lock; see flake.nix + flakes/sources), NOT the local
+# src/gnumach working clone — that is a dev convenience populated by `make
+# srcs`.
 #
 # `mig` is the attrset returned by flakes/mig (the sibling sub-flake).
 # We look up "mig-<name>" for the matching target and add its derivation
@@ -51,7 +52,7 @@
 # qemu, neither of which the sandbox provides.  Until then, kernel
 # tests stay under the parent Makefile's `check-mach` target.
 
-{ nixpkgs, system, targets, mig, mkCrossPkgs, self, srcInput }:
+{ nixpkgs, system, targets, mig, mkCrossPkgs, self, srcInput, forkUrl, forkBranch }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -60,13 +61,12 @@ let
 
   # Upstream version parsed from version.m4 (AC_PACKAGE_VERSION).  If
   # upstream bumps the m4 file, the parser picks it up automatically.
-  upstreamVersion = helpers.parseM4Version ../../src/gnumach/version.m4;
+  upstreamVersion = helpers.parseM4Version (srcInput + "/version.m4");
 
   # PACKAGE_VERSION composed at eval time — fully pure.
   # See flakes/lib/default.nix (composeVersion) for the format.
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self;
-    submodulePath = "src/gnumach";
+    inherit upstreamVersion srcInput self forkUrl forkBranch;
   };
 
   mkOne = name: target:
@@ -83,10 +83,10 @@ let
       # binary's PACKAGE_VERSION — same string, traceable on both sides.
       version = fullVersion;
 
-      # Use the locked flake input, not the path-relative
-      # `../../src/gnumach`: the latter would vendor uncommitted edits to
-      # the submodule worktree, so the built bytes could disagree with the
-      # version string's `srcInput.shortRev`.
+      # The pinned `gnumach-src` input (a github fork rev locked in
+      # flake.lock).  nix builds exactly that — never the local src/gnumach
+      # working clone — so the built bytes always match the version string's
+      # `srcInput.shortRev`.
       src = srcInput;
 
       # Native build tools (autoreconf + the MIG wrapper).  Cross-stdenv
@@ -119,7 +119,7 @@ let
 
       # Splice the eval-time-composed version into version.m4 before the
       # autoreconfHook regenerates configure.  ${fullVersion} is composed
-      # from upstream-m4 + submodule input metadata + .gitmodules + self.
+      # from upstream-m4 + the gnumach-src input + flake.lock fork-id + self.
       postPatch = ''
         sed -i.bak \
           -e 's|m4_define(\[AC_PACKAGE_VERSION\],\[[^]]*\])|m4_define([AC_PACKAGE_VERSION],[${fullVersion}])|' \

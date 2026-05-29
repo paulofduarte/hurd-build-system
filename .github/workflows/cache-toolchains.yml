@@ -136,10 +136,8 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       - name: Set up nix
         uses: ./.github/actions/setup-nix

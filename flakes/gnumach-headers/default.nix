@@ -25,9 +25,9 @@
 #                 --enable-platform= flag.  Null means the option is
 #                 omitted (aarch64 has no platform).
 #
-# Source comes from ../../src/gnumach (the git submodule).  The root
-# flake's `inputs.self.submodules = true;` is what makes the submodule
-# content visible to the nix store at fingerprint time.
+# Source comes from the pinned `gnumach-src` flake input (a github fork rev
+# locked in flake.lock; see flake.nix + flakes/sources), NOT the local
+# src/gnumach working clone.
 #
 # Side-stepped concerns:
 #   - install-data doesn't compile any actual kernel objects, so the
@@ -50,10 +50,9 @@ let
       pname   = "gnumach-headers-${target.migTarget}";
       version = "src";
 
-      # Use the locked flake input (committed rev) rather than the
-      # path-relative `../../src/gnumach` which would also include
-      # any uncommitted edits to the submodule worktree.  Keeps the
-      # build content honest to flake.lock.
+      # The pinned `gnumach-src` input (a github fork rev locked in
+      # flake.lock) — never the local src/gnumach working clone.  Keeps the
+      # built headers honest to flake.lock.
       src = srcInput;
 
       # Native build tools for autoreconf + configure.  Cross-stdenv's cc

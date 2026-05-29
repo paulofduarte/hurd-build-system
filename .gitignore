@@ -3,6 +3,11 @@
 /dist/
 /.sidekick/
 
+# Source working clones under src/ — populated by `make srcs`.
+# No longer git submodules: nix builds from the pinned `*-src` flake inputs
+# (see flake.nix + flakes/sources), so src/ is a dev convenience, not tracked.
+/src/
+
 # Inside the sub-flakes: nix-build gc-roots (result-*) and per-target
 # install stamps (.*-installed).  Everything else under flakes/ is
 # source and stays tracked.

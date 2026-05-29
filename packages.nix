@@ -17,13 +17,19 @@
 #                            gas-determinism patch); without it standalone
 #                            `nix build .#mig-<arch>` / `.#gnumach-headers-…`
 #                            would miss the overlay and fail on x86_64-darwin;
-#   srcInput               — the gnumach-src / mig-src submodule input.
+#   srcInput               — the gnumach-src / mig-src flake input (pinned
+#                            github fork rev; see flakes/sources).
 
 { nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src }:
 
 let
   inherit (nixpkgs) lib;
   inherit (crossToolchain) mkCrossPkgs mkToolchain;
+  # Fork-id metadata (owner/repo/ref) derived from the `*-src` inputs via
+  # flake.lock — see flakes/sources.  Feeds the version string's fork field.
+  sourcesLib  = import ./flakes/sources { inherit lib; };
+  gnumachInfo = sourcesLib.info self "gnumach-src";
+  migInfo     = sourcesLib.info self "mig-src";
 in
 {
   packages = forAllSystems (system:
@@ -31,6 +37,8 @@ in
       gnumach = import ./flakes/gnumach {
         inherit nixpkgs system targets mig self mkCrossPkgs;
         srcInput = gnumach-src;
+        forkUrl = gnumachInfo.forkUrl;
+        forkBranch = gnumachInfo.ref;
       };
       gnumachHeaders = import ./flakes/gnumach-headers {
         inherit nixpkgs system targets mkCrossPkgs;
@@ -39,6 +47,8 @@ in
       mig = import ./flakes/mig {
         inherit nixpkgs system targets gnumachHeaders self mkCrossPkgs;
         srcInput = mig-src;
+        forkUrl = migInfo.forkUrl;
+        forkBranch = migInfo.ref;
       };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 

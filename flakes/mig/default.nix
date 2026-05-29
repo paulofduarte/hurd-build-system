@@ -24,9 +24,9 @@
 #   platform    : unused by MIG (gnumach-side concern); accepted in
 #                 the attrset for symmetry with gnumach-headers.
 #
-# Source comes from ../../src/mig (the git submodule).  The root flake's
-# `inputs.self.submodules = true;` is what makes the submodule content
-# visible to the nix store at fingerprint time.
+# Source comes from the pinned `mig-src` flake input (a github fork rev locked
+# in flake.lock; see flake.nix + flakes/sources), NOT the local src/mig
+# working clone — that is a dev convenience populated by `make srcs`.
 #
 # `gnumachHeaders` is the attrset returned by flakes/gnumach-headers
 # (the sibling sub-flake).  We look up "gnumach-headers-<name>" for the
@@ -41,7 +41,7 @@
 #   - gnumach-headers for the target arch — TARGET_CPPFLAGS points at
 #     $gnumach-headers/include so cpu.symc sees <mach/message.h> etc.
 
-{ nixpkgs, system, targets, gnumachHeaders, mkCrossPkgs, self, srcInput }:
+{ nixpkgs, system, targets, gnumachHeaders, mkCrossPkgs, self, srcInput, forkUrl, forkBranch }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -50,12 +50,11 @@ let
 
   # Upstream version parsed from configure.ac (AC_INIT line).  If
   # upstream bumps, the parser picks it up automatically.
-  upstreamVersion = helpers.parseAcInitVersion ../../src/mig/configure.ac;
+  upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
 
   # PACKAGE_VERSION composed at eval time — fully pure.
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self;
-    submodulePath = "src/mig";
+    inherit upstreamVersion srcInput self forkUrl forkBranch;
   };
 
   mkOne = name: target:
@@ -96,7 +95,7 @@ let
 
       # Splice the eval-time-composed version into AC_INIT before the
       # autoreconfHook regenerates configure.  ${fullVersion} is composed
-      # from upstream + submodule input metadata + .gitmodules + self.
+      # from upstream + the mig-src input + flake.lock fork-id + self.
       postPatch = ''
         sed -i.bak \
           -e 's|^AC_INIT(\[GNU MIG\], \[[^]]*\],|AC_INIT([GNU MIG], [${fullVersion}],|' \

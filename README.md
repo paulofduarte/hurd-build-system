@@ -15,19 +15,16 @@ setup, machine_init, and into bootstrap-module loading on QEMU `virt`
 system and will be validated against current upstream next (see
 [Roadmap](#roadmap)).
 
-**Why Nix + git submodules?** Reproducibility is the founding constraint
-of this repo. Nix pins every host-side tool — cross-compiler, autotools,
-MIG, GNU Make, even the shell — to exact `/nix/store` paths via
-`flake.lock`, so two developers on the same commit get bit-identical
-build environments. Submodules pin each upstream Hurd source tree (gnumach
-and MIG today; glibc and the Hurd servers when they land) to an exact
-commit hash recorded in the parent repo, so neither a branch moving
-nor a tag being re-tagged can silently change what we build.
-Together they make the commit hash of this repo a complete description
-of the build inputs. Background reading:
+**Why Nix?** Reproducibility is the founding constraint of this repo. Nix
+pins every input — the cross-compiler, autotools, MIG, GNU Make, the shell,
+*and* the upstream Hurd source trees (gnumach and MIG today; glibc and the
+Hurd servers when they land) — to exact revisions via `flake.lock`. The
+sources are pinned flake inputs (`gnumach-src` / `mig-src`, github forks at a
+fixed commit), so neither a branch moving nor a tag being re-tagged can
+silently change what we build. Together that makes this repo's commit hash a
+complete description of the build inputs. Background reading:
 [nix.dev](https://nix.dev/),
 [Nix flakes](https://nix.dev/concepts/flakes.html),
-[git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules),
 and the broader [reproducible-builds.org](https://reproducible-builds.org/)
 effort.
 
@@ -86,7 +83,7 @@ host only needs:
 | Tool | Required version | Notes |
 |---|---|---|
 | **Nix** | any with flakes support (2.4+, Dec 2021) | provides every other tool, including the cross-toolchain |
-| **git** | any | needed to clone the parent repo and fetch submodules |
+| **git** | any | needed to clone the repo (and the source trees via `make srcs`) |
 | **GNU Make** *(recommended)* | 3.81+ | only for the convenience of running `make` from your host shell; if missing, use `nix develop` and run `make` *inside* the dev shell |
 
 macOS and most Linux distros ship git and a sufficiently new make by
@@ -107,17 +104,19 @@ configuration.
 
 ## Onboarding (3 steps)
 
-### 1. Clone with submodules
+### 1. Clone
 
 ```sh
-git clone --recurse-submodules https://github.com/paulofduarte/hurd-build-system.git
+git clone https://github.com/paulofduarte/hurd-build-system.git
 cd hurd-build-system
 ```
 
-If you cloned without `--recurse-submodules`, pull them in after:
+nix builds the kernel + MIG from pinned `*-src` flake inputs, so a plain
+clone is enough to build. To *iterate* on the sources (`make mig` / `make
+mach`), populate the working clones under `src/` once:
 
 ```sh
-git submodule update --init --recursive
+make srcs        # clone each source's working tree at its pinned rev
 ```
 
 ### 2. Build
@@ -196,40 +195,33 @@ The `nix run` path uses the nix-built kernel from the project's cachix cache.  D
 See `make run-help` for the cheat sheet, and `flakes/run/README.md` for
 how the harness is structured and how to add new scenarios.
 
-## Working with the submodules
+## Working with the source trees
 
-The submodule URLs in `.gitmodules`:
+The kernel and MIG sources are **pinned flake inputs** (`gnumach-src` /
+`mig-src`), not submodules. The fork + branch each tracks is declared in
+`flake.nix`, and `flake.lock` records the exact commit nix builds — run `nix
+flake metadata` (or `make srcs`, below) to see the current pins. There's no
+`.gitmodules`, and nothing to keep in sync.
 
-| Submodule | URL | Tracked branch |
-|---|---|---|
-| `src/gnumach` | `https://github.com/paulofduarte/gnumach.git` (fork carrying the working aarch64 port + its kernel test arms) | `aarch64-tests` |
-| `src/mig` | `https://github.com/paulofduarte/mig.git` (now tracking upstream-equivalent `master`) | `master` |
-
-The `aarch64-tests` branch is `aarch64-port` (the kernel-side port,
-nine commits on top of savannah master) plus six commits adding the
-test-suite aarch64 arms.  Tracking it gives the parent build access
-to both the port and the validated test machinery in one go; if you
-only want the kernel port without the test work, point the submodule
-at `aarch64-port` instead.
-
-`src/mig` previously tracked a `cross-build-fixes` branch carrying a
-`test_lib.sh` patch (preserving externally-supplied `CFLAGS`).  That
-fix has been merged upstream, so the fork now tracks plain `master`
-in lockstep with savannah.
-
-To advance a submodule to its branch's latest commit:
+For iterating on the sources, `make srcs` populates working clones under
+`src/` (gitignored) at the pinned revs:
 
 ```sh
-git submodule update --remote src/gnumach           # follow aarch64-tests
-git submodule update --remote src/mig               # follow master
+make srcs          # clone — or reconcile an existing clone to the pinned rev
 ```
 
-Then `git add src/gnumach src/mig` from the project root and commit to
-record the new pin.
+On an existing clone it adds the pinned remote (named `pin`) without
+disturbing your other remotes, checks out the rev nix builds, and **refuses**
+if a working tree has uncommitted changes. Edit, commit, and push from these
+clones as usual — nix keeps building the pinned commit until you advance the
+pin:
 
-Each submodule has extra remotes wired in locally for development
-(`bugaevc`, `savannah`, `upstream`). Those aren't in `.gitmodules` —
-fresh clones get only `origin`.
+```sh
+make update-srcs   # bump the pins to the forks' branch HEADs; then `make srcs`
+```
+
+`flake.lock` is the single source of truth for what nix builds — there's no
+`.gitmodules`, and nothing to keep in sync.
 
 ## Targets
 
@@ -309,14 +301,14 @@ configure / makefiles can put on PATH.
 ├── flake.lock                      # pinned nixpkgs (nixos-25.11)
 ├── Makefile                        # orchestration: always dispatches through `nix develop -i`
 ├── cloud-init.yaml                 # bootstrap recipe for any cloud-init-capable Linux VM
-├── src/
-│   ├── gnumach/                    # submodule → paulofduarte/gnumach @ aarch64-tests
-│   └── mig/                        # submodule → paulofduarte/mig @ master
+├── src/                            # working clones (gitignored; `make srcs`)
+│   └── <name>/                     # one per `<name>-src` flake input (fork + rev in flake.nix)
 ├── work/                           # local in-tree build dirs (gitignored)
 │   ├── mig/<target>/install/       # iterative MIG build (`make mig`)
 │   └── gnumach/<target>/           # iterative kernel build (`make mach`)
 ├── flakes/                         # nix sub-flakes (source-only)
 │   ├── cross-toolchain/default.nix # mkDevShell + x86_64-darwin config.sub overlay
+│   ├── sources/                    # source-pin helpers (flake.lock → fork-id) + sync.sh (`make srcs`)
 │   ├── gnumach-headers/default.nix # per-target headers derivation
 │   ├── gnumach-headers/result-*    # per-target gc-root symlinks (gitignored)
 │   ├── mig/default.nix             # per-target MIG derivation
@@ -448,9 +440,9 @@ v1.8+git20260224-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.gec67d
 | field | meaning | source |
 |-------|---------|--------|
 | `v1.8` | upstream version, `v`-prefixed like the upstream tags | `version.m4` / `configure.ac` |
-| `+git<date>` | snapshot date (`YYYYMMDD`) | submodule HEAD commit date |
-| `-g<src>` | abbreviated submodule commit | submodule HEAD |
-| `+<host>.<owner>.<repo>.<branch>` | where the source came from | `.gitmodules` |
+| `+git<date>` | snapshot date (`YYYYMMDD`) | `gnumach-src` input commit date |
+| `-g<src>` | abbreviated source commit | `gnumach-src` input rev |
+| `+<host>.<owner>.<repo>.<branch>` | where the source came from | `flake.lock` (via `flakes/sources`) |
 | `+build.g<rev>` | this build-system repo's commit (`-dirty` if its tree is dirty) | flake `self` |
 
 **Delimiter grammar.** `-` is the git-describe-native separator and stays
@@ -458,8 +450,8 @@ inside the core; every appended metadata section is fenced by a `+`, which
 is unambiguous even though branch names carry dashes (`aarch64-tests`).
 Split on `+` → four fields.
 
-**Reproducibility.** Every field is host-independent (submodule metadata,
-`.gitmodules`, the build-repo rev — nothing derived from the build host or
+**Reproducibility.** Every field is host-independent (the source input's
+locked rev/date, the fork-id from `flake.lock`, the build-repo rev — nothing derived from the build host or
 the Nix `$out`), so the same commit produces the same version on every
 build host. This string also seeds `-frandom-seed` (a `nix32` hash of
 `<pname>-<version>`), which is part of why the kernels are byte-identical

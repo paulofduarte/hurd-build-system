@@ -19,31 +19,17 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
 
-    # src/gnumach and src/mig are git submodules.  Without this, the
-    # flake's self-fetch only sees gitlinks (a parent-tracked SHA, no
-    # working-tree content) and any derivation that reads ./src/* fails
-    # with "Path 'src/<repo>' in the repository ... is not tracked by
-    # Git."  Available since nix 2.27 (Feb 2025).
-    self.submodules = true;
-
-    # Parallel flake inputs pointing at the same submodule worktrees.
-    # We DON'T use these as `src` (the submodule via self.submodules
-    # above is the source of truth for build content) — we only read
-    # their `.rev` / `.shortRev` / `.lastModifiedDate` for the version
-    # string composed in PACKAGE_VERSION.  nix flakes don't vendor
-    # `.git` directories under any `submodules=1` setting, so this
-    # was the only way to expose submodule commit metadata to pure
-    # eval.  `flake.lock` pins the rev to whatever the submodule HEAD
-    # was at the last `nix flake update` — keep it in sync with the
-    # actual submodule via `make update-srcs` (see Makefile).
-    gnumach-src = {
-      url = "git+file:./src/gnumach";
-      flake = false;
-    };
-    mig-src = {
-      url = "git+file:./src/mig";
-      flake = false;
-    };
+    # Source repos for the kernel + MIG.  These pin exactly what nix builds
+    # (locked in flake.lock); their `.rev` / `.shortRev` / `.lastModifiedDate`
+    # also feed PACKAGE_VERSION.  The local working clones under src/ are a
+    # separate dev convenience populated by `make srcs` — nix never reads them.
+    #
+    # The url/ref are the literal mirror of ./sources.nix.  Nix requires inputs
+    # to be static (it rejects `import`/computed values), so they can't be
+    # derived from it; `make srcs-check` guards the two against drift, and
+    # `make update-srcs` bumps the pin to the fork's branch HEAD.
+    gnumach-src = { url = "github:paulofduarte/gnumach/aarch64-tests"; flake = false; };
+    mig-src     = { url = "github:paulofduarte/mig/master";            flake = false; };
   };
 
   outputs = { self, nixpkgs, gnumach-src, mig-src, ... }:
@@ -104,5 +90,10 @@
       # sidekick) and apps.<system> (`nix run .#<arch>`) — both defined in
       # ./packages.nix.
       inherit (pkgOutputs) packages apps;
+
+      # Source pins (owner/repo/ref/rev/url) derived from the `*-src` inputs
+      # via flake.lock — consumed by `make srcs` to populate the src/ working
+      # clones.  See flakes/sources.
+      srcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).all self;
     };
 }

@@ -5,15 +5,16 @@
       "locked": {
         "lastModified": 1779579592,
         "narHash": "sha256-zx+ov0whx6xZlPz8WZZzyqtInjz7ylXxmsXzHTDq2zs=",
-        "ref": "refs/heads/aarch64-tests",
+        "owner": "paulofduarte",
+        "repo": "gnumach",
         "rev": "79f3013cce0c8b8363b9a6e0e63ccb16bcbbb101",
-        "revCount": 3101,
-        "type": "git",
-        "url": "file:./src/gnumach"
+        "type": "github"
       },
       "original": {
-        "type": "git",
-        "url": "file:./src/gnumach"
+        "owner": "paulofduarte",
+        "ref": "aarch64-tests",
+        "repo": "gnumach",
+        "type": "github"
       }
     },
     "mig-src": {
@@ -21,15 +22,16 @@
       "locked": {
         "lastModified": 1779829096,
         "narHash": "sha256-ImEIS3cpXxyItNU/YRqxkxbDu/8K3ZMmkufvODQ9Hrw=",
-        "ref": "refs/heads/master",
+        "owner": "paulofduarte",
+        "repo": "mig",
         "rev": "cb48044b30fcfe10529ecc1129dd68e93ed73835",
-        "revCount": 214,
-        "type": "git",
-        "url": "file:./src/mig"
+        "type": "github"
       },
       "original": {
-        "type": "git",
-        "url": "file:./src/mig"
+        "owner": "paulofduarte",
+        "ref": "master",
+        "repo": "mig",
+        "type": "github"
       }
     },
     "nixpkgs": {

@@ -18,17 +18,14 @@
 #                       builtins.readFile (`parseM4Version`,
 #                       `parseAcInitVersion`)
 #   <date>            — `<srcInput>.lastModifiedDate` (YYYYMMDD subset)
-#   <fork-id>         — parsed from .gitmodules entry for the submodule
-#                       (`parseGitmodulesUrl` + `parseForkId`)
+#   <fork-id>         — owner/repo/ref of the source fork, passed in from
+#                       ./sources.nix (`shortUrl`)
 #   <src-hash>        — `<srcInput>.shortRev`
 #   <build-hash>      — `self.shortRev or self.dirtyShortRev`
 #
-# `<srcInput>` is a separate flake input pointing at the same submodule
-# worktree (`git+file:./src/<repo>`).  nix flakes don't vendor `.git`
-# under any `submodules=1` setting, so this was the only way to expose
-# submodule commit metadata to pure eval.  See flake.nix for the
-# declarations.  By design, src-hash always reflects a *committed* rev
-# — uncommitted edits inside src/<repo> aren't visible to the input.
+# `<srcInput>` is the pinned source flake input (`github:<owner>/<repo>/<ref>`,
+# see flake.nix).  Its `.shortRev` / `.lastModifiedDate` are read at pure eval;
+# src-hash always reflects the locked (committed + pushed) rev.
 
 { lib }:
 
@@ -74,34 +71,6 @@ rec {
   # Build-system date as YYYYMMDD.  Available even on dirty trees.
   buildDate = self:
     builtins.substring 0 8 (self.lastModifiedDate or "00000000");
-
-  # ==========================================================================
-  # Eval-time helpers — parse .gitmodules for the fork-id URL
-  # ==========================================================================
-
-  # ==========================================================================
-  # .gitmodules parsing — pulls `url = …` / `branch = …` for one submodule
-  # ==========================================================================
-  #
-  # The submodule's *declared* URL + branch live in .gitmodules — the
-  # in-tree `.git/config` can drift but doesn't survive into the vendored
-  # self.outPath.  These parsers tolerate the tab/space mix git writes.
-
-  _gitmodulesField = { content, submodulePath, field }:
-    let
-      # ERE: match the [submodule "<path>"] header, then arbitrary
-      # non-bracket chars (everything up to the NEXT submodule block),
-      # then `<field> = <value>` on its own line.  Nix's `.` matches
-      # newlines, so no multi-line dance needed.
-      pattern = ".*[[]submodule \"${submodulePath}\"[]][^[]*${field}[ \t]*=[ \t]*([^ \t\n]+).*";
-      match = builtins.match pattern content;
-    in
-    if match == null then "" else builtins.head match;
-
-  parseGitmodulesUrl    = { content, submodulePath }:
-    _gitmodulesField { inherit content submodulePath; field = "url"; };
-  parseGitmodulesBranch = { content, submodulePath }:
-    _gitmodulesField { inherit content submodulePath; field = "branch"; };
 
   # ==========================================================================
   # URL → dotted-identifier short form
@@ -167,21 +136,19 @@ rec {
   # only the build-system tree's dirtiness shows, as `-dirty` on +build.
   #
   # Args (eval-time): upstreamVersion (parseM4Version/parseAcInitVersion),
-  # srcInput (submodule flake input → .shortRev + .lastModifiedDate),
-  # submodulePath (.gitmodules key), self (build-rev + .gitmodules read).
+  # srcInput (source flake input → .shortRev + .lastModifiedDate), forkUrl +
+  # forkBranch (owner/repo/ref from ./sources.nix), self (build-rev).
   composeVersion = {
     upstreamVersion,
     srcInput,
-    submodulePath,
+    forkUrl,
+    forkBranch,
     self,
   }:
     let
       srcShort = srcInput.shortRev or "unknown";
       srcDate  = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
-      gitmodules = builtins.readFile (self.outPath + "/.gitmodules");
-      url = parseGitmodulesUrl { content = gitmodules; inherit submodulePath; };
-      branch = parseGitmodulesBranch { content = gitmodules; inherit submodulePath; };
-      short  = shortUrl { inherit url branch; };
+      short  = shortUrl { url = forkUrl; branch = forkBranch; };
       buildShort = buildRev self;
     in
     "v${upstreamVersion}+git${srcDate}-g${srcShort}+${short}+build.g${buildShort}";
