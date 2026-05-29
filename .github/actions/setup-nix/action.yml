@@ -1,0 +1,15 @@
+name: Set up nix
+description: Install nix (flakes on) with the project cachix cache as a pull substituter.
+
+runs:
+  using: composite
+  steps:
+    # v31+ ships nix 2.30.x, which understands the `inputs.self.submodules`
+    # flake attribute this project relies on (v30 and earlier reject it).
+    - uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+          accept-flake-config = true
+          extra-substituters = https://hurd-build-system.cachix.org
+          extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=

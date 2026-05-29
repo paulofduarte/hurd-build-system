@@ -1,27 +1,17 @@
 name: Toolchain sanity check
 
-# Cross-host toolchain consistency check.  For every (build host × target
-# ARCH) combination it runs `make dist ARCH=<target>` and records the result,
-# then a `compare` job decides pass/fail PURELY on whether the hosts AGREE —
-# this validates the toolchains behave identically across hosts, NOT that the
-# kernel source itself is correct:
+# Cross-host toolchain consistency.  For every (host × target) it runs
+# `make dist` and records the result; the `compare` job then gates PURELY on
+# whether the hosts AGREE — not on whether the kernel source is correct:
+#   * all build -> per-file dist hashes must be byte-identical (else drift = FAIL)
+#   * all fail  -> normalised error signatures must match (consistent source
+#                  bug, e.g. i686-xen htonl = PASS)
+#   * otherwise -> divergence = FAIL
 #
-#   * builds on all hosts   -> the per-file dist hashes must be byte-identical
-#     across hosts.  Any difference = host-coupled toolchain drift = FAIL.
-#   * fails on all hosts     -> the (normalised) build-error signature must be
-#     identical across hosts.  Same error everywhere = a source issue, not a
-#     toolchain one = PASS (e.g. the 32-bit i686-xen htonl bug).
-#   * builds on some, fails on others, or errors differ -> divergence = FAIL.
-#
-# The target ARCH list is derived from target-archs.nix (not hardcoded), so a
-# new target is picked up automatically.
-#
-# Trigger model: runs after `Cache cross-toolchains` completes (it does the
-# path gating: flake.nix / flake.lock / target-archs.nix / flakes/cross-
-# toolchain / its own file), plus manual dispatch.
-#
-# Dist outputs are not pushed to cachix; we consume the toolchain cache as a
-# substituter (pull-only) so the cross-toolchain isn't rebuilt per host.
+# Targets come from target-archs.nix (not hardcoded).  Runs after `Cache
+# cross-toolchains` — but only when that run actually built >=1 toolchain (the
+# setup gate reads its build-plan artifact) — plus manual dispatch, and pulls
+# the toolchain from cachix rather than rebuilding it per host.
 
 on:
   workflow_run:
@@ -35,24 +25,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Derive the target ARCH list from target-archs.nix so the build matrix
-  # isn't hardcoded.  Also the single place the success gate is applied.
+  # Gate + derive the matrix.  Sanity runs only when the triggering cache run
+  # actually built >=1 toolchain (or on manual dispatch); otherwise the
+  # toolchains are bit-identical to what was already checked.
   setup:
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read            # download the cache run's build-plan artifact
     outputs:
       arches: ${{ steps.arches.outputs.arches }}
+      run: ${{ steps.gate.outputs.run }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Install nix
-        uses: cachix/install-nix-action@v31
+      - name: Set up nix
+        uses: ./.github/actions/setup-nix
+      - name: Fetch the cache run's build plan
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+          name: build-plan
+          path: plan
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Gate — run only if >=1 toolchain was (re)built
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch -> run."; echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # No artifact (old run / expired) -> run rather than silently skip a check.
+          if [ ! -f plan/build-plan.json ]; then
+            echo "No build plan -> run (fail-safe)."; echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$(jq 'length' plan/build-plan.json)" -gt 0 ]; then
+            echo "Cache run built $(jq -c . plan/build-plan.json) -> run."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Cache run built nothing -> skip."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Derive ARCH list
         id: arches
         run: |
@@ -63,6 +82,7 @@ jobs:
 
   build:
     needs: setup
+    if: ${{ needs.setup.outputs.run == 'true' }}
     name: ${{ matrix.runner.system }} → ${{ matrix.arch }}
     strategy:
       fail-fast: false
@@ -82,21 +102,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install nix
-        uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            extra-substituters = https://hurd-build-system.cachix.org
-            extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
+      - name: Set up nix
+        uses: ./.github/actions/setup-nix
 
-      # Build and capture the OUTCOME without failing the job: the pass/fail
-      # decision belongs to `compare` (a consistent failure across hosts is a
-      # PASS).  result.txt carries HOST/ARCH + either STATUS=ok and the
-      # per-file dist hashes, or STATUS=fail and a normalised error signature
-      # (/nix/store hashes + source line numbers stripped so it compares
-      # across hosts).
+      # Capture the outcome without failing the job — `compare` owns pass/fail.
+      # result.txt = HOST/ARCH + either STATUS=ok and per-file dist hashes, or
+      # STATUS=fail and a normalised error signature.
       - name: Build dist + capture result
         env:
           ARCH: ${{ matrix.arch }}
@@ -105,14 +116,25 @@ jobs:
           set -uo pipefail
           res=result.txt
           { echo "HOST=$HOSTSYS"; echo "ARCH=$ARCH"; } > "$res"
-          if make ARCH="$ARCH" dist > build.log 2>&1; then
+          # All cores for speed: objects are order-independent, so success-path
+          # hashes are unaffected.  -k makes the FAIL set complete and
+          # core-count-independent (plain -j stops at the first error, reporting
+          # only the jobs in-flight then); sort -u below handles ordering.  The
+          # Makefile forwards these flags to the inner build.
+          if make -j"$(getconf _NPROCESSORS_ONLN)" -k ARCH="$ARCH" dist > build.log 2>&1; then
             echo "STATUS=ok" >> "$res"
-            ( cd dist && find "$ARCH" -type f -print0 | sort -z | xargs -0 shasum -a 256 ) >> "$res"
+            # LC_ALL=C: stable path ordering across macOS/Linux locales (compare
+            # reads it as a per-path map anyway; just keeps the artifact clean).
+            ( cd dist && find "$ARCH" -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 ) >> "$res"
           else
             echo "STATUS=fail" >> "$res"
+            # Normalise host-specific bits so the same failure yields the same
+            # signature everywhere: workspace path, /nix/store hashes, source
+            # line/col, and the outer make's error format (GNU make 4.x's
+            # [Makefile:LINE: target] vs Apple make 3.81's [target]).
             grep -aE 'error:|Error [0-9]+|fatal:' build.log \
-              | sed -E 's#/nix/store/[a-z0-9]{32}-#/nix/store/HASH-#g; s/:[0-9]+(:[0-9]+)?:/:L:/g' \
-              | sort -u >> "$res"
+              | sed -E "s#${GITHUB_WORKSPACE}#WORKSPACE#g; s#/nix/store/[a-z0-9]{32}-#/nix/store/HASH-#g; s/:[0-9]+(:[0-9]+)?:/:L:/g; s/\[Makefile:L: /[/g" \
+              | LC_ALL=C sort -u >> "$res"
           fi
           echo "::group::result ($HOSTSYS / $ARCH)"; cat "$res"; echo "::endgroup::"
 
@@ -127,9 +149,9 @@ jobs:
   compare:
     name: Cross-host consistency (gate)
     needs: [setup, build]
-    # Run even if some build jobs reported failures — those are captured in
-    # the artifacts and compared.  Skip only if setup itself didn't run.
-    if: ${{ always() && needs.setup.result == 'success' }}
+    # Run even if some build jobs failed (captured in artifacts); skip if setup
+    # didn't run or the gate decided sanity isn't needed (nothing rebuilt).
+    if: ${{ always() && needs.setup.result == 'success' && needs.setup.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -142,15 +164,22 @@ jobs:
       - name: Compare across hosts — fail on divergence
         env:
           ARCHES: ${{ needs.setup.outputs.arches }}
+        # No `| tee`: it would mask Python's exit (a pipeline's status is the
+        # last command's).  Python writes the summary itself and exits non-zero.
         run: |
-          python3 - <<'PYEOF' | tee -a "$GITHUB_STEP_SUMMARY"
-          import json, os, glob
+          python3 - <<'PYEOF'
+          import json, os, glob, sys
+
+          summary = open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a")
+          def out(s=""):
+              print(s)
+              summary.write(s + "\n")
 
           arches = json.loads(os.environ["ARCHES"])
 
-          # Read every result.txt (content is authoritative — HOST/ARCH lines
-          # avoid parsing dashes out of the artifact name).
-          recs = {}  # (host, arch) -> (status, payload_tuple)
+          # Read every result.txt (content authoritative — avoids parsing the
+          # artifact name).
+          recs = {}  # (host, arch) -> (status, payload_lines)
           for f in glob.glob("results/*/result.txt"):
               host = arch = status = None
               payload = []
@@ -161,84 +190,90 @@ jobs:
                   elif line.startswith("STATUS="):  status = line[7:]
                   elif status is not None:          payload.append(line)
               if host and arch:
-                  recs[(host, arch)] = (status, tuple(payload))
+                  recs[(host, arch)] = (status, payload)
 
           hosts = sorted({h for (h, _) in recs})
 
-          print("## Cross-host toolchain consistency")
-          print()
-          print("Pass = hosts **agree** (identical dist hashes when it builds, "
-                "or an identical error signature when it doesn't).  This gates "
-                "toolchain consistency, not kernel correctness.")
-          print()
-          print(f"Hosts reporting: {', '.join(hosts) or '(none)'}")
-          print()
+          out("## Cross-host toolchain consistency")
+          out()
+          out("Pass = hosts **agree**, compared order-independently: identical "
+              "per-file dist hashes when a target builds, or an identical error "
+              "signature when it doesn't.  Gates toolchain consistency across "
+              "hosts, not kernel correctness.")
+          out()
+          out(f"Hosts reporting: {', '.join(hosts) or '(none)'}")
+          out()
+
+          def hashmap(lines):
+              # "<hash>  <path>" -> {path: hash} (order-independent)
+              m = {}
+              for ln in lines:
+                  p = ln.split(None, 1)
+                  if len(p) == 2:
+                      m[p[1]] = p[0]
+              return m
 
           diverged = False
           for arch in arches:
               present = {h: recs[(h, arch)] for h in hosts if (h, arch) in recs}
               missing = [h for h in hosts if h not in present]
               if not present:
-                  print(f"### `{arch}` — ⚠ no results"); print(); diverged = True; continue
+                  out(f"### `{arch}` — ⚠ no results"); out(); diverged = True; continue
 
               statuses = {h: present[h][0] for h in present}
               allok   = all(s == "ok"   for s in statuses.values())
               allfail = all(s == "fail" for s in statuses.values())
 
               if allok:
-                  payloads = {present[h][1] for h in present}
-                  if len(payloads) == 1:
-                      print(f"### `{arch}` — ✅ builds, byte-identical across "
-                            f"{len(present)} host(s)")
+                  maps = {h: hashmap(present[h][1]) for h in present}
+                  ref = next(iter(maps.values()))
+                  if all(m == ref for m in maps.values()):
+                      out(f"### `{arch}` — ✅ builds, byte-identical across "
+                          f"{len(present)} host(s)")
                   else:
                       diverged = True
-                      print(f"### `{arch}` — ❌ **builds DIFFER across hosts** "
-                            f"(toolchain drift)")
-                      print()
-                      # which files differ
-                      per = {}  # path -> {host: hash}
-                      for h, (_, pl) in present.items():
-                          for ln in pl:
-                              parts = ln.split(None, 1)
-                              if len(parts) == 2:
-                                  per.setdefault(parts[1], {})[h] = parts[0]
-                      print("| File | hash per host |")
-                      print("| --- | --- |")
-                      for p, hh in sorted(per.items()):
-                          if len(set(hh.values())) > 1:
-                              det = "<br>".join(f"{h}=`{hh[h][:12]}…`" for h in sorted(hh))
-                              print(f"| `{p}` | {det} |")
+                      out(f"### `{arch}` — ❌ **builds DIFFER across hosts** "
+                          f"(toolchain drift)")
+                      out()
+                      paths = sorted(set().union(*(set(m) for m in maps.values())))
+                      out("| File | hash per host |")
+                      out("| --- | --- |")
+                      for p in paths:
+                          vals = {h: maps[h].get(p, "—(absent)") for h in present}
+                          if len(set(vals.values())) > 1:
+                              det = "<br>".join(f"{h}=`{vals[h][:12]}`" for h in sorted(vals))
+                              out(f"| `{p}` | {det} |")
               elif allfail:
-                  sigs = {present[h][1] for h in present}
-                  if len(sigs) == 1:
-                      print(f"### `{arch}` — ✅ fails identically on all "
-                            f"{len(present)} host(s) (consistent — source issue, "
-                            f"not toolchain)")
+                  sigs = {h: frozenset(present[h][1]) for h in present}
+                  ref = next(iter(sigs.values()))
+                  if all(s == ref for s in sigs.values()):
+                      out(f"### `{arch}` — ✅ fails identically on all "
+                          f"{len(present)} host(s) (consistent — source issue, "
+                          f"not toolchain)")
                   else:
                       diverged = True
-                      print(f"### `{arch}` — ❌ **fails DIFFERENTLY across hosts** "
-                            f"(toolchain drift)")
-                      print()
+                      out(f"### `{arch}` — ❌ **fails DIFFERENTLY across hosts** "
+                          f"(toolchain drift)")
+                      out()
                       for h in sorted(present):
-                          print(f"<details><summary>{h}</summary>")
-                          print()
-                          print("```")
-                          print("\n".join(present[h][1]))
-                          print("```")
-                          print("</details>")
+                          out(f"<details><summary>{h}</summary>")
+                          out(); out("```")
+                          out("\n".join(present[h][1]))
+                          out("```"); out("</details>")
               else:
                   diverged = True
-                  print(f"### `{arch}` — ❌ **builds on some hosts, fails on "
-                        f"others** (divergence): "
-                        + ", ".join(f"{h}={s}" for h, s in sorted(statuses.items())))
+                  out(f"### `{arch}` — ❌ **builds on some hosts, fails on "
+                      f"others** (divergence): "
+                      + ", ".join(f"{h}={s}" for h, s in sorted(statuses.items())))
 
               if missing:
-                  print(f"  ⚠ missing host(s): {', '.join(missing)}")
-              print()
+                  out(f"  ⚠ missing host(s): {', '.join(missing)}")
+              out()
 
-          print("---")
+          out("---")
           if diverged:
-              print("**RESULT: ❌ divergence detected — failing the workflow.**")
-              raise SystemExit(1)
-          print("**RESULT: ✅ all targets consistent across hosts.**")
+              out("**RESULT: ❌ divergence detected — failing the workflow.**")
+              summary.close(); sys.exit(1)
+          out("**RESULT: ✅ all targets consistent across hosts.**")
+          summary.close()
           PYEOF

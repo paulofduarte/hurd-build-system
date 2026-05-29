@@ -1,21 +1,18 @@
 name: Cache cross-toolchains
 
-# Populate hurd-build-system.cachix.org with the per-target cross-toolchain:
-# realising each target's dev-shell closure (cross binutils/gcc/newlib + the
-# host build tools) is enough to cache the expensive-to-bootstrap toolchain.
-# We deliberately do NOT build mig / gnumach-headers / the kernel here — those
-# are project artefacts built FROM the toolchain (cheap once it's cached), and
-# they'd go stale anyway since their source changes don't trigger this
-# workflow.  The sanity-check workflow builds them.
+# Populate the cachix cache with each target's cross-toolchain
+# (`packages.<host>.toolchain-<arch>`).  We deliberately do NOT build mig /
+# gnumach-headers / the kernel: those are cheap once the toolchain is cached,
+# and their source changes wouldn't retrigger this workflow anyway (the
+# sanity-check builds them).
 #
-# Triggered only by changes that can alter the *toolchain* derivation hashes
-# — flake.nix, flake.lock, the target-arch set, the cross-toolchain sub-flake,
-# or this workflow.  Package-only changes (a new sub-flake, kernel/mig source)
-# do NOT retrigger it; the sanity-check workflow handles those.
+# A `plan` job first cross-evaluates every (host × target) toolchain path and
+# probes cachix (no download — just the .narinfo), so a host whose toolchains
+# are all cached spins NO runner.  `populate` then builds only the missing
+# (host, target) pairs and pushes them.
 #
-# Each runner builds its own native host's view of every target (cross-
-# toolchain hashes differ across build hosts), and the cachix-action's
-# post-build hook uploads anything new as it's built.
+# Triggered only by changes that can alter toolchain derivation hashes.  Each
+# host builds its own native view (hashes differ per host).
 
 on:
   push:
@@ -25,39 +22,117 @@ on:
       - flake.lock
       - target-archs.nix
       - flakes/cross-toolchain/**/*.nix
+      - packages.nix
       - .github/workflows/cache-toolchains.yml
+      - .github/actions/setup-nix/action.yml
   workflow_dispatch:
 
-# If a newer commit lands while this is running, supersede the older
-# job — we only care about the cache reflecting the latest main.
+# A newer commit supersedes an in-flight run — we only care about the cache
+# reflecting the latest main.
 concurrency:
   group: cache-toolchains-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Decide which (host, target) toolchains are missing from cachix.  Cross-eval
+  # is pure, so one ubuntu runner computes every host's paths; `path-info
+  # --store` is a no-download presence probe.  Emits a `populate` matrix of only
+  # the hosts with missing targets, and a build-plan artifact the sanity-check
+  # reads to decide whether to run at all.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      any: ${{ steps.plan.outputs.any }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Plan — probe cachix for each (host, target) toolchain
+        id: plan
+        run: |
+          set -euo pipefail
+          # Single source of truth for the build matrix: runner <-> nix system.
+          hosts='[
+            {"runner":"ubuntu-latest","system":"x86_64-linux"},
+            {"runner":"ubuntu-24.04-arm","system":"aarch64-linux"},
+            {"runner":"macos-latest","system":"aarch64-darwin"},
+            {"runner":"macos-15-intel","system":"x86_64-darwin"}
+          ]'
+          cache=https://hurd-build-system.cachix.org
+
+          include='[]'
+          n=$(echo "$hosts" | jq length)
+          for i in $(seq 0 $((n - 1))); do
+            row=$(echo "$hosts" | jq -c ".[$i]")
+            sys=$(echo "$row" | jq -r .system)
+            echo "::group::probe $sys"
+            # target -> toolchain outPath for this host (one cross-eval).
+            # shellcheck disable=SC2016  # ${n} is Nix, not bash — must not expand
+            map=$(nix eval --json ".#packages.$sys" --apply '
+              pkgs:
+              let names = builtins.filter
+                    (n: builtins.substring 0 10 n == "toolchain-")
+                    (builtins.attrNames pkgs);
+              in builtins.listToAttrs (map
+                   (n: { name = builtins.substring 10 (-1) n; value = pkgs.${n}.outPath; })
+                   names)')
+            missing=""
+            for t in $(echo "$map" | jq -r 'keys[]'); do
+              p=$(echo "$map" | jq -r --arg t "$t" '.[$t]')
+              if nix path-info --store "$cache" "$p" >/dev/null 2>&1; then
+                echo "  cached   $sys/$t"
+              else
+                echo "  MISSING  $sys/$t"
+                missing="$missing $t"
+              fi
+            done
+            echo "::endgroup::"
+            missing=$(echo "$missing" | xargs || true)
+            if [ -n "$missing" ]; then
+              include=$(echo "$include" \
+                | jq -c --argjson r "$row" --arg t "$missing" '. + [$r + {targets: $t}]')
+            fi
+          done
+
+          matrix=$(jq -cn --argjson inc "$include" '{include: $inc}')
+          {
+            echo "matrix=$matrix"
+            [ "$(echo "$include" | jq length)" -gt 0 ] && echo "any=true" || echo "any=false"
+          } >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$include" > build-plan.json
+
+          {
+            echo "## Toolchain cache plan"
+            echo
+            if [ "$(echo "$include" | jq length)" -gt 0 ]; then
+              echo "$include" | jq -r '.[] | "- **\(.system)** → build `\(.targets)`"'
+            else
+              echo "All toolchains already cached — no build jobs."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The sanity-check downloads this to gate itself: empty plan -> nothing was
+      # rebuilt -> the toolchains are unchanged and don't need re-checking.
+      - name: Upload build plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-plan
+          path: build-plan.json
+          retention-days: 14
+
   populate:
+    needs: plan
+    if: ${{ needs.plan.outputs.any == 'true' }}
     name: ${{ matrix.system }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            system: x86_64-linux
-          - runner: ubuntu-24.04-arm
-            system: aarch64-linux
-          - runner: macos-latest
-            system: aarch64-darwin
-          # macos-13 was retired by GitHub on 2025-12-08; macos-15-intel
-          # is the current Intel runner.  GitHub plans to drop x86_64
-          # macOS entirely in August 2027, after which this row should
-          # come out of the matrix (and `make cache-push` from a local
-          # Intel Mac becomes the only way to populate the cache for
-          # x86_64-darwin contributors).
-          - runner: macos-15-intel
-            system: x86_64-darwin
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    # Cross-GCC bootstraps from source can take ~30 min on the slower
-    # runners (especially aarch64-cross on x86_64 hosts); leave headroom.
+    # Cross-GCC source bootstraps run ~30 min on the slower runners; leave room.
     timeout-minutes: 180
 
     steps:
@@ -66,51 +141,27 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install nix
-        # cachix/install-nix-action v31+ ships upstream nix 2.30.x,
-        # which supports the `inputs.self.submodules` flake attribute
-        # we use.  v30 (and earlier) shipped an older nix that
-        # rejected it.  v31 is the right pairing with cachix-action
-        # below — same maintainer, designed to compose.
-        uses: cachix/install-nix-action@v31
-        with:
-          # Match the daemon config the cloud-init.yaml lays down:
-          # flakes on, auto-accept flake nixConfig (so the workflow
-          # doesn't hang on a prompt for our own cache), and pre-trust
-          # the project cache as a substituter at the daemon level.
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            extra-substituters = https://hurd-build-system.cachix.org
-            extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
+      - name: Set up nix
+        uses: ./.github/actions/setup-nix
 
       - name: Configure cachix push
         uses: cachix/cachix-action@v17
         with:
           name: hurd-build-system
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          # Don't push back paths already on cache.nixos.org — keeps
-          # the cachix free-tier footprint to just the things upstream
-          # doesn't have (i.e., our cross-toolchains).
+          # Don't re-push paths already on cache.nixos.org — keeps the free-tier
+          # footprint to just our cross-toolchains.
           skipPush: false
 
-      - name: Determine target list (from target-archs.nix)
+      - name: Build missing toolchains
+        env:
+          TARGETS: ${{ matrix.targets }}
         run: |
           set -euo pipefail
-          targets=$(nix eval --raw --file target-archs.nix \
-            --apply 'ts: toString (builtins.attrNames ts)')
-          echo "Targets: $targets"
-          echo "TARGETS=$targets" >> "$GITHUB_ENV"
-
-      - name: Build dev-shell closures for every target
-        run: |
-          set -euo pipefail
-          for target in $TARGETS; do
-            echo "::group::dev-shell for .#${target}"
-            # `nix develop -i` realises the dev shell's closure — the cross
-            # toolchain + host build tools, but NOT mig/headers/kernel (the
-            # shell infers its inputs from the packages minus our own builds).
-            # cachix-action's post-build hook pushes new paths as they build.
-            nix develop -i ".#${target}" --command true
+          # Only the targets `plan` found missing for this host — cached ones are
+          # skipped, so we never download a closure just to re-push nothing.
+          for t in $TARGETS; do
+            echo "::group::nix build .#toolchain-$t"
+            nix build ".#toolchain-$t" --no-link --print-out-paths
             echo "::endgroup::"
           done
