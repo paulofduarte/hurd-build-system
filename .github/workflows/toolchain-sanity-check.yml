@@ -1,27 +1,27 @@
 name: Toolchain sanity check
 
-# Cross-host toolchain sanity check.  Runs `make dist ARCH=<target>`
-# for every (build host × target ARCH) combination — 4 × 3 = 12 jobs
-# — confirming the full dist tree (headers + mig + gnumach kernel)
-# still builds end-to-end on every supported host after a flake or
-# cross-toolchain change.  In other words: did the freshly-populated
-# cross-toolchain cache actually produce a usable toolchain?
+# Cross-host toolchain consistency check.  For every (build host × target
+# ARCH) combination it runs `make dist ARCH=<target>` and records the result,
+# then a `compare` job decides pass/fail PURELY on whether the hosts AGREE —
+# this validates the toolchains behave identically across hosts, NOT that the
+# kernel source itself is correct:
 #
-# A follow-up job compares per-file SHA-256 hashes across hosts for
-# each target ARCH.  This is *informational only* — mismatches are
-# rendered into the job summary but do NOT fail the workflow.  The
-# point is to surface latent host coupling (e.g. cross-gcc-induced
-# byte drift in the kernel) so we can decide whether to chase it.
+#   * builds on all hosts   -> the per-file dist hashes must be byte-identical
+#     across hosts.  Any difference = host-coupled toolchain drift = FAIL.
+#   * fails on all hosts     -> the (normalised) build-error signature must be
+#     identical across hosts.  Same error everywhere = a source issue, not a
+#     toolchain one = PASS (e.g. the 32-bit i686-xen htonl bug).
+#   * builds on some, fails on others, or errors differ -> divergence = FAIL.
 #
-# Trigger model: only runs AFTER `Cache cross-toolchains` completes
-# successfully.  That workflow does the path-based gating (flake.nix /
-# flake.lock / target-archs.nix / flakes/cross-toolchain / its own file),
-# so we inherit "runs when the toolchain cache would" without duplicating
-# the path list.
+# The target ARCH list is derived from target-archs.nix (not hardcoded), so a
+# new target is picked up automatically.
 #
-# Dist outputs are deliberately NOT pushed to cachix.  We do consume
-# the toolchain cache (extra-substituters) so the cross-toolchain
-# closure doesn't get rebuilt from scratch on every host.
+# Trigger model: runs after `Cache cross-toolchains` completes (it does the
+# path gating: flake.nix / flake.lock / target-archs.nix / flakes/cross-
+# toolchain / its own file), plus manual dispatch.
+#
+# Dist outputs are not pushed to cachix; we consume the toolchain cache as a
+# substituter (pull-only) so the cross-toolchain isn't rebuilt per host.
 
 on:
   workflow_run:
@@ -30,21 +30,39 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Supersede in-flight runs if a newer one starts — we only care
-# about the latest main producing a clean dist.
 concurrency:
   group: toolchain-sanity-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    # workflow_run fires on every completion regardless of status;
-    # gate on success so we don't try to build dist when the toolchain
-    # cache failed to populate.  workflow_dispatch is always allowed
-    # (manual override).
+  # Derive the target ARCH list from target-archs.nix so the build matrix
+  # isn't hardcoded.  Also the single place the success gate is applied.
+  setup:
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      arches: ${{ steps.arches.outputs.arches }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Derive ARCH list
+        id: arches
+        run: |
+          set -euo pipefail
+          arches=$(nix eval --json --file target-archs.nix --apply builtins.attrNames)
+          echo "Arches: $arches"
+          echo "arches=$arches" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: setup
     name: ${{ matrix.runner.system }} → ${{ matrix.arch }}
     strategy:
       fail-fast: false
@@ -54,10 +72,8 @@ jobs:
           - { name: ubuntu-24.04-arm, system: aarch64-linux  }
           - { name: macos-latest,     system: aarch64-darwin }
           - { name: macos-15-intel,   system: x86_64-darwin  }
-        arch: [aarch64, i686, x86_64]
+        arch: ${{ fromJSON(needs.setup.outputs.arches) }}
     runs-on: ${{ matrix.runner.name }}
-    # `make dist` is bounded by the slowest sub-build (gnumach kernel
-    # link); with the cross-toolchain cache warm this is a few minutes.
     timeout-minutes: 60
 
     steps:
@@ -69,148 +85,160 @@ jobs:
       - name: Install nix
         uses: cachix/install-nix-action@v31
         with:
-          # Same daemon config as cache-toolchains.yml — flakes on,
-          # auto-accept flake nixConfig, pre-trust the project cache
-          # as a substituter (pull-only; we deliberately don't push).
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
             extra-substituters = https://hurd-build-system.cachix.org
             extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
 
-      - name: make dist ARCH=${{ matrix.arch }}
-        run: make ARCH=${{ matrix.arch }} dist
-
-      - name: Hash dist tree
+      # Build and capture the OUTCOME without failing the job: the pass/fail
+      # decision belongs to `compare` (a consistent failure across hosts is a
+      # PASS).  result.txt carries HOST/ARCH + either STATUS=ok and the
+      # per-file dist hashes, or STATUS=fail and a normalised error signature
+      # (/nix/store hashes + source line numbers stripped so it compares
+      # across hosts).
+      - name: Build dist + capture result
+        env:
+          ARCH: ${{ matrix.arch }}
+          HOSTSYS: ${{ matrix.runner.system }}
         run: |
-          set -euo pipefail
-          out="dist-${{ matrix.runner.system }}-${{ matrix.arch }}.sha256"
-          # Per-file SHA-256 over the whole dist/<arch>/ subtree.
-          # Paths are relative to dist/ so they compare directly
-          # across runners (no host-specific prefixes).  Sorted for
-          # stable diffs.  `shasum -a 256` works on macOS + Linux
-          # without an extra package install.
-          cd dist
-          find "${{ matrix.arch }}" -type f -print0 \
-            | sort -z \
-            | xargs -0 shasum -a 256 \
-            > "../$out"
-          cd ..
-          echo "Hashed $(wc -l < "$out") files → $out"
+          set -uo pipefail
+          res=result.txt
+          { echo "HOST=$HOSTSYS"; echo "ARCH=$ARCH"; } > "$res"
+          if make ARCH="$ARCH" dist > build.log 2>&1; then
+            echo "STATUS=ok" >> "$res"
+            ( cd dist && find "$ARCH" -type f -print0 | sort -z | xargs -0 shasum -a 256 ) >> "$res"
+          else
+            echo "STATUS=fail" >> "$res"
+            grep -aE 'error:|Error [0-9]+|fatal:' build.log \
+              | sed -E 's#/nix/store/[a-z0-9]{32}-#/nix/store/HASH-#g; s/:[0-9]+(:[0-9]+)?:/:L:/g' \
+              | sort -u >> "$res"
+          fi
+          echo "::group::result ($HOSTSYS / $ARCH)"; cat "$res"; echo "::endgroup::"
 
-      - name: Upload hash list
-        # v7 is the current major (Node 24 runtime).  v4 still works
-        # but emits Node 20 deprecation warnings on every run.
+      - name: Upload result
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: hashes-${{ matrix.runner.system }}-${{ matrix.arch }}
-          path: dist-${{ matrix.runner.system }}-${{ matrix.arch }}.sha256
-          retention-days: 14
-
-      - name: Pack dist tarball
-        # Per-(host, arch) tarball of the whole dist/<arch>/ tree.
-        # Uploaded so when the cross-host hash comparison flags drift,
-        # we can download both sides and diff the actual files.  Plain
-        # tar.gz for portability — these are debug artefacts, size
-        # doesn't matter much.
-        run: |
-          tar -C dist -czf \
-            "dist-${{ matrix.runner.system }}-${{ matrix.arch }}.tar.gz" \
-            "${{ matrix.arch }}"
-          ls -lh "dist-${{ matrix.runner.system }}-${{ matrix.arch }}.tar.gz"
-
-      - name: Upload dist tarball
-        uses: actions/upload-artifact@v7
-        with:
-          name: dist-${{ matrix.runner.system }}-${{ matrix.arch }}
-          path: dist-${{ matrix.runner.system }}-${{ matrix.arch }}.tar.gz
+          name: result-${{ matrix.runner.system }}-${{ matrix.arch }}
+          path: result.txt
           retention-days: 14
 
   compare:
-    name: Cross-host hash comparison (informational)
-    needs: build
-    # `if: always()` so partial-success runs still produce a report
-    # — useful when some hosts fail to build but others succeed and
-    # we want to see what the survivors agreed on.
-    if: always()
+    name: Cross-host consistency (gate)
+    needs: [setup, build]
+    # Run even if some build jobs reported failures — those are captured in
+    # the artifacts and compared.  Skip only if setup itself didn't run.
+    if: ${{ always() && needs.setup.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Download all hash artifacts
-        # v8 is the current major (Node 24 runtime).  Pairs with
-        # actions/upload-artifact@v7 above — both speak the v4+
-        # immutable-artifact API server-side.
+      - name: Download all results
         uses: actions/download-artifact@v8
         with:
-          path: hashes
-          pattern: hashes-*
+          path: results
+          pattern: result-*
 
-      - name: Compare hashes
-        # IMPORTANT: this step never exits non-zero.  Drift is
-        # reported in the job summary AND echoed to the step log
-        # (via `tee`) so it's findable from either view; whether to
-        # act on it is a human decision, not a CI gate.
+      - name: Compare across hosts — fail on divergence
+        env:
+          ARCHES: ${{ needs.setup.outputs.arches }}
         run: |
-          set -uo pipefail
           python3 - <<'PYEOF' | tee -a "$GITHUB_STEP_SUMMARY"
-          import re, glob
-          from collections import defaultdict
+          import json, os, glob
 
-          print("## Cross-host dist reproducibility")
+          arches = json.loads(os.environ["ARCHES"])
+
+          # Read every result.txt (content is authoritative — HOST/ARCH lines
+          # avoid parsing dashes out of the artifact name).
+          recs = {}  # (host, arch) -> (status, payload_tuple)
+          for f in glob.glob("results/*/result.txt"):
+              host = arch = status = None
+              payload = []
+              for line in open(f):
+                  line = line.rstrip("\n")
+                  if line.startswith("HOST="):     host = line[5:]
+                  elif line.startswith("ARCH="):    arch = line[5:]
+                  elif line.startswith("STATUS="):  status = line[7:]
+                  elif status is not None:          payload.append(line)
+              if host and arch:
+                  recs[(host, arch)] = (status, tuple(payload))
+
+          hosts = sorted({h for (h, _) in recs})
+
+          print("## Cross-host toolchain consistency")
           print()
-          print("For each (target ARCH, file), the SHA-256 is compared "
-                "across all build hosts.  **Informational only** — "
-                "mismatches do not fail the workflow.")
+          print("Pass = hosts **agree** (identical dist hashes when it builds, "
+                "or an identical error signature when it doesn't).  This gates "
+                "toolchain consistency, not kernel correctness.")
+          print()
+          print(f"Hosts reporting: {', '.join(hosts) or '(none)'}")
           print()
 
-          for arch in ["aarch64", "i686", "x86_64"]:
-              print(f"### `ARCH={arch}`")
-              print()
-              files = sorted(glob.glob(f"hashes/hashes-*-{arch}/*.sha256"))
-              if not files:
-                  print("⚠ No hash files — all build jobs for this ARCH failed.")
-                  print()
-                  continue
+          diverged = False
+          for arch in arches:
+              present = {h: recs[(h, arch)] for h in hosts if (h, arch) in recs}
+              missing = [h for h in hosts if h not in present]
+              if not present:
+                  print(f"### `{arch}` — ⚠ no results"); print(); diverged = True; continue
 
-              # path -> { host: hash }
-              per_path = defaultdict(dict)
-              for f in files:
-                  m = re.search(r"hashes-([^/]+)-" + arch + "/", f)
-                  if not m:
-                      continue
-                  host = m.group(1)
-                  with open(f) as fh:
-                      for line in fh:
-                          parts = line.strip().split(None, 1)
-                          if len(parts) != 2:
-                              continue
-                          h, p = parts
-                          per_path[p][host] = h
+              statuses = {h: present[h][0] for h in present}
+              allok   = all(s == "ok"   for s in statuses.values())
+              allfail = all(s == "fail" for s in statuses.values())
 
-              n_hosts = len(files)
-              ok = diff = partial = 0
-              diff_rows = []
-              for path, hh in sorted(per_path.items()):
-                  hashes = set(hh.values())
-                  if len(hh) < n_hosts:
-                      partial += 1
-                  elif len(hashes) == 1:
-                      ok += 1
+              if allok:
+                  payloads = {present[h][1] for h in present}
+                  if len(payloads) == 1:
+                      print(f"### `{arch}` — ✅ builds, byte-identical across "
+                            f"{len(present)} host(s)")
                   else:
-                      diff += 1
-                      detail = "<br>".join(
-                          f"{h}=`{hh[h][:12]}…`" for h in sorted(hh)
-                      )
-                      diff_rows.append((path, detail))
+                      diverged = True
+                      print(f"### `{arch}` — ❌ **builds DIFFER across hosts** "
+                            f"(toolchain drift)")
+                      print()
+                      # which files differ
+                      per = {}  # path -> {host: hash}
+                      for h, (_, pl) in present.items():
+                          for ln in pl:
+                              parts = ln.split(None, 1)
+                              if len(parts) == 2:
+                                  per.setdefault(parts[1], {})[h] = parts[0]
+                      print("| File | hash per host |")
+                      print("| --- | --- |")
+                      for p, hh in sorted(per.items()):
+                          if len(set(hh.values())) > 1:
+                              det = "<br>".join(f"{h}=`{hh[h][:12]}…`" for h in sorted(hh))
+                              print(f"| `{p}` | {det} |")
+              elif allfail:
+                  sigs = {present[h][1] for h in present}
+                  if len(sigs) == 1:
+                      print(f"### `{arch}` — ✅ fails identically on all "
+                            f"{len(present)} host(s) (consistent — source issue, "
+                            f"not toolchain)")
+                  else:
+                      diverged = True
+                      print(f"### `{arch}` — ❌ **fails DIFFERENTLY across hosts** "
+                            f"(toolchain drift)")
+                      print()
+                      for h in sorted(present):
+                          print(f"<details><summary>{h}</summary>")
+                          print()
+                          print("```")
+                          print("\n".join(present[h][1]))
+                          print("```")
+                          print("</details>")
+              else:
+                  diverged = True
+                  print(f"### `{arch}` — ❌ **builds on some hosts, fails on "
+                        f"others** (divergence): "
+                        + ", ".join(f"{h}={s}" for h, s in sorted(statuses.items())))
 
-              print(f"**Summary:** ✓ {ok} identical · ❌ {diff} differ "
-                    f"· ⚠ {partial} partial")
+              if missing:
+                  print(f"  ⚠ missing host(s): {', '.join(missing)}")
               print()
-              if diff_rows:
-                  print("| File | Hashes per host |")
-                  print("| --- | --- |")
-                  for path, detail in diff_rows:
-                      print(f"| `{path}` | {detail} |")
-                  print()
+
+          print("---")
+          if diverged:
+              print("**RESULT: ❌ divergence detected — failing the workflow.**")
+              raise SystemExit(1)
+          print("**RESULT: ✅ all targets consistent across hosts.**")
           PYEOF
-          echo "::notice::Cross-host comparison complete — see job summary."

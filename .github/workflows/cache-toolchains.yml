@@ -89,10 +89,18 @@ jobs:
           # doesn't have (i.e., our cross-toolchains).
           skipPush: false
 
+      - name: Determine target list (from target-archs.nix)
+        run: |
+          set -euo pipefail
+          targets=$(nix eval --raw --file target-archs.nix \
+            --apply 'ts: toString (builtins.attrNames ts)')
+          echo "Targets: $targets"
+          echo "TARGETS=$targets" >> "$GITHUB_ENV"
+
       - name: Build dev-shell closures for every target
         run: |
           set -euo pipefail
-          for target in aarch64 i686 x86_64 i686-xen x86_64-xen; do
+          for target in $TARGETS; do
             echo "::group::dev-shell for .#${target}"
             # `nix develop -i` realises the full closure of the dev
             # shell, including the cross-toolchain.  The post-build
@@ -105,7 +113,7 @@ jobs:
       - name: Build per-target mig + gnumach-headers
         run: |
           set -euo pipefail
-          for target in aarch64 i686 x86_64 i686-xen x86_64-xen; do
+          for target in $TARGETS; do
             echo "::group::packages for ${target}"
             nix build --no-link \
               ".#mig-${target}" \
