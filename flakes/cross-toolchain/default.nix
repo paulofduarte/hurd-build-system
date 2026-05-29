@@ -95,7 +95,9 @@ let
         ++ lib.optional (system == "x86_64-darwin") gnuConfigOverlay;
     };
 
-  mkDevShell = system: name: target:
+  # `targetPkgs` is { gnumach, mig, headers } — this target's three nix
+  # derivations, passed in from the root flake's devShells.
+  mkDevShell = system: name: target: targetPkgs:
     let
       pkgs = nixpkgs.legacyPackages.${system};
 
@@ -106,20 +108,28 @@ let
       # The cross-toolchain's binary prefix (e.g. "aarch64-unknown-none-elf-").
       # Includes the trailing "-".
       toolPrefix = crossPkgs.stdenv.cc.targetPrefix;
+
+      # Build-tool deps are INFERRED from this target's own derivations
+      # (gnumach + mig + gnumach-headers) rather than duplicated here: add a
+      # tool to a package's nativeBuildInputs and the dev shell picks it up.
+      # Subtract our own built packages so crossMig (a gnumach nativeBuildInput)
+      # isn't pulled in — the dev shell builds mig in-tree, and depending on
+      # the nix-built mig would force a nix build of it just to ENTER the
+      # shell, defeating in-tree mig iteration.
+      ownDrvs = lib.attrValues targetPkgs;
+      inferredBuildInputs = lib.subtractLists ownDrvs
+        (lib.unique (lib.concatMap (d: d.nativeBuildInputs) ownDrvs));
     in
     crossPkgs.mkShell {
-      # autoreconfHook puts autoconf/automake/libtool/m4 on PATH for
-      # `make prepare`.  gnumake + awk + coreutils/sed/grep/tar/gzip come
-      # from stdenv (present in `nix develop` too), so they're not listed.
-      nativeBuildInputs = [
-        crossPkgs.stdenv.cc      # cross-toolchain (kernel)
-        pkgs.gcc                 # native compiler for host tools (MIG)
-        pkgs.autoreconfHook      # autotools for `make prepare`
-      ]
+      # Inferred build tools (autoreconfHook + bison/flex/perl/texinfo + the
+      # cross cc) come via inferredBuildInputs.  Here we add only the
+      # dev/run-only extras the packages don't need.  gnumake + awk +
+      # coreutils/sed/grep/tar/gzip come from stdenv (present in `nix develop`
+      # too), so they're not listed.
+      nativeBuildInputs =
+        inferredBuildInputs
       ++ (with pkgs; [
-        bison flex       # `make mig`: MIG's parser.y + lexxer.l
-        perl             # `make mach`: the MIG wrapper shells out to perl
-        texinfo          # `make mach`: kernel build runs makeinfo (mach.info)
+        gcc              # native compiler for in-tree `make mig` (host tool)
         git              # read-only ops + `git clean -fdX` for mrproper
         nix              # so the Makefile can re-dispatch into a different target shell
         qemu             # qemu-system-* (incl. qemu-img) for running the kernel

@@ -86,8 +86,15 @@
       # `nix develop .#x86_64` (or whichever) for a deliberate cross-target.
       devShells = forAllSystems (system:
         let
+          pkgsFor = self.packages.${system};
+          # Pass each target's own derivations so the dev shell infers its
+          # build tools from them (see mkDevShell) instead of re-listing.
           shells = nixpkgs.lib.mapAttrs
-            (name: target: crossToolchain.mkDevShell system name target)
+            (name: target: crossToolchain.mkDevShell system name target {
+              gnumach = pkgsFor."gnumach-${name}";
+              mig     = pkgsFor."mig-${name}";
+              headers = pkgsFor."gnumach-headers-${name}";
+            })
             targets;
         in
         shells // { default = shells.${crossToolchain.defaultTargetName system}; }
