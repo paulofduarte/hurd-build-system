@@ -14,10 +14,10 @@ name: Toolchain sanity check
 # byte drift in the kernel) so we can decide whether to chase it.
 #
 # Trigger model: only runs AFTER `Cache cross-toolchains` completes
-# successfully.  That workflow handles the path-based gating
-# (flake.nix / flake.lock / flakes/**/*.nix / its own file), so we
-# inherit "runs when the toolchain cache would" for free without
-# duplicating the path list.  Source-only changes never get here.
+# successfully.  That workflow does the path-based gating (flake.nix /
+# flake.lock / target-archs.nix / flakes/cross-toolchain / its own file),
+# so we inherit "runs when the toolchain cache would" without duplicating
+# the path list.
 #
 # Dist outputs are deliberately NOT pushed to cachix.  We do consume
 # the toolchain cache (extra-substituters) so the cross-toolchain
@@ -39,9 +39,9 @@ concurrency:
 jobs:
   build:
     # workflow_run fires on every completion regardless of status;
-    # gate on success so we don't try to build dist when the
-    # toolchain cache failed to populate.  workflow_dispatch is
-    # always allowed (manual override).
+    # gate on success so we don't try to build dist when the toolchain
+    # cache failed to populate.  workflow_dispatch is always allowed
+    # (manual override).
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'

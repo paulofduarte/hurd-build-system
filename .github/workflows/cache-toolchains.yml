@@ -2,9 +2,11 @@ name: Cache cross-toolchains
 
 # Populate hurd-build-system.cachix.org with per-target cross-toolchains
 # (mig-<arch>, gnumach-headers-<arch>, and the full dev-shell closure
-# for every target).  Triggered whenever something that could alter
-# the derivation hashes changes — flake.nix, flake.lock, the per-arch
-# .nix files under flakes/, or the workflow itself.
+# for every target).  Triggered only by changes that can alter the
+# *toolchain* derivation hashes — flake.nix, flake.lock, the target-arch
+# set, the cross-toolchain sub-flake, or this workflow.  Package-only
+# changes (a new sub-flake, kernel/mig source) do NOT retrigger it; the
+# sanity-check workflow handles those.
 #
 # Each runner builds its own native host's view of every target
 # (since cross-toolchain hashes differ across build hosts), and the
@@ -16,7 +18,8 @@ on:
     paths:
       - flake.nix
       - flake.lock
-      - flakes/**/*.nix
+      - target-archs.nix
+      - flakes/cross-toolchain/**/*.nix
       - .github/workflows/cache-toolchains.yml
   workflow_dispatch:
 
