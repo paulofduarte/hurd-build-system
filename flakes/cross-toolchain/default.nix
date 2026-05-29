@@ -5,7 +5,7 @@
 # everything else (gnumach-headers, mig, sidekick) works with the
 # host-side `legacyPackages.<system>` only.
 #
-# Returned API (`{ mkDevShell, mkCrossPkgs, defaultTargetName }`):
+# Returned API (`{ mkDevShell, mkCrossPkgs, mkToolchain, defaultTargetName }`):
 #
 #   mkDevShell : system -> name -> target -> derivation
 #       `system` is a host-side system identifier ("aarch64-darwin", …).
@@ -18,6 +18,13 @@
 #       Single source of truth for "import nixpkgs with the right cross
 #       config + the darwin overlays".  All sub-flakes consume it so the
 #       cross-pkgs construction (and its patches) is identical everywhere.
+#
+#   mkToolchain : system -> target -> derivation
+#       The cross-toolchain as a standalone, buildable derivation (the wrapped
+#       cross `cc`, with the patched binutils + newlib in its closure).  The
+#       single definition of "the toolchain" — exposed as
+#       `packages.<sys>.toolchain-<arch>` so the cache workflow + cache-hit
+#       planner reference that output rather than reaching into `stdenv.cc`.
 #
 #   defaultTargetName : system -> name
 #       Maps a host system to the project target whose ABI is closest to
@@ -94,6 +101,12 @@ let
       overlays = [ chunksizeOverlay ]
         ++ lib.optional (system == "x86_64-darwin") gnuConfigOverlay;
     };
+
+  # The cross-toolchain as a standalone derivation — the wrapped cross `cc`,
+  # whose closure is exactly our custom toolchain (gcc + the chunksize-patched
+  # binutils + newlib).  Single definition of "the toolchain"; callers use the
+  # `packages.<sys>.toolchain-<arch>` output rather than reaching into stdenv.
+  mkToolchain = system: target: (mkCrossPkgs system target).stdenv.cc;
 
   # `targetPkgs` is { gnumach, mig, headers } — this target's three nix
   # derivations, passed in from the root flake's devShells.
@@ -229,5 +242,5 @@ let
     else "aarch64";
 
 in {
-  inherit mkDevShell mkCrossPkgs defaultTargetName;
+  inherit mkDevShell mkCrossPkgs mkToolchain defaultTargetName;
 }

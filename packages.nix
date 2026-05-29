@@ -22,7 +22,8 @@
 { nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src }:
 
 let
-  inherit (crossToolchain) mkCrossPkgs;
+  inherit (nixpkgs) lib;
+  inherit (crossToolchain) mkCrossPkgs mkToolchain;
 in
 {
   packages = forAllSystems (system:
@@ -40,11 +41,20 @@ in
         srcInput = mig-src;
       };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
+
+      # The cross-toolchain per target as a first-class output:
+      # `packages.<system>.toolchain-<arch>`.  The cache workflow builds these
+      # and the cache-hit planner probes their store paths — one reference
+      # point for "the toolchain" (defined in flakes/cross-toolchain).
+      toolchains = lib.mapAttrs'
+        (name: target: lib.nameValuePair "toolchain-${name}" (mkToolchain system target))
+        targets;
     in
     gnumach
     // gnumachHeaders
     // mig
-    // sidekick);
+    // sidekick
+    // toolchains);
 
   apps = forAllSystems (system: import ./flakes/run {
     inherit nixpkgs system targets crossToolchain;
