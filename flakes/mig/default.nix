@@ -1,11 +1,8 @@
 # GNU MIG — per-target cross-compiler derivations.
 #
-# Replaces the previous Makefile dance:
-#     autoreconf -i  +  CC=gcc TARGET_CPPFLAGS=-I<headers> ./configure
-#                       --target=<migTarget> --prefix=<TOOLCHAIN>
-#                    +  make && make install
-# with one nix derivation per target whose output is the per-target MIG
-# binary and its companion migcom under $out/{bin,libexec}.
+# One nix derivation per target (autoreconf + configure + make +
+# make install) producing the per-target MIG binary and its companion
+# migcom under $out/{bin,libexec}.
 #
 # `doCheck = true` runs MIG's own `make check` (good/, bad/, generate-only/
 # subsuites — 12 tests on master/cross-test-cpp) inside the sandbox.
@@ -49,7 +46,7 @@ let
   # upstream bumps, the parser picks it up automatically.
   upstreamVersion = helpers.parseAcInitVersion ../../src/mig/configure.ac;
 
-  # 5-component PACKAGE_VERSION composed at eval time — fully pure.
+  # PACKAGE_VERSION composed at eval time — fully pure.
   fullVersion = helpers.composeVersion {
     inherit upstreamVersion srcInput self;
     submodulePath = "src/mig";
@@ -94,8 +91,8 @@ let
       CFLAGS = "-std=gnu17 -g -O2";
 
       # Splice the eval-time-composed version into AC_INIT before
-      # autoreconf.  ${fullVersion} is the 5-component string composed
-      # from upstream + submodule input metadata + .gitmodules + self.
+      # autoreconf.  ${fullVersion} is composed from upstream + submodule
+      # input metadata + .gitmodules + self.
       preConfigure = ''
         rm -f configure aclocal.m4
         sed -i.bak \

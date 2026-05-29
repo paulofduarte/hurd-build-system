@@ -64,8 +64,8 @@
       forAllSystems = f: nixpkgs.lib.genAttrs supportedSystems (system: f system);
 
       # Cross targets we know how to build for. Add an entry here to support
-      # a new target; cross-gcc, gnumach-headers, and mig all consume from
-      # this attrset.
+      # a new target; cross-toolchain, gnumach-headers, and mig all consume
+      # from this attrset.
       #
       #   crossSystem : nixpkgs cross-system identifier (drives the toolchain)
       #   migTarget   : the triple passed to MIG's --target= flag (CPU ABI;
@@ -101,10 +101,10 @@
         };
       };
 
-      # Cross-toolchain dev-shell builder.  See flakes/cross-gcc for the
-      # mkDevShell function, the x86_64-darwin config.sub overlay, and the
-      # host-system → default-target mapping.
-      crossGcc = import ./flakes/cross-gcc { inherit nixpkgs; };
+      # Cross-toolchain dev-shell builder.  See flakes/cross-toolchain for
+      # the mkDevShell function, the x86_64-darwin config.sub overlay, the
+      # gas-determinism patch, and the host-system → default-target mapping.
+      crossToolchain = import ./flakes/cross-toolchain { inherit nixpkgs; };
     in
     {
       # `default` picks the target whose CPU matches the host, so `nix develop`
@@ -113,10 +113,10 @@
       devShells = forAllSystems (system:
         let
           shells = nixpkgs.lib.mapAttrs
-            (name: target: crossGcc.mkDevShell system name target)
+            (name: target: crossToolchain.mkDevShell system name target)
             targets;
         in
-        shells // { default = shells.${crossGcc.defaultTargetName system}; }
+        shells // { default = shells.${crossToolchain.defaultTargetName system}; }
       );
 
       # Packages exposed for `nix build .#<name>`:
@@ -156,7 +156,7 @@
       apps = forAllSystems (system: import ./flakes/run {
         inherit (nixpkgs) lib;
         pkgs = nixpkgs.legacyPackages.${system};
-        inherit system targets crossGcc;
+        inherit system targets crossToolchain;
         packages = self.packages.${system};
       });
 
@@ -164,52 +164,51 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
 
-          # Shared lib for version composition + reproducibility attrs.
-          # See flakes/lib/default.nix for the full design.  Sub-flakes
-          # consume from here so the 5-component PACKAGE_VERSION format
-          # stays consistent across all derivations (gnumach, mig, and
-          # any future ones: hurd, glibc, …).
-          helpers = import ./flakes/lib { lib = nixpkgs.lib; };
-
           # Each sub-flake owns its per-target loop + source path
-          # (../../src/<repo>) and returns the full attrset.  Root just
-          # passes in the shared target spec and merges what comes back.
-          # `inputs.self.submodules = true` (top of file) is what makes
-          # the submodule content visible in the store.
-          # crossGcc.mkCrossPkgs is the single "import nixpkgs with
-          # cross + x86_64-darwin overlay" entry point — passed down
-          # so all three sub-flakes share the same cross-pkgs
-          # construction.  Without it, `nix build .#mig-<arch>` and
-          # `.#gnumach-headers-<arch>` would skip the overlay and
-          # fail on x86_64-darwin with the bundled-config.sub bug.
+          # (../../src/<repo>) and returns an attrset; root passes in the
+          # shared target spec and merges what comes back.
+          # `inputs.self.submodules = true` (top of file) is what makes the
+          # submodule content visible in the store.
           #
-          # `self` is passed down so sub-flakes can:
-          #   - derive their build-rev/build-date via the helpers
-          #   - call helpers.mkSubmoduleGitData self to obtain a
-          #     narrowed filesystem input containing just .gitmodules
-          #     + .git/modules/<path>/ (so unrelated outer-repo edits
-          #     don't invalidate per-target derivations)
-          gnumachHeaders = import ./flakes/gnumach-headers {
-            inherit pkgs system targets;
-            lib = nixpkgs.lib;
-            mkCrossPkgs = crossGcc.mkCrossPkgs;
-            srcInput = gnumach-src;
-          };
-          mig = import ./flakes/mig {
-            inherit pkgs system targets gnumachHeaders self helpers;
-            lib = nixpkgs.lib;
-            mkCrossPkgs = crossGcc.mkCrossPkgs;
-            srcInput = mig-src;
-          };
+          # `crossToolchain.mkCrossPkgs` is the single "import nixpkgs with
+          # cross + x86_64-darwin overlay + the gas-determinism patch" entry
+          # point, passed down so all sub-flakes share one cross-pkgs
+          # construction.  Without it, `nix build .#mig-<arch>` and
+          # `.#gnumach-headers-<arch>` would skip the overlay and fail on
+          # x86_64-darwin with the bundled-config.sub bug.
+          #
+          # `self` is passed down so sub-flakes derive their build-rev /
+          # build-date and read .gitmodules for the PACKAGE_VERSION string.
+          #
+          # `helpers` (flakes/lib) is the shared version + reproducibility
+          # library; sub-flakes consume it so PACKAGE_VERSION stays uniform
+          # across all derivations (gnumach, mig, and any future ones).
+          #
+          # Bindings are alphabetical; `let` is lazy, so order is cosmetic.
           gnumach = import ./flakes/gnumach {
             inherit pkgs system targets mig self helpers;
             lib = nixpkgs.lib;
-            mkCrossPkgs = crossGcc.mkCrossPkgs;
+            mkCrossPkgs = crossToolchain.mkCrossPkgs;
             srcInput = gnumach-src;
           };
+          gnumachHeaders = import ./flakes/gnumach-headers {
+            inherit pkgs system targets;
+            lib = nixpkgs.lib;
+            mkCrossPkgs = crossToolchain.mkCrossPkgs;
+            srcInput = gnumach-src;
+          };
+          helpers = import ./flakes/lib { lib = nixpkgs.lib; };
+          mig = import ./flakes/mig {
+            inherit pkgs system targets gnumachHeaders self helpers;
+            lib = nixpkgs.lib;
+            mkCrossPkgs = crossToolchain.mkCrossPkgs;
+            srcInput = mig-src;
+          };
+          sidekick = import ./flakes/sidekick { inherit pkgs; };
         in
-        {
-          sidekick = import ./flakes/sidekick/default.nix { inherit pkgs; };
-        } // gnumachHeaders // mig // gnumach);
+        gnumach
+        // gnumachHeaders
+        // mig
+        // sidekick);
     };
 }

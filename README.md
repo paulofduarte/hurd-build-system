@@ -250,7 +250,7 @@ fresh clones get only `origin`.
 | `cache-push` | push the current `$(ARCH)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(ARCH)/` (current target only) |
-| `mrproper` | `rm -rf work/`, the project-root install dir (`.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-gcc,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
+| `mrproper` | `rm -rf work/`, the project-root install dir (`.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-toolchain,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
 
 ### Invoking MIG directly
 
@@ -316,7 +316,7 @@ configure / makefiles can put on PATH.
 │   ├── mig/<target>/install/       # iterative MIG build (`make mig`)
 │   └── gnumach/<target>/           # iterative kernel build (`make mach`)
 ├── flakes/                         # nix sub-flakes (source-only)
-│   ├── cross-gcc/default.nix       # mkDevShell + x86_64-darwin config.sub overlay
+│   ├── cross-toolchain/default.nix # mkDevShell + x86_64-darwin config.sub overlay
 │   ├── gnumach-headers/default.nix # per-target headers derivation
 │   ├── gnumach-headers/result-*    # per-target gc-root symlinks (gitignored)
 │   ├── mig/default.nix             # per-target MIG derivation

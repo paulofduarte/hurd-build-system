@@ -1,13 +1,7 @@
 # GNU Mach kernel — per-target derivations.
 #
-# Replaces the previous Makefile dance:
-#     autoreconf -i  +  USER_MIG=<wrapper> ./configure
-#                       --host=<crossSystem> --prefix=<DIST>
-#                       [--enable-platform=<at|xen>]
-#                    +  make
-#                    +  make install
-# with one nix derivation per target whose output is the bootable
-# kernel image + companion install tree.
+# One nix derivation per target (autoreconf + configure + make +
+# make install) producing the bootable kernel image + install tree.
 #
 # Output layout:
 #   $out/boot/gnumach              bootable kernel — raw binary
@@ -64,9 +58,8 @@ let
   # upstream bumps the m4 file, the parser picks it up automatically.
   upstreamVersion = helpers.parseM4Version ../../src/gnumach/version.m4;
 
-  # 5-component PACKAGE_VERSION composed at eval time — fully pure.
-  # Format: <upstream>+<date>+<fork-id>+<src-hash>+build+<build-hash>.
-  # See flakes/lib/default.nix for the data-source breakdown.
+  # PACKAGE_VERSION composed at eval time — fully pure.
+  # See flakes/lib/default.nix (composeVersion) for the format.
   fullVersion = helpers.composeVersion {
     inherit upstreamVersion srcInput self;
     submodulePath = "src/gnumach";
@@ -86,12 +79,10 @@ let
       # binary's PACKAGE_VERSION — same string, traceable on both sides.
       version = fullVersion;
 
-      # Use the locked flake input rather than the path-relative
-      # `../../src/gnumach`.  The latter would happily vendor any
-      # uncommitted edits to the submodule worktree, making the
-      # built binary and the metadata-derived version string disagree
-      # (verified empirically — see commit history).  This way the
-      # built bytes always match what `srcInput.shortRev` claims.
+      # Use the locked flake input, not the path-relative
+      # `../../src/gnumach`: the latter would vendor uncommitted edits to
+      # the submodule worktree, so the built bytes could disagree with the
+      # version string's `srcInput.shortRev`.
       src = srcInput;
 
       # Native build tools (autoreconf + the MIG wrapper).  Cross-stdenv
@@ -108,27 +99,13 @@ let
         gawk
       ] ++ [ crossMig ];
 
-      # Same gnu17 pin as the dev shell — keeps nix-built and
-      # Makefile-driven kernels bit-identical when nothing else differs.
-      #
-      # `-fdebug-prefix-map` entries rewrite the host-specific
-      # cross-toolchain /nix/store paths embedded in DWARF (header
-      # file refs from <stdarg.h> etc., comp dirs, file tables) to
-      # stable names.  Without them the same source compiled by the
-      # "same" cross-gcc 14.3.0 on different hosts produces byte-
-      # different `.debug_info` sections, because the cross-gcc is
-      # bootstrapped from a host-specific native compiler and its
-      # store hash leaks into every translation unit.
-      #
-      # The map values (`/cross-gcc`, `/cross-cc-wrapper`, ...) are
-      # arbitrary; what matters is that they're the same strings on
-      # every host.  `${cc}`/`${cc.cc}`/`${cc.bintools}` resolve at
-      # derivation-eval time, so each host's specific hash gets
-      # normalized away.
-      #
-      # NB this leaves the debug info itself intact — just paths
-      # change.  Stripping is still avoided so dist/ stays useful
-      # for gdb / addr2line.
+      # gnu17 pin matches the dev shell.  The `-fdebug-prefix-map` entries
+      # rewrite the host-specific cross-toolchain /nix/store paths that leak
+      # into DWARF (header refs, comp dirs, file tables) to stable names, so
+      # the same source yields byte-identical `.debug_info` on every host.
+      # The map values are arbitrary — only their stability matters; `${cc}`
+      # etc. resolve at eval time, normalising each host's hash away.  Debug
+      # info is preserved (paths only), so dist/ stays usable for gdb.
       CFLAGS = lib.concatStringsSep " " [
         "-std=gnu17"
         "-g"
@@ -139,9 +116,8 @@ let
       ];
 
       # Splice the eval-time-composed version into version.m4 before
-      # autoreconf.  ${fullVersion} is the 5-component string composed
-      # from upstream-m4 + submodule input metadata + .gitmodules +
-      # self — all known at flake eval time.
+      # autoreconf.  ${fullVersion} is composed from upstream-m4 +
+      # submodule input metadata + .gitmodules + self.
       preConfigure = ''
         rm -f configure aclocal.m4
         sed -i.bak \

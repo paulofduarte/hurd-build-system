@@ -3,14 +3,13 @@
 #
 # Two responsibilities:
 #
-#   1. Compose a richly-versioned, byte-deterministic build.  Each binary
-#      ends up with PACKAGE_VERSION set to a 5-component string:
-#        <upstream>+<date>+<fork-id>+<src-hash>+build+<build-hash>
-#      …pinned `-frandom-seed`, and a normalised build dir in DWARF.
+#   1. Compose a rich, byte-deterministic PACKAGE_VERSION shaped after the
+#      Hurd `git describe` strings (see composeVersion + README), plus a
+#      pinned `-frandom-seed` and a normalised build dir in DWARF.
 #
 #   2. Keep the per-derivation .nix files small.  Sub-flakes import these
-#      helpers, compose a version string at flake-eval time, and feed it
-#      to a per-derivation `versionSedExpr` to splice it into autoconf.
+#      helpers, compose the version string at flake-eval time, and splice
+#      it into autoconf from their own preConfigure.
 #
 # Data sources for the version components (all read at flake eval, all
 # pure — no impure flag needed, no in-sandbox git):
@@ -108,8 +107,8 @@ rec {
   # URL → dotted-identifier short form
   # ==========================================================================
   #
-  # Parses common git hosting URLs into a dotted identifier string suitable
-  # for embedding in semver build metadata (Style B2):
+  # Parses common git hosting URLs into a dotted identifier string for the
+  # fork/remote section of the version (see composeVersion):
   #
   #   github URLs → "github.<owner>.<repo>[.<branch>]"
   #   gitlab URLs → "gitlab.<owner>.<repo>[.<branch>]"
@@ -152,56 +151,24 @@ rec {
   # Compose the full version string at flake eval (no shell needed)
   # ==========================================================================
 
-  # Returns PACKAGE_VERSION shaped after the GNU Hurd projects' own
-  # `git describe --tags` strings (what their commit-hooks publish, e.g.
-  # gnumach `v1.8+git20260224-59-g79f3013`, mig `v1.8+git20231217-14-gcb48044`):
+  # PACKAGE_VERSION shaped after the GNU Hurd `git describe --tags` strings
+  # (e.g. gnumach v1.8+git20260224-59-g79f3013):
   #
   #   v<upstream>+git<date>-g<src>+<short-url>+build.g<build>[-dirty]
   #
-  # Layout:
-  #   v<upstream>+git<date>-g<src>   describe-style core (`v` prefix + the
-  #                                  `+git<date>` dated-tag form + `-g<commit>`).
-  #   +<short-url>                   fork/remote section: <type>.<owner>.<repo>[.<branch>]
-  #   +build.g<build>                build-system section (this flake's rev).
+  # `-` stays inside the describe-style core; the fork and build sections are
+  # each `+`-fenced so branch-name dashes can't blur the boundaries.  Full
+  # format rationale (and why it is intentionally not semver) lives in the
+  # README "Versioning" section.
   #
-  # Delimiter grammar: `-` is the git-describe-native separator (kept inside
-  # the core); each appended metadata section is fenced by a `+`, which is
-  # unambiguous even though branch names carry dashes (e.g. aarch64-tests).
-  # Split on `+` -> 4 fields.  The `-dirty` suffix (from self.dirtyShortRev)
-  # lands in the trailing build section, so its dash is harmless.
+  # Caveat: pure eval can't run git, so <date> is the HEAD commit date (not a
+  # real tag) and there is no commit-count — describe-SHAPED, not a true tag.
+  # A dirty src/<repo> tree is invisible (inputs lock to the committed rev);
+  # only the build-system tree's dirtiness shows, as `-dirty` on +build.
   #
-  # NOT strict semver, deliberately: matching the upstream Hurd tag style
-  # breaks semver three ways at once — the `v` prefix, the two-component
-  # `1.8` (no PATCH), and multiple `+`.  PACKAGE_VERSION is a free-form
-  # string (a 512-byte kernel_version_t banner), not consumed by semver
-  # tooling, so this is fine — but it is a conscious departure from the
-  # earlier strict-semver "Style B2".
-  #
-  # Route-2 caveat (pure flake eval can't run git): <date> is the HEAD
-  # commit's date (srcInput.lastModifiedDate), not a real tag's date, and
-  # there is no commit-count — so the string is describe-SHAPED but won't
-  # always equal a true upstream tag (real describe here is
-  # v1.8+git20260224-59-g79f3013, note the -59-).  Tags + counts need git
-  # history the locked input doesn't carry; revCount is the total (3101),
-  # not commits-since-tag.
-  #
-  # Example clean:
-  #   v1.8+git20260523-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.ga16f9a6
-  # Example build-system dirty:
-  #   v1.8+git20260523-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.ga16f9a6-dirty
-  #
-  # NB: src-tree dirty is NOT detected.  Flake inputs lock to the
-  # committed rev; uncommitted edits in src/<repo> aren't visible to
-  # pure flake eval.  See flake.nix for the design discussion.
-  #
-  # Args (all eval-time):
-  #   upstreamVersion : "1.8" etc.  Use `parseM4Version` or
-  #                     `parseAcInitVersion` to extract.
-  #   srcInput        : parallel flake input (e.g. inputs.gnumach-src)
-  #                     pointing at the submodule.  Provides .shortRev
-  #                     and .lastModifiedDate.
-  #   submodulePath   : .gitmodules key (e.g. "src/gnumach").
-  #   self            : the flake's `self`, for build-rev.
+  # Args (eval-time): upstreamVersion (parseM4Version/parseAcInitVersion),
+  # srcInput (submodule flake input → .shortRev + .lastModifiedDate),
+  # submodulePath (.gitmodules key), self (build-rev + .gitmodules read).
   composeVersion = {
     upstreamVersion,
     srcInput,
@@ -228,32 +195,14 @@ rec {
   # is autoconf-flavor-specific).  Compose the version string at eval
   # time via `composeVersion` and splice it into the caller's sed.
   mkReproAttrs = { pname, version }: {
-    # Pin -frandom-seed via nixpkgs' reproducible-builds.sh hook, which
-    # exports `-frandom-seed=<first 10 chars of
-    # ${NIX_OUTPATH_USED_AS_RANDOM_SEED:-$out}>`.  We MUST override the
-    # hook's `$out` default: for a cross-compiled derivation `$out` is a
-    # store-path hash that differs per build host, so it would make the
-    # seed host-specific and break cross-host reproducibility.
-    #
-    # Seed = sha256 of `${pname}-${version}`, so the (10-char-truncated)
-    # seed is:
-    #   * host-independent — pname + version contain no host / no $out;
-    #   * unique per target — pname (gnumach-i686-gnu vs gnumach-x86_64-gnu);
-    #   * varies per build  — version embeds the src + build revs.
-    # The hash is load-bearing: the hook keeps only the first 10 chars, so
-    # a readable `${pname}-${version}` string would be truncated to its
-    # pname prefix — dropping the version and collapsing every rev (and
-    # the -xen variants) to one seed.  Hashing first packs all three
-    # properties into those 10 chars.
-    #
-    # Emit the digest in nix's own base32 ("nix32") — the same encoding
-    # nix uses for store-path hashes (alphabet 0-9a-z minus e/o/u/t, no
-    # symbols).  Being alphanumeric by construction it carries no `/` to
-    # collide with the hook's `${randSeed##*/}` truncation, so it needs no
-    # post-processing.  At 5 bits/char, ~50 bits survive the 10-char trim
-    # (vs 40 for hex) — far more than enough to keep our handful of
-    # derivations distinct; a collision would merely share a seed, which
-    # is harmless.
+    # -frandom-seed comes from nixpkgs' reproducible-builds.sh hook, as the
+    # first 10 chars of ${NIX_OUTPATH_USED_AS_RANDOM_SEED:-$out}.  Override the
+    # $out default: for a cross derivation $out is host-specific, which would
+    # make the seed host-specific and break cross-host reproducibility.
+    # Hashing `${pname}-${version}` keeps the 10-char-trimmed seed
+    # host-independent yet distinct per target+build (a readable prefix would
+    # be truncated to just the pname).  nix32 (nix's store-hash alphabet, no
+    # symbols) avoids a `/` clashing with the hook's `${randSeed##*/}` trim.
     NIX_OUTPATH_USED_AS_RANDOM_SEED =
       "/" + builtins.convertHash {
         hash = builtins.hashString "sha256" "${pname}-${version}";

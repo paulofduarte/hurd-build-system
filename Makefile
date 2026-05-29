@@ -79,7 +79,7 @@ SCENARIO ?= boot
 #                         release with no /nix/store runtime deps for
 #                         the kernel + headers).
 #
-# FLAKES is source-only (the nix sub-flakes for cross-gcc,
+# FLAKES is source-only (the nix sub-flakes for cross-toolchain,
 # gnumach-headers, mig, gnumach, sidekick).  SIDEKICK holds the
 # x86_64 helper-VM artefacts at the repo root, gitignored.
 PROJ          := $(CURDIR)
@@ -200,7 +200,7 @@ clean-dist:
 # mrproper still nukes work/ wholesale — that's a deeper reset and we
 # expect users to invoke it when they want a clean slate including
 # configure state.  flakes/ holds tracked source files
-# (flakes/{cross-gcc,gnumach-headers,mig,gnumach,sidekick}/), so we
+# (flakes/{cross-toolchain,gnumach-headers,mig,gnumach,sidekick}/), so we
 # can't `rm -rf` it; instead, scrub only the gitignored bits inside
 # (result-* gc-roots) and drop the project-root install directory
 # ($(SIDEKICK)) wholesale.
@@ -620,7 +620,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool — it runs on the build host and
 	@# emits portable .c/.h.  The dev-shell's $CC is the cross
-	@# compiler (cross-gcc/default.nix shellHook pins it to the
+	@# compiler (cross-toolchain/default.nix shellHook pins it to the
 	@# kernel-side toolchain), which would fail configure's "can
 	@# create executables" test on the host.  Override to the native
 	@# gcc that the dev shell also provides via pkgs.gcc; keep

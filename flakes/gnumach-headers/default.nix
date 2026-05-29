@@ -1,10 +1,8 @@
 # GNU Mach public headers — per-target derivations.
 #
-# Replaces the previous Makefile dance:
-#     autoreconf -i  +  ./configure --host=<crossSystem> --prefix=<DIST>
-#                    +  make install-data
-# with one nix derivation per target whose output ($out/include/...) is
-# what downstream consumers (MIG cpu.sym, the kernel build itself) include.
+# One nix derivation per target (autoreconf + configure + make
+# install-data) whose output ($out/include/...) is what downstream
+# consumers (MIG cpu.sym, the kernel build itself) include.
 #
 # Output layout (whatever gnumach's `make install-data` produces, which
 # at minimum is):

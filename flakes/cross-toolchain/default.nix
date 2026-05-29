@@ -16,11 +16,8 @@
 #
 #   mkCrossPkgs : system -> target -> pkgs
 #       Single source of truth for "import nixpkgs with the right cross
-#       config + every darwin overlay applied".  All sub-flakes consume
-#       this so they share one cross-pkgs construction — without it,
-#       only the cross-gcc dev shell got the overlays and standalone
-#       `nix build .#{mig,gnumach-headers,gnumach}-<arch>` on darwin
-#       would fall back to the un-patched cross-toolchain.
+#       config + the darwin overlays".  All sub-flakes consume it so the
+#       cross-pkgs construction (and its patches) is identical everywhere.
 #
 #   defaultTargetName : system -> name
 #       Maps a host system to the project target whose ABI is closest to
@@ -43,30 +40,16 @@ let
       gccAttr   = "gcc${lib.versions.major probePkgs.gcc.version}";
 
       # x86_64-darwin's stdenv is the only one missing
-      # `updateAutotoolsGnuConfigScriptsHook` from defaultNativeBuildInputs
-      # (verified on master + nixos-unstable as of 2026-05-27 — and 26.05
-      # is the last nixpkgs release to support x86_64-darwin, so this
-      # won't be fixed upstream).  Without that hook, the affected
-      # derivations' own bundled 2021-vintage config.sub stays in the
-      # source tree, and it rejects the cross triples
-      # `{aarch64,x86_64,i686}-unknown-none-elf` with "Kernel `none' not
-      # known to work with OS `elf'" — the Aug-2023 gnu-config patch that
-      # added that case is only in nixpkgs' replacement config.sub
-      # (`gnu-config-2024-01-01`), not in the bundled ones.
-      #
-      # Three derivations in the cross-toolchain bootstrap need the hook
-      # added explicitly:
-      #
-      #   ${gccAttr}           — final cross-GCC.
-      #   gccWithoutTargetLibc — stage-1 GCC, used to compile newlib.
-      #   newlib               — the bare-metal libc; cross-GCC builds
-      #                          depend on it.
-      #
-      # The two GCCs are wrapped-CC derivations: re-route via the
-      # wrapper's `.override { cc = ... }` so the wrap-time args
-      # (`bintools`, `libc`, `withoutTargetLibc`) stay intact.  newlib
-      # is a plain derivation, so `.overrideAttrs` adds the hook to its
-      # nativeBuildInputs directly.
+      # `updateAutotoolsGnuConfigScriptsHook` (26.05 is the last nixpkgs
+      # release to support x86_64-darwin, so it won't be fixed upstream).
+      # Without the hook, the affected derivations keep their bundled
+      # 2021-vintage config.sub, which rejects `*-unknown-none-elf` with
+      # "Kernel `none' not known to work with OS `elf'" (fixed only in
+      # nixpkgs' replacement config.sub).  Add the hook to the three
+      # bootstrap derivations that need it: the final cross-GCC
+      # (${gccAttr}), the stage-1 gccWithoutTargetLibc, and newlib.  The
+      # GCCs are wrapped — re-route via `.override { cc = …; }` so the
+      # wrap-time args survive; newlib is plain, so `.overrideAttrs`.
       gnuConfigOverlay = final: prev:
         let
           hook = prev.buildPackages.updateAutotoolsGnuConfigScriptsHook;
@@ -82,41 +65,19 @@ let
           newlib               = addHookAttrs prev.newlib;
         };
 
-      # Import the cross package set.  The only overlay here is the
-      # x86_64-darwin config.sub hook fix; the gas reproducibility patch
-      # is applied as a scoped derivation override below — deliberately
-      # NOT a global overlay (see crossCC).
-      # gas leaves its obstack chunk size at 0, which makes the obstack
-      # library pick an implementation-defined default (`4096 - extra`,
-      # where `extra` differs between glibc's and libiberty's obstack).
-      # That makes `frag_grow`'s chunk-exhaustion split points depend on
-      # which libc gas was built against, which perturbs the `.debug_line`
-      # program (DW_LNE_set_address vs a relative advance) for identical
-      # input — so the SAME kernel source produced byte-different `.o` on
-      # a darwin-host cross-as vs a linux-host one.  The patch pins
-      # chunksize to a fixed value so split points are host-independent.
-      # See .claude/docs/debug-line-cross-host-determinism.md for the full
-      # root-cause writeup.
+      # gas left at chunksize=0 takes the obstack library's *default* chunk
+      # size, which differs between glibc's and libiberty's obstack.  That
+      # shifts frag_grow's chunk-exhaustion split points, flipping the
+      # `.debug_line` encoding (DW_LNE_set_address vs a relative advance) for
+      # identical input — so the same source assembled to byte-different `.o`
+      # across build hosts.  This patch pins chunksize.
       #
-      # Apply as a CROSS-SCOPED overlay.  The guard
-      # `hostPlatform.config != targetPlatform.config` matches only the
-      # binutils instances that *target* the cross arch (the host->target
-      # `as`), never the native build==host==target binutils.  This is
-      # load-bearing in two ways:
-      #
-      #   1. It rebuilds the cross-gcc against the patched `as`, so the
-      #      bundled libgcc (linked into every kernel) is itself assembled
-      #      with the deterministic `as`.  A post-hoc rewrap of only the
-      #      kernel compiler leaves libgcc vanilla-assembled, and that
-      #      libgcc alone reintroduces the cross-host `.debug_line` drift.
-      #   2. The native host binutils/gcc/glibc are NOT touched (they are a
-      #      different derivation — aarch64->aarch64, not aarch64->i686 —
-      #      and nothing native depends on the cross toolchain).  Verified
-      #      via dry-run: only `i686-*` (cross) derivations rebuild; no
-      #      native cascade.  A global (unguarded) overlay would clobber
-      #      the native binutils and trigger a full native rebuild on Linux.
-      #
-      # Applied on every host so all emit the same canonical encoding.
+      # Scoped via `hostPlatform.config != targetPlatform.config` so it
+      # patches only the cross-targeting binutils.  That also rebuilds the
+      # cross-gcc against the patched `as`, making its bundled libgcc (linked
+      # into every kernel) deterministic too — while leaving the native
+      # toolchain untouched (a global overlay would cascade a native rebuild
+      # on Linux).
       chunksizeOverlay = final: prev:
         lib.optionalAttrs
           (prev.stdenv.hostPlatform.config != prev.stdenv.targetPlatform.config)

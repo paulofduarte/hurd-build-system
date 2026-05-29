@@ -37,7 +37,9 @@ let
   # Build-host tools used during runCommand.  Available on any platform.
   hostTools = with pkgs; [ gnutar gzip cpio findutils ];
 
-in runCommand "sidekick-vm" {
+in
+{
+  sidekick = runCommand "sidekick-vm" {
   nativeBuildInputs = hostTools;
   passthru = { inherit fetchedApks; };
   meta = with lib; {
@@ -113,4 +115,5 @@ in runCommand "sidekick-vm" {
   # Report sizes — useful when iterating on what to include.
   echo "sidekick: vmlinuz=$(stat -c%s "$out/vmlinuz" 2>/dev/null || stat -f%z "$out/vmlinuz") bytes" >&2
   echo "sidekick: initramfs.cpio.gz=$(stat -c%s "$out/initramfs.cpio.gz" 2>/dev/null || stat -f%z "$out/initramfs.cpio.gz") bytes" >&2
-''
+  '';
+}

@@ -3,7 +3,7 @@
 # Returned API: an attrset suitable for `flake.apps.<system>`:
 #
 #   default       → boot scenario for the host's best-matching cross
-#                    arch (via crossGcc.defaultTargetName)
+#                    arch (via crossToolchain.defaultTargetName)
 #   aarch64       → boot scenario for aarch64
 #   i686          → boot scenario for i686
 #   x86_64        → boot scenario for x86_64
@@ -31,7 +31,7 @@
 #   --help, -h      usage
 #   -- ARGS         everything after `--` passes through to qemu
 
-{ pkgs, lib, system, targets, packages, crossGcc }:
+{ pkgs, lib, system, targets, packages, crossToolchain }:
 
 let
   # Which arches we expose as `nix run` targets.  Xen variants don't
@@ -150,8 +150,8 @@ let
 
   # `nix run .` picks the arch closest to the host CPU.  Hosts whose
   # CPU doesn't match any of our supported arches fall through to
-  # aarch64 (per crossGcc.defaultTargetName), which won't accel on
+  # aarch64 (per crossToolchain.defaultTargetName), which won't accel on
   # x86 hosts but will still boot under TCG.
-  defaultArch = crossGcc.defaultTargetName system;
+  defaultArch = crossToolchain.defaultTargetName system;
 in
 apps' // { default = apps'.${defaultArch} or apps'.aarch64; }
