@@ -409,6 +409,58 @@ GitHub secrets as `CACHIX_AUTH_TOKEN` (from
 Trigger manually via the Actions tab → "Cache cross-toolchains" →
 "Run workflow" if you want to refresh without a flake change.
 
+### Versioning
+
+Each built artefact gets a rich `PACKAGE_VERSION` (gnumach's `version[]`
+banner — what `host_get_kernel_version` returns — and MIG's `--version`),
+composed at flake-eval time in `flakes/lib/default.nix` (`composeVersion`).
+It is shaped after the GNU Hurd projects' own `git describe --tags`
+strings (the form their commit-hooks publish, e.g. gnumach
+`v1.8+git20260224-59-g79f3013`):
+
+```
+v1.8+git20260224-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.gec67ddf
+└──── describe-style core ────┘└────────── fork / remote ─────────┘└── build ───┘
+```
+
+| field | meaning | source |
+|-------|---------|--------|
+| `v1.8` | upstream version, `v`-prefixed like the upstream tags | `version.m4` / `configure.ac` |
+| `+git<date>` | snapshot date (`YYYYMMDD`) | submodule HEAD commit date |
+| `-g<src>` | abbreviated submodule commit | submodule HEAD |
+| `+<host>.<owner>.<repo>.<branch>` | where the source came from | `.gitmodules` |
+| `+build.g<rev>` | this build-system repo's commit (`-dirty` if its tree is dirty) | flake `self` |
+
+**Delimiter grammar.** `-` is the git-describe-native separator and stays
+inside the core; every appended metadata section is fenced by a `+`, which
+is unambiguous even though branch names carry dashes (`aarch64-tests`).
+Split on `+` → four fields.
+
+**Reproducibility.** Every field is host-independent (submodule metadata,
+`.gitmodules`, the build-repo rev — nothing derived from the build host or
+the Nix `$out`), so the same commit produces the same version on every
+build host. This string also seeds `-frandom-seed` (a `nix32` hash of
+`<pname>-<version>`), which is part of why the kernels are byte-identical
+across build hosts (see `.github/workflows` sanity check).
+
+**Not strict semver — deliberately.** Matching the upstream Hurd tag style
+breaks semver on three counts (the `v` prefix, the two-component `1.8`, and
+multiple `+`). `PACKAGE_VERSION` is a free-form string (a 512-byte
+`kernel_version_t`), not consumed by semver tooling, so this is fine.
+
+**Caveats.** Because flake eval can't run `git`, the date is the HEAD
+*commit* date (not a real tag's date) and there is no commit-count — so the
+string is describe-*shaped* but won't always equal a true upstream tag
+(real describe would be `v1.8+git20260224-59-g79f3013`, note the `-59-`).
+A `src/<repo>` working tree that is dirty is **not** reflected (flake
+inputs lock to the committed rev); only the build-system repo's dirtiness
+shows, as a `-dirty` suffix on the `+build.` field. Release builds should
+be clean — given a clean `+build.<rev>`, `flake.lock` pins the entire
+toolchain (gcc, binutils + patches, libc), so the compiler version is
+already determined by that rev and is additionally recorded verbatim in the
+kernel's DWARF (`readelf -p .debug_str gnumach | grep 'GNU C'`); it is
+intentionally **not** duplicated into the version string.
+
 ### Provisioning a Linux VM via cloud-init
 
 `cloud-init.yaml` at the project root is a self-contained

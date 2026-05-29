@@ -152,20 +152,43 @@ rec {
   # Compose the full version string at flake eval (no shell needed)
   # ==========================================================================
 
-  # Returns the PACKAGE_VERSION as a plain string in Style B2:
+  # Returns PACKAGE_VERSION shaped after the GNU Hurd projects' own
+  # `git describe --tags` strings (what their commit-hooks publish, e.g.
+  # gnumach `v1.8+git20260224-59-g79f3013`, mig `v1.8+git20231217-14-gcb48044`):
   #
-  #   <upstream>+<date>.<short-url>.g<src>.build.g<build>[-dirty]
+  #   v<upstream>+git<date>-g<src>+<short-url>+build.g<build>[-dirty]
   #
-  # where `<short-url>` is `<type>.<owner>.<repo>[.<branch>]` (see
-  # `shortUrl`).  Every `.` is an identifier boundary; every `-` is
-  # inside a single identifier.  Strict semver-compliant.
+  # Layout:
+  #   v<upstream>+git<date>-g<src>   describe-style core (`v` prefix + the
+  #                                  `+git<date>` dated-tag form + `-g<commit>`).
+  #   +<short-url>                   fork/remote section: <type>.<owner>.<repo>[.<branch>]
+  #   +build.g<build>                build-system section (this flake's rev).
+  #
+  # Delimiter grammar: `-` is the git-describe-native separator (kept inside
+  # the core); each appended metadata section is fenced by a `+`, which is
+  # unambiguous even though branch names carry dashes (e.g. aarch64-tests).
+  # Split on `+` -> 4 fields.  The `-dirty` suffix (from self.dirtyShortRev)
+  # lands in the trailing build section, so its dash is harmless.
+  #
+  # NOT strict semver, deliberately: matching the upstream Hurd tag style
+  # breaks semver three ways at once — the `v` prefix, the two-component
+  # `1.8` (no PATCH), and multiple `+`.  PACKAGE_VERSION is a free-form
+  # string (a 512-byte kernel_version_t banner), not consumed by semver
+  # tooling, so this is fine — but it is a conscious departure from the
+  # earlier strict-semver "Style B2".
+  #
+  # Route-2 caveat (pure flake eval can't run git): <date> is the HEAD
+  # commit's date (srcInput.lastModifiedDate), not a real tag's date, and
+  # there is no commit-count — so the string is describe-SHAPED but won't
+  # always equal a true upstream tag (real describe here is
+  # v1.8+git20260224-59-g79f3013, note the -59-).  Tags + counts need git
+  # history the locked input doesn't carry; revCount is the total (3101),
+  # not commits-since-tag.
   #
   # Example clean:
-  #   1.8+20260523.github.paulofduarte.gnumach.aarch64-tests.g79f3013.build.ga16f9a6
-  #
-  # Example with build-system dirty (the `-dirty` suffix comes from
-  # `self.dirtyShortRev` automatically):
-  #   1.8+20260523.github.paulofduarte.gnumach.aarch64-tests.g79f3013.build.ga16f9a6-dirty
+  #   v1.8+git20260523-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.ga16f9a6
+  # Example build-system dirty:
+  #   v1.8+git20260523-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.ga16f9a6-dirty
   #
   # NB: src-tree dirty is NOT detected.  Flake inputs lock to the
   # committed rev; uncommitted edits in src/<repo> aren't visible to
@@ -194,7 +217,7 @@ rec {
       short  = shortUrl { inherit url branch; };
       buildShort = buildRev self;
     in
-    "${upstreamVersion}+${srcDate}.${short}.g${srcShort}.build.g${buildShort}";
+    "v${upstreamVersion}+git${srcDate}-g${srcShort}+${short}+build.g${buildShort}";
 
   # ==========================================================================
   # Derivation-attrs bundle
