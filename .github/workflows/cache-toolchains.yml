@@ -1,16 +1,21 @@
 name: Cache cross-toolchains
 
-# Populate hurd-build-system.cachix.org with per-target cross-toolchains
-# (mig-<arch>, gnumach-headers-<arch>, and the full dev-shell closure
-# for every target).  Triggered only by changes that can alter the
-# *toolchain* derivation hashes — flake.nix, flake.lock, the target-arch
-# set, the cross-toolchain sub-flake, or this workflow.  Package-only
-# changes (a new sub-flake, kernel/mig source) do NOT retrigger it; the
-# sanity-check workflow handles those.
+# Populate hurd-build-system.cachix.org with the per-target cross-toolchain:
+# realising each target's dev-shell closure (cross binutils/gcc/newlib + the
+# host build tools) is enough to cache the expensive-to-bootstrap toolchain.
+# We deliberately do NOT build mig / gnumach-headers / the kernel here — those
+# are project artefacts built FROM the toolchain (cheap once it's cached), and
+# they'd go stale anyway since their source changes don't trigger this
+# workflow.  The sanity-check workflow builds them.
 #
-# Each runner builds its own native host's view of every target
-# (since cross-toolchain hashes differ across build hosts), and the
-# cachix-action's post-build hook uploads anything new as it's built.
+# Triggered only by changes that can alter the *toolchain* derivation hashes
+# — flake.nix, flake.lock, the target-arch set, the cross-toolchain sub-flake,
+# or this workflow.  Package-only changes (a new sub-flake, kernel/mig source)
+# do NOT retrigger it; the sanity-check workflow handles those.
+#
+# Each runner builds its own native host's view of every target (cross-
+# toolchain hashes differ across build hosts), and the cachix-action's
+# post-build hook uploads anything new as it's built.
 
 on:
   push:
@@ -102,21 +107,10 @@ jobs:
           set -euo pipefail
           for target in $TARGETS; do
             echo "::group::dev-shell for .#${target}"
-            # `nix develop -i` realises the full closure of the dev
-            # shell, including the cross-toolchain.  The post-build
-            # hook configured by cachix-action pushes new paths as
-            # they're built.
+            # `nix develop -i` realises the dev shell's closure — the cross
+            # toolchain + host build tools, but NOT mig/headers/kernel (the
+            # shell infers its inputs from the packages minus our own builds).
+            # cachix-action's post-build hook pushes new paths as they build.
             nix develop -i ".#${target}" --command true
-            echo "::endgroup::"
-          done
-
-      - name: Build per-target mig + gnumach-headers
-        run: |
-          set -euo pipefail
-          for target in $TARGETS; do
-            echo "::group::packages for ${target}"
-            nix build --no-link \
-              ".#mig-${target}" \
-              ".#gnumach-headers-${target}"
             echo "::endgroup::"
           done
