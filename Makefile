@@ -45,11 +45,16 @@ NIX_FLAKE := $(NIX) --extra-experimental-features 'nix-command flakes'
 # ARCH resolution: env > cmdline > host CPU default.
 ifndef ARCH
 _HOST_CPU := $(shell uname -m)
-ARCH := \
+# $(strip) is load-bearing: the indented `$(if …)` continuation lines leave
+# a leading space on the else-branch results (" x86_64" on x86_64 hosts,
+# "  i686" on i686), which would corrupt ARCH and every `.#$(ARCH)` flake
+# selector / path derived from it.  aarch64 takes the first branch, so the
+# bug only shows on x86/i686 hosts.
+ARCH := $(strip \
   $(if $(filter arm64 aarch64,$(_HOST_CPU)),aarch64, \
   $(if $(filter x86_64,$(_HOST_CPU)),x86_64, \
   $(if $(filter i386 i486 i586 i686,$(_HOST_CPU)),i686, \
-  aarch64)))
+  aarch64))))
 endif
 
 # Default MIG_TARGET / MIG binary name when invoked outside the dev shell
@@ -239,12 +244,14 @@ $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
 # ---- cache-push (always-on, arch-independent) ----
 # Push the current ARCH's dev-shell closure to the project's cachix cache.
-# Walks the closure explicitly (`nix path-info --recursive`) so it pushes
-# toolchains already in the store from earlier builds, not just paths built
-# by this command.  Single-target by design (pushes $(ARCH); use ARCH=… for
-# others) to avoid triggering a cross-arch toolchain build you didn't ask
-# for.  Requires `cachix authtoken <token>` once per host (push
-# authenticated, pull anonymous).  Runs at top level — no dev-shell dispatch.
+# We push the closure of the dev shell's `inputDerivation` — its output's
+# references ARE all the shell's build inputs (the cross-toolchain etc.).
+# A dev shell's own `.outPath` is never realised, so walking *that* closure
+# pushes nothing; the inputDerivation is the buildable stand-in.  Single-
+# target by design (pushes $(ARCH); use ARCH=… for others) to avoid building
+# a cross-arch toolchain you didn't ask for.  Requires `cachix authtoken
+# <token>` once per host (push authenticated, pull anonymous).  Runs at top
+# level — no dev-shell dispatch.
 _CACHE_NAME := hurd-build-system
 
 .PHONY: cache-push
@@ -253,15 +260,12 @@ cache-push:
 	  { echo "cache-push: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
 	echo "==> Pushing dev-shell closure for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
-	shell=$$($(NIX) --accept-flake-config eval --raw \
-	  ".#devShells.$$system.$(ARCH).outPath" 2>/dev/null) || \
-	  { echo "    eval failed (is ARCH=$(ARCH) a valid flake output?)" >&2; exit 1; }; \
 	echo "  realising closure"; \
-	$(NIX) --accept-flake-config build --no-link \
-	  ".#devShells.$$system.$(ARCH).inputDerivation" >/dev/null 2>&1 || \
-	  { echo "    build failed" >&2; exit 1; }; \
+	out=$$($(NIX) --accept-flake-config build --no-link --print-out-paths \
+	  ".#devShells.$$system.$(ARCH).inputDerivation" 2>/dev/null) || \
+	  { echo "    build failed (is ARCH=$(ARCH) a valid flake output?)" >&2; exit 1; }; \
 	echo "  pushing"; \
-	$(NIX) --accept-flake-config path-info --recursive "$$shell" 2>/dev/null \
+	$(NIX) --accept-flake-config path-info --recursive "$$out" \
 	  | cachix push $(_CACHE_NAME)
 	@echo "==> cache-push done"
 
