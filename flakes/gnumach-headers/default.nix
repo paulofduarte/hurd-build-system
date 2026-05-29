@@ -36,9 +36,12 @@
 #     never invoked during install-data; point it at /bin/true so the
 #     check passes without dragging MIG into this derivation's inputs.
 
-{ pkgs, lib, system, targets, mkCrossPkgs, srcInput }:
+{ nixpkgs, system, targets, mkCrossPkgs, srcInput }:
 
 let
+  pkgs = nixpkgs.legacyPackages.${system};
+  lib = nixpkgs.lib;
+
   mkOne = name: target:
     let
       crossPkgs = mkCrossPkgs system target;
@@ -55,27 +58,18 @@ let
 
       # Native build tools for autoreconf + configure.  Cross-stdenv's cc
       # already provides the target compiler that configure's checks need.
-      nativeBuildInputs = with pkgs; [
-        autoconf
-        automake
-        gnum4
-        perl
-        bison
-        flex
-        texinfo
-      ];
+      # autoreconfHook supplies autoconf/automake/libtool/m4 and runs
+      # autoreconf.  texinfo: `make install-data` builds doc/mach.info
+      # (makeinfo).  No bison/flex/perl — install-data compiles nothing and
+      # stubs MIG; awk comes from stdenv.
+      nativeBuildInputs = [ pkgs.autoreconfHook pkgs.texinfo ];
 
       # GCC 15+ defaults to C23; matches the dev shell's pin.
       CFLAGS = "-std=gnu17 -g -O2";
 
-      # autoreconf in-place inside the nix-build sandbox.  Don't carry any
-      # pre-generated configure from the working copy — start clean each
-      # time so a branch switch can't poison the build.
+      # USER_MIG is read by gnumach's tests/configfrag.ac via AC_CHECK_PROG.
+      # install-data never invokes the binary, so a stub satisfies the check.
       preConfigure = ''
-        rm -f configure aclocal.m4
-        autoreconf -i
-        # USER_MIG is read by gnumach's tests/configfrag.ac via AC_CHECK_PROG.
-        # install-data never invokes the binary, so a stub satisfies the check.
         export USER_MIG=/bin/true
       '';
 

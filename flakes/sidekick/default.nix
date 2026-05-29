@@ -15,9 +15,10 @@
 # The VM dispatches on SIDEKICK_OP=<extract|mkiso> in the kernel
 # cmdline.  See flakes/sidekick/init.sh.
 
-{ pkgs }:
+{ nixpkgs, system }:
 
 let
+  pkgs = nixpkgs.legacyPackages.${system};
   inherit (pkgs) lib runCommand fetchurl writeText;
 
   spec = import ./packages.nix;

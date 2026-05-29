@@ -51,9 +51,13 @@
 # qemu, neither of which the sandbox provides.  Until then, kernel
 # tests stay under the parent Makefile's `check-mach` target.
 
-{ pkgs, lib, system, targets, mig, mkCrossPkgs, self, helpers, srcInput }:
+{ nixpkgs, system, targets, mig, mkCrossPkgs, self, srcInput }:
 
 let
+  pkgs = nixpkgs.legacyPackages.${system};
+  lib = nixpkgs.lib;
+  helpers = import ../lib { inherit lib; };
+
   # Upstream version parsed from version.m4 (AC_PACKAGE_VERSION).  If
   # upstream bumps the m4 file, the parser picks it up automatically.
   upstreamVersion = helpers.parseM4Version ../../src/gnumach/version.m4;
@@ -88,16 +92,14 @@ let
       # Native build tools (autoreconf + the MIG wrapper).  Cross-stdenv
       # already supplies the target compiler + binutils that the kernel
       # build needs for compile + link.
-      nativeBuildInputs = with pkgs; [
-        autoconf
-        automake
-        gnum4
-        perl
-        bison
-        flex
-        texinfo
-        gawk
-      ] ++ [ crossMig ];
+      # autoreconfHook supplies autoconf/automake/libtool/m4 + runs autoreconf.
+      # texinfo: the kernel build runs makeinfo (mach.info).  perl: the MIG
+      # wrapper shells out to perl when generating stubs.  awk comes from
+      # stdenv.  crossMig: the matching cross-MIG for this target.
+      nativeBuildInputs =
+        [ pkgs.autoreconfHook ]
+        ++ (with pkgs; [ texinfo perl ])
+        ++ [ crossMig ];
 
       # gnu17 pin matches the dev shell.  The `-fdebug-prefix-map` entries
       # rewrite the host-specific cross-toolchain /nix/store paths that leak
@@ -115,17 +117,15 @@ let
         "-fdebug-prefix-map=${cc.bintools}=/cross-binutils-wrapper"
       ];
 
-      # Splice the eval-time-composed version into version.m4 before
-      # autoreconf.  ${fullVersion} is composed from upstream-m4 +
-      # submodule input metadata + .gitmodules + self.
-      preConfigure = ''
-        rm -f configure aclocal.m4
+      # Splice the eval-time-composed version into version.m4 before the
+      # autoreconfHook regenerates configure.  ${fullVersion} is composed
+      # from upstream-m4 + submodule input metadata + .gitmodules + self.
+      postPatch = ''
         sed -i.bak \
           -e 's|m4_define(\[AC_PACKAGE_VERSION\],\[[^]]*\])|m4_define([AC_PACKAGE_VERSION],[${fullVersion}])|' \
           version.m4
         rm version.m4.bak
         grep AC_PACKAGE_VERSION version.m4
-        autoreconf -i
       '';
 
       # --host and --prefix are injected by the cross-stdenv's

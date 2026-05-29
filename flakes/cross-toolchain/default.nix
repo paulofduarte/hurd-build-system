@@ -108,24 +108,24 @@ let
       toolPrefix = crossPkgs.stdenv.cc.targetPrefix;
     in
     crossPkgs.mkShell {
+      # autoreconfHook puts autoconf/automake/libtool/m4 on PATH for
+      # `make prepare`.  gnumake + awk + coreutils/sed/grep/tar/gzip come
+      # from stdenv (present in `nix develop` too), so they're not listed.
       nativeBuildInputs = [
         crossPkgs.stdenv.cc      # cross-toolchain (kernel)
         pkgs.gcc                 # native compiler for host tools (MIG)
-        pkgs.autoconf
-        pkgs.automake
-        pkgs.gnumake
-        pkgs.bison
-        pkgs.flex
-        pkgs.gawk          # MIG's cpu.sym is generated via awk
-        pkgs.gnum4         # MIG's autoreconf needs m4
-        pkgs.perl          # MIG's wrapper script uses perl at runtime
-        pkgs.texinfo
-        pkgs.git           # read-only ops + `git clean -fdX` for mrproper
-        pkgs.nix           # so the Makefile can re-dispatch into a different target shell
-        pkgs.qemu          # provides qemu-system-* (incl. qemu-img) for running the kernel
-        pkgs.curl          # flakes/run/hurd-*.sh fetches distro images over HTTPS
-        pkgs.which         # gnumach's run-qemu.sh test runner uses `which` to gate test execution
+        pkgs.autoreconfHook      # autotools for `make prepare`
       ]
+      ++ (with pkgs; [
+        bison flex       # `make mig`: MIG's parser.y + lexxer.l
+        perl             # `make mach`: the MIG wrapper shells out to perl
+        texinfo          # `make mach`: kernel build runs makeinfo (mach.info)
+        git              # read-only ops + `git clean -fdX` for mrproper
+        nix              # so the Makefile can re-dispatch into a different target shell
+        qemu             # qemu-system-* (incl. qemu-img) for running the kernel
+        curl             # flakes/run/hurd-*.sh fetches distro images over HTTPS
+        which            # gnumach's run-qemu.sh test runner uses `which` to gate tests
+      ])
       # gnumach's kernel-side `make check` on x86 builds a multiboot
       # ISO with grub-mkrescue (which itself needs xorriso + mtools)
       # and boots it under qemu-system-{i386,x86_64} -cdrom.  Pull

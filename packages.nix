@@ -6,61 +6,48 @@
 # toolchain-cache CI (which path-filters on those + flakes/cross-toolchain)
 # does not retrigger.  See .github/workflows.
 #
-# Each sub-flake owns its per-target loop + source path and returns an
-# attrset; we merge them.  `inputs.self.submodules = true` (flake.nix) is
-# what makes the submodule content visible in the store.
-#
-# `crossToolchain.mkCrossPkgs` is the single "import nixpkgs with cross +
-# x86_64-darwin overlay + the gas-determinism patch" entry point, passed
-# down so all sub-flakes share one cross-pkgs construction.  Without it,
-# `nix build .#mig-<arch>` / `.#gnumach-headers-<arch>` would skip the
-# overlay and fail on x86_64-darwin with the bundled-config.sub bug.
-#
-# `self` is passed down so sub-flakes derive their build-rev / build-date
-# and read .gitmodules for the PACKAGE_VERSION string.  `helpers`
-# (flakes/lib) is the shared version + reproducibility library.
+# Each sub-flake instantiates its own `pkgs`/`lib` (from `nixpkgs` + `system`)
+# and imports its own `flakes/lib` helpers — the root only threads the
+# flake-level values a sub-flake can't derive itself:
+#   nixpkgs, system        — to instantiate the package set;
+#   self                   — build-rev + .gitmodules for PACKAGE_VERSION;
+#   targets                — the per-target loop;
+#   mkCrossPkgs            — the one shared cross-pkgs construction (import
+#                            nixpkgs with cross + x86_64-darwin overlay + the
+#                            gas-determinism patch); without it standalone
+#                            `nix build .#mig-<arch>` / `.#gnumach-headers-…`
+#                            would miss the overlay and fail on x86_64-darwin;
+#   srcInput               — the gnumach-src / mig-src submodule input.
 
 { nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src }:
 
+let
+  inherit (crossToolchain) mkCrossPkgs;
+in
 {
   packages = forAllSystems (system:
     let
-      pkgs = nixpkgs.legacyPackages.${system};
-
-      # Bindings are alphabetical; `let` is lazy, so order is cosmetic.
       gnumach = import ./flakes/gnumach {
-        inherit pkgs system targets mig self helpers;
-        lib = nixpkgs.lib;
-        mkCrossPkgs = crossToolchain.mkCrossPkgs;
+        inherit nixpkgs system targets mig self mkCrossPkgs;
         srcInput = gnumach-src;
       };
       gnumachHeaders = import ./flakes/gnumach-headers {
-        inherit pkgs system targets;
-        lib = nixpkgs.lib;
-        mkCrossPkgs = crossToolchain.mkCrossPkgs;
+        inherit nixpkgs system targets mkCrossPkgs;
         srcInput = gnumach-src;
       };
-      helpers = import ./flakes/lib { lib = nixpkgs.lib; };
       mig = import ./flakes/mig {
-        inherit pkgs system targets gnumachHeaders self helpers;
-        lib = nixpkgs.lib;
-        mkCrossPkgs = crossToolchain.mkCrossPkgs;
+        inherit nixpkgs system targets gnumachHeaders self mkCrossPkgs;
         srcInput = mig-src;
       };
-      sidekick = import ./flakes/sidekick { inherit pkgs; };
+      sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
     in
     gnumach
     // gnumachHeaders
     // mig
     // sidekick);
 
-  # `nix run` apps — one per cross arch; each parses scenario + flags and
-  # exec's flakes/run/dispatch.sh.  The kernel comes from the nix-built
-  # `gnumach-<arch>` package (cachix-cached), so this needs no make build.
   apps = forAllSystems (system: import ./flakes/run {
-    inherit (nixpkgs) lib;
-    pkgs = nixpkgs.legacyPackages.${system};
-    inherit system targets crossToolchain;
+    inherit nixpkgs system targets crossToolchain;
     packages = self.packages.${system};
   });
 }

@@ -33,15 +33,21 @@
 # matching target so cpu.sym sees <mach/message.h>.
 #
 # Build-time dependencies:
-#   - Native autotools (autoconf/automake/m4/perl/bison/flex/awk).
+#   - autoreconfHook (autoconf/automake/libtool/m4) + bison/flex for MIG's
+#     own parser.y / lexxer.l.  awk comes from stdenv; perl is not needed to
+#     build MIG (only its installed wrapper shells out to perl at run time).
 #   - Native gcc for migcom itself (MIG is a build-host tool).
 #   - Cross cc for TARGET_CC (cpu.sym compilation + test-suite stub builds).
 #   - gnumach-headers for the target arch — TARGET_CPPFLAGS points at
 #     $gnumach-headers/include so cpu.symc sees <mach/message.h> etc.
 
-{ pkgs, lib, system, targets, gnumachHeaders, mkCrossPkgs, self, helpers, srcInput }:
+{ nixpkgs, system, targets, gnumachHeaders, mkCrossPkgs, self, srcInput }:
 
 let
+  pkgs = nixpkgs.legacyPackages.${system};
+  lib = nixpkgs.lib;
+  helpers = import ../lib { inherit lib; };
+
   # Upstream version parsed from configure.ac (AC_INIT line).  If
   # upstream bumps, the parser picks it up automatically.
   upstreamVersion = helpers.parseAcInitVersion ../../src/mig/configure.ac;
@@ -76,36 +82,33 @@ let
       # iterative dev — that path bypasses nix).
       src = srcInput;
 
-      nativeBuildInputs = with pkgs; [
-        autoconf
-        automake
-        gnum4
-        perl
-        bison
-        flex
-        gawk
-      ] ++ [ crossPkgs.stdenv.cc ];  # the cross compiler used for TARGET_CC + tests
+      # autoreconfHook supplies autoconf/automake/libtool/m4 + runs autoreconf.
+      # bison/flex are MIG's own needs (parser.y + lexxer.l); awk comes from
+      # stdenv.  The cross cc is for TARGET_CC (cpu.symc) + the test stubs.
+      nativeBuildInputs =
+        [ pkgs.autoreconfHook ]
+        ++ (with pkgs; [ bison flex ])
+        ++ [ crossPkgs.stdenv.cc ];
 
       # Pinned at the same gnu17 the dev shell uses — keeps cross- and
       # native-arch builds consistent.
       CFLAGS = "-std=gnu17 -g -O2";
 
-      # Splice the eval-time-composed version into AC_INIT before
-      # autoreconf.  ${fullVersion} is composed from upstream + submodule
-      # input metadata + .gitmodules + self.
-      preConfigure = ''
-        rm -f configure aclocal.m4
+      # Splice the eval-time-composed version into AC_INIT before the
+      # autoreconfHook regenerates configure.  ${fullVersion} is composed
+      # from upstream + submodule input metadata + .gitmodules + self.
+      postPatch = ''
         sed -i.bak \
           -e 's|^AC_INIT(\[GNU MIG\], \[[^]]*\],|AC_INIT([GNU MIG], [${fullVersion}],|' \
           configure.ac
         rm configure.ac.bak
         grep "^AC_INIT" configure.ac
-        autoreconf -i
+      '';
 
-        # MIG's cpu.symc is compiled by TARGET_CC; the resulting .symo's
-        # symbols are sed-extracted into cpu.h.  Without TARGET_CPPFLAGS
-        # pointing at gnumach's headers, that step can't find
-        # <mach/message.h>.
+      # MIG's cpu.symc is compiled by TARGET_CC; the resulting .symo's
+      # symbols are sed-extracted into cpu.h.  Without TARGET_CPPFLAGS
+      # pointing at gnumach's headers, that step can't find <mach/message.h>.
+      preConfigure = ''
         export TARGET_CPPFLAGS="-I${gnumach-headers}/include"
         export TARGET_CC=${crossPkgs.stdenv.cc}/bin/${toolPrefix}gcc
       '';

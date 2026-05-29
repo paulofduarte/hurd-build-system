@@ -31,9 +31,11 @@
 #   --help, -h      usage
 #   -- ARGS         everything after `--` passes through to qemu
 
-{ pkgs, lib, system, targets, packages, crossToolchain }:
+{ nixpkgs, system, targets, packages, crossToolchain }:
 
 let
+  pkgs = nixpkgs.legacyPackages.${system};
+  lib = nixpkgs.lib;
   # Which arches we expose as `nix run` targets.  Xen variants don't
   # boot under qemu (gnumach disables tests + the boot harness on
   # them) so they're intentionally skipped here.
