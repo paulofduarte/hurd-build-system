@@ -210,6 +210,6 @@ let
         description = "GNU Mach microkernel for ${target.migTarget}";
         platforms = platforms.all;
       };
-    } // helpers.mkReproAttrs { inherit self pname; });
+    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-${name}" (mkOne name target)) targets

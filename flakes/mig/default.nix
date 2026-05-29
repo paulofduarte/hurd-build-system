@@ -165,6 +165,6 @@ let
         # fails because the actual wrapper is <migTarget>-mig.
         mainProgram = "${target.migTarget}-mig";
       };
-    } // helpers.mkReproAttrs { inherit self pname; });
+    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "mig-${name}" (mkOne name target)) targets

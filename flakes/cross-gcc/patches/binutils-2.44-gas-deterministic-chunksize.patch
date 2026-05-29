@@ -1,0 +1,49 @@
+gas: pin the obstack chunk size for cross-host reproducible builds
+
+gas leaves its global `chunksize` at 0, which tells the obstack library to
+pick its own default chunk size, computed as `4096 - extra`.  That "extra"
+term is computed differently by glibc's obstack (used when gas is built on
+Linux) and libiberty's obstack (used on Darwin and other hosts whose libc
+lacks obstack), so the effective frag-obstack chunk size depends on which
+libc gas was linked against.
+
+`frag_grow` (gas/frags.c) closes the current frag and starts a new one when
+the current obstack chunk runs out of room.  Because the chunk size differs
+per host, these chunk-exhaustion splits land at different byte offsets, which
+flips `frag == last_frag` in dwarf2dbg.c:process_entries, which flips the
+`.debug_line` encoding between an absolute DW_LNE_set_address (+ relocation)
+and a relative PC advance.  The result: the same assembly input produces
+byte-different `.o` files on different build hosts (verified: a gnumach i686
+kernel built on aarch64-darwin vs aarch64-linux/x86_64 diverged in
+`.debug_line` for a handful of translation units; the divergence disappears
+once the chunk size is pinned).
+
+Pinning `chunksize` to a fixed value makes the chunk size — and therefore the
+split points and the emitted `.debug_line` — identical regardless of the
+obstack implementation, without otherwise changing gas's behaviour (4096 is
+the same size the zero-default already targets).
+
+This is a local reproducibility fix; it has not (yet) been submitted upstream.
+
+diff --git a/gas/as.c b/gas/as.c
+index 449167d..eeb996a 100644
+--- a/gas/as.c
++++ b/gas/as.c
+@@ -88,7 +88,16 @@ static char * myname;
+
+ /* The default obstack chunk size.  If we set this to zero, the
+    obstack code will use whatever will fit in a 4096 byte block.  */
+-int chunksize = 0;
++/* ...but that zero-default is computed inside the obstack library as
++   (4096 - extra), and "extra" differs between glibc's obstack and
++   libiberty's obstack.  The resulting chunk size therefore depends on
++   which libc gas is linked against, which moves frag_grow's
++   chunk-exhaustion split points, which in turn perturbs the .debug_line
++   program (DW_LNE_set_address vs a relative advance) for the same input.
++   That makes object files non-reproducible across build hosts.  Pin the
++   chunk size to a fixed value so split points are identical regardless of
++   the obstack implementation.  */
++int chunksize = 4096;
+
+ /* To monitor memory allocation more effectively, make this non-zero.
+    Then the chunk sizes for gas and bfd will be reduced.  */

@@ -204,11 +204,39 @@ rec {
   # The caller still owns preConfigure (because the version sed pattern
   # is autoconf-flavor-specific).  Compose the version string at eval
   # time via `composeVersion` and splice it into the caller's sed.
-  mkReproAttrs = { self, pname }: {
-    # Pin -frandom-seed via nixpkgs' reproducible-builds.sh hook.
-    # Per-derivation prefix differentiates seeds (so e.g. gnumach and
-    # mig don't share .debug_str bucket order with each other).
-    NIX_OUTPATH_USED_AS_RANDOM_SEED = "/${pname}-${buildRev self}";
+  mkReproAttrs = { pname, version }: {
+    # Pin -frandom-seed via nixpkgs' reproducible-builds.sh hook, which
+    # exports `-frandom-seed=<first 10 chars of
+    # ${NIX_OUTPATH_USED_AS_RANDOM_SEED:-$out}>`.  We MUST override the
+    # hook's `$out` default: for a cross-compiled derivation `$out` is a
+    # store-path hash that differs per build host, so it would make the
+    # seed host-specific and break cross-host reproducibility.
+    #
+    # Seed = sha256 of `${pname}-${version}`, so the (10-char-truncated)
+    # seed is:
+    #   * host-independent — pname + version contain no host / no $out;
+    #   * unique per target — pname (gnumach-i686-gnu vs gnumach-x86_64-gnu);
+    #   * varies per build  — version embeds the src + build revs.
+    # The hash is load-bearing: the hook keeps only the first 10 chars, so
+    # a readable `${pname}-${version}` string would be truncated to its
+    # pname prefix — dropping the version and collapsing every rev (and
+    # the -xen variants) to one seed.  Hashing first packs all three
+    # properties into those 10 chars.
+    #
+    # Emit the digest in nix's own base32 ("nix32") — the same encoding
+    # nix uses for store-path hashes (alphabet 0-9a-z minus e/o/u/t, no
+    # symbols).  Being alphanumeric by construction it carries no `/` to
+    # collide with the hook's `${randSeed##*/}` truncation, so it needs no
+    # post-processing.  At 5 bits/char, ~50 bits survive the 10-char trim
+    # (vs 40 for hex) — far more than enough to keep our handful of
+    # derivations distinct; a collision would merely share a seed, which
+    # is harmless.
+    NIX_OUTPATH_USED_AS_RANDOM_SEED =
+      "/" + builtins.convertHash {
+        hash = builtins.hashString "sha256" "${pname}-${version}";
+        hashAlgo = "sha256";
+        toHashFormat = "nix32";
+      };
 
     # Normalise the build-dir path embedded in DWARF.  Linux nix uses
     # /build; Darwin uses /nix/var/nix/builds/nix-<pid>-<rand>/.
