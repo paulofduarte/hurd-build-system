@@ -94,6 +94,27 @@ $hint"
   fi
 }
 
+# hurd_overlay_path <cache>
+#   Resolve this run's overlay file path from RUN_KEEP_OVERLAY:
+#     unset / empty -> "<cache>/overlay.qcow2"        (fresh: recreated
+#                      every run — the ephemeral scratch overlay)
+#     <slot>        -> "<cache>/overlay-<slot>.qcow2" (a kept slot,
+#                      reused across runs so guest state persists)
+#   <slot> must be an integer >= 1; leading zeros are stripped (007 == 7).
+#   An invalid slot aborts the run.  Distinct filenames are deliberate: a
+#   no-keep run only ever touches overlay.qcow2, so it can't clobber a
+#   kept slot.  Use as: overlay="$(hurd_overlay_path "$cache")" || exit 1
+hurd_overlay_path() {
+  local cache="$1" slot="${RUN_KEEP_OVERLAY:-}"
+  [ -z "$slot" ] && { echo "$cache/overlay.qcow2"; return 0; }
+  case "$slot" in
+    *[!0-9]*) die "invalid --keep-overlay slot '$slot' (must be an integer >= 1)" ;;
+  esac
+  slot=$((10#$slot))   # strip leading zeros; base-10, never octal
+  [ "$slot" -ge 1 ] || die "invalid --keep-overlay slot '${RUN_KEEP_OVERLAY}' (must be >= 1)"
+  echo "$cache/overlay-$slot.qcow2"
+}
+
 # hurd_make_overlay <base> <overlay> <base_format>
 #   qemu-img qcow2 overlay over <base>. <base_format> MUST match the
 #   actual format of <base>: "raw" for Debian's extracted .img, "qcow2"
@@ -101,12 +122,13 @@ $hint"
 #   probing the backing file at every open (and to fail loudly if the
 #   format is wrong instead of producing a broken overlay).
 #
-#   Default: fresh overlay every run (current overlay is overwritten).
-#   Set RUN_KEEP_OVERLAY=1 to reuse the overlay across runs — recreated
-#   only when missing or when <base> is newer than the existing overlay.
+#   Fresh mode (RUN_KEEP_OVERLAY unset): the overlay is recreated every
+#   run, discarding state.  Keep mode (a slot is set, so <overlay> is a
+#   slotted overlay-<slot>.qcow2): reused across runs — recreated only
+#   when missing or when <base> is newer than the existing overlay.
 hurd_make_overlay() {
   local base="$1" overlay="$2" base_fmt="$3"
-  if [ "${RUN_KEEP_OVERLAY:-}" = "1" ]; then
+  if [ -n "${RUN_KEEP_OVERLAY:-}" ]; then
     [ -e "$overlay" ] && [ ! "$base" -nt "$overlay" ] && return 0
   fi
   qemu-img create -f qcow2 -b "$base" -F "$base_fmt" "$overlay" >/dev/null

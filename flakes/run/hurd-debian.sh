@@ -30,7 +30,7 @@ img_name=$(tar -tzf "$cache/debian-hurd.img.tar.gz" | grep -E '\.img$' | head -1
 [ -n "$img_name" ] || die "debian-hurd.img.tar.gz contains no *.img file (layout changed?)"
 [ -f "$cache/$img_name" ] || tar -xzf "$cache/debian-hurd.img.tar.gz" -C "$cache"
 
-overlay="$cache/overlay.qcow2"
+overlay="$(hurd_overlay_path "$cache")" || exit 1
 hurd_make_overlay "$cache/$img_name" "$overlay" raw
 
 # Vanilla path: disk's GRUB boots the distro's bundled kernel as-is.

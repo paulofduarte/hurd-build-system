@@ -52,7 +52,7 @@ cache="$(hurd_cache_dir guix "$ARCH")"
 qcow2="$cache/$qcow2_name"
 hurd_fetch_via_resolve "$url" "$qcow2" "$cache/last-target" "$hint"
 
-overlay="$cache/overlay.qcow2"
+overlay="$(hurd_overlay_path "$cache")" || exit 1
 hurd_make_overlay "$qcow2" "$overlay" qcow2
 
 # Vanilla path: regenerate grub.cfg via sidekick so the qcow2's

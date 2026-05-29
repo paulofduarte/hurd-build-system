@@ -26,7 +26,7 @@
 #   <scenario>      one positional, default "boot"
 #   --vanilla       distro's bundled kernel (hurd-* only)
 #   --accel         -accel hvf/kvm
-#   --keep-overlay  reuse the qcow2 overlay across invocations
+#   --keep-overlay[=N]  keep + reuse overlay slot N (default 1) across runs
 #   --refresh       wipe the scenario's cached distro image
 #   --help, -h      usage
 #   -- ARGS         everything after `--` passes through to qemu
@@ -69,7 +69,12 @@ let
             --vanilla        boot the distro's bundled kernel instead of ours
                              (hurd-* scenarios only)
             --accel          use -accel hvf/kvm; host arch must match target
-            --keep-overlay   reuse the per-run qcow2 overlay across invocations
+            --keep-overlay[=N]
+                             keep + reuse qcow2 overlay slot N across runs so
+                             guest state persists (hurd-* scenarios; N an
+                             integer >= 1, default 1 -> overlay-N.qcow2).
+                             Without the flag each run starts from a fresh
+                             overlay (overlay.qcow2, discarded each run).
             --refresh        wipe the scenario's cached distro image and re-fetch
             --help, -h       show this help
 
@@ -93,7 +98,20 @@ let
               --help|-h)      show_help; exit 0 ;;
               --vanilla)      export RUN_VANILLA=1; shift ;;
               --accel)        export RUN_ACCEL=1; shift ;;
-              --keep-overlay) export RUN_KEEP_OVERLAY=1; shift ;;
+              --keep-overlay=*)
+                # `--keep-overlay=N`; empty (`--keep-overlay=`) defaults to 1.
+                RUN_KEEP_OVERLAY="''${1#*=}"
+                export RUN_KEEP_OVERLAY="''${RUN_KEEP_OVERLAY:-1}"
+                shift ;;
+              --keep-overlay)
+                # Bare flag -> slot 1.  `--keep-overlay N` consumes N only
+                # when numeric, so `--keep-overlay hurd-debian` still parses
+                # the scenario.  The value is validated downstream.
+                if [[ "''${2:-}" =~ ^[0-9]+$ ]]; then
+                  export RUN_KEEP_OVERLAY="$2"; shift 2
+                else
+                  export RUN_KEEP_OVERLAY=1; shift
+                fi ;;
               --refresh)      export RUN_REFRESH=1; shift ;;
               --)             shift; qemu_args+=("$@"); break ;;
               --*)

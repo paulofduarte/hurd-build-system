@@ -103,7 +103,7 @@ passthrough* below for why.
 |---|---|
 | `RUN_VANILLA=1` | Boot the distro's bundled kernel via internal GRUB (Hurd scenarios only — boot scenario ignores the flag) |
 | `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); requires host arch == `ARCH`, falls back to TCG with a warning otherwise |
-| `RUN_KEEP_OVERLAY=1` | Reuse the per-run qcow2 overlay across invocations (state persists; default discards) |
+| `RUN_KEEP_OVERLAY=N` | Keep + reuse overlay slot `N` across runs so state persists (integer ≥ 1, default 1 → `overlay-N.qcow2`); without it each run discards a fresh `overlay.qcow2`. Invalid `N` aborts. `nix run` flag: `--keep-overlay[=N]` |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`, `-d int,cpu_reset`) |
 
 ### Dispatch passthrough — adding a new env knob

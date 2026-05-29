@@ -37,7 +37,7 @@ cache="$(hurd_cache_dir gentoo "$ARCH")"
 qcow2="$cache/$(basename "$url")"
 hurd_fetch_once_verified "$url" "$qcow2" "$url.sha512"
 
-overlay="$cache/overlay.qcow2"
+overlay="$(hurd_overlay_path "$cache")" || exit 1
 hurd_make_overlay "$qcow2" "$overlay" qcow2
 
 # Vanilla path: qcow2's internal GRUB boots Gentoo's bundled kernel.
