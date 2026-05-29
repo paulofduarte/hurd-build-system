@@ -135,11 +135,6 @@ SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 # them into make variables; the `run:` recipe sources the file
 # inline so dispatch.sh sees them via the environment.
 
-# No separate stamps — dist files are real copies (not symlinks into
-# /nix/store), so each file's mtime is the cp time and make's regular
-# mtime arithmetic is the staleness check.  In-tree artefacts
-# ($(GNUMACH_KERNEL), $(LOCAL_MIG)) are real files too.
-
 # ---- Help (always-on) ----
 .PHONY: help
 help:
@@ -222,12 +217,9 @@ mrproper:
 # See flakes/sidekick/{default.nix,packages.nix,init.sh}.
 #
 # Stamp-file pattern: one recipe produces both SIDEKICK_KERNEL and
-# SIDEKICK_INITRD.  Make 3.81 lacks grouped-targets (`&:`, Make 4.3+)
-# so listing both files as a target would race under `-j`; using a
-# stamp as the sole real target avoids that.  (The component targets
-# above all use real artefacts as their make rules — see the comment
-# at $(DIST_INCLUDE) / $(LOCAL_MIG) / $(DIST_KERNEL) — but the
-# sidekick build can't pull the same trick without Make 4.3+.)
+# SIDEKICK_INITRD.  Make 3.81 lacks grouped targets (`&:`, Make 4.3+), so
+# listing both as targets would race under `-j`; a single stamp target
+# avoids that.
 .PHONY: sidekick
 sidekick: $(SIDEKICK_STAMP)
 
@@ -246,24 +238,13 @@ $(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flak
 $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
 # ---- cache-push (always-on, arch-independent) ----
-# Push the current ARCH's dev-shell closure to the project's cachix
-# cache.  Walks the closure explicitly (`nix path-info --recursive`)
-# rather than relying on `cachix watch-exec`'s "new paths since command
-# started" detection — so it correctly pushes toolchains that were
-# already in the store from earlier builds.  Use this whenever you've
-# bootstrapped a cross-toolchain locally (~20 min for cross-gcc) and
-# want collaborators to skip that rebuild on their machines.
-#
-# Scope is intentionally single-target: `make cache-push` pushes
-# `$(ARCH)` (default aarch64 on aarch64 hosts).  Want a different
-# target?  `make cache-push ARCH=i686` etc. — picking up the
-# existing ARCH-resolution logic from the top of this Makefile.
-# This avoids accidentally triggering a cross-arch toolchain build
-# for an arch you don't actively care about.
-#
-# Requires `cachix authtoken <token>` to have been run once on this
-# machine (token is per-user; push is authenticated, pull is anonymous).
-# Run from anywhere on the host — no dev-shell dispatch.
+# Push the current ARCH's dev-shell closure to the project's cachix cache.
+# Walks the closure explicitly (`nix path-info --recursive`) so it pushes
+# toolchains already in the store from earlier builds, not just paths built
+# by this command.  Single-target by design (pushes $(ARCH); use ARCH=… for
+# others) to avoid triggering a cross-arch toolchain build you didn't ask
+# for.  Requires `cachix authtoken <token>` once per host (push
+# authenticated, pull anonymous).  Runs at top level — no dev-shell dispatch.
 _CACHE_NAME := hurd-build-system
 
 .PHONY: cache-push
@@ -317,9 +298,6 @@ _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push,
 # runs and gnumach's own make decides what to do.
 
 _PREPARE_FILES   := $(GNUMACH_SRC)/configure
-# Sentinel files are real artefacts (dist copies or in-tree binaries),
-# not stamps — each has a real mtime (cp / install time) that make's
-# arithmetic uses for staleness checks.
 _HEADERS_FILES   := $(DIST_INCLUDE)
 _MIG_FILES       := $(_HEADERS_FILES) $(LOCAL_MIG)
 _MACH_FILES      := $(_MIG_FILES) $(GNUMACH_KERNEL)
@@ -422,14 +400,10 @@ ifndef _SHORTCIRCUIT
 # ---- Decide whether dispatch is needed ----
 # Always dispatch through `nix develop -i` unless this make IS the
 # dispatched inner make (signalled via _MAKE_INNER=1 on the recursive
-# call below).  Trade-off: every build pays ~200-500ms for the
-# isolated shell spawn; in exchange we get a hard guarantee that
-# nothing from the caller's environment leaks into the build — the
-# only inputs are what the dev shell explicitly declares.  Direnv,
-# host-installed tools, accidental `export`s — none of them can
-# perturb the build via this path.  The previous IN_NIX_SHELL +
-# NIX_TARGET trust check was bypassable by any caller that just
-# `export IN_NIX_SHELL=1`, so it was speed, not safety.
+# call below).  Trade-off: every build pays ~200-500ms for the isolated
+# shell spawn; in exchange nothing from the caller's environment (direnv,
+# host tools, stray `export`s) can leak into the build — the only inputs
+# are what the dev shell declares.
 ifndef _MAKE_INNER
 NEED_DISPATCH := yes
 endif
