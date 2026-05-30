@@ -52,7 +52,7 @@
 # qemu, neither of which the sandbox provides.  Until then, kernel
 # tests stay under the parent Makefile's `check-mach` target.
 
-{ nixpkgs, system, targets, mig, mkCrossPkgs, self, srcInput, forkUrl, forkBranch }:
+{ nixpkgs, system, targets, mig, mkCrossPkgs, self, srcInput, forkUrl }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -66,7 +66,7 @@ let
   # PACKAGE_VERSION composed at eval time — fully pure.
   # See flakes/lib/default.nix (composeVersion) for the format.
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl forkBranch;
+    inherit upstreamVersion srcInput self forkUrl;
   };
 
   mkOne = name: target:

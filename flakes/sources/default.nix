@@ -62,8 +62,7 @@ rec {
           url     = o.url;
           forkUrl = lib.removeSuffix ".git" o.url;
           name    = flakeLib.shortUrl {
-            url    = lib.removeSuffix ".git" o.url;
-            branch = "";
+            url = lib.removeSuffix ".git" o.url;
           };
         }
         else
@@ -73,6 +72,26 @@ rec {
       ref  = o.ref or l.ref or "HEAD";
       rev  = l.rev;
       date = "${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
+
+      # Compose the local-source PACKAGE_VERSION given the working clone's
+      # current git state — feeds flakes/sources/local-version.sh's splice.
+      # Same template as the nix-built version (flakes/lib's composeFromParts),
+      # same fork-id (byType.name); the only extras are the `-dirty` markers
+      # which pure-eval composeVersion can't see.
+      localVersion = {
+        upstreamVersion,
+        srcShort,
+        srcDate,
+        srcDirty   ? false,
+        buildShort,
+        buildDirty ? false,
+      }:
+        flakeLib.composeFromParts {
+          inherit upstreamVersion srcDate;
+          srcShort   = srcShort   + (if srcDirty   then "-dirty" else "");
+          buildShort = buildShort + (if buildDirty then "-dirty" else "");
+          forkId     = byType.name;
+        };
     };
 
   # { <dir> = info; … } for every `*-src` flake input, keyed by their src/<dir>

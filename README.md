@@ -433,8 +433,8 @@ strings (the form their commit-hooks publish, e.g. gnumach
 `v1.8+git20260224-59-g79f3013`):
 
 ```
-v1.8+git20260224-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.gec67ddf
-└──── describe-style core ────┘└────────── fork / remote ─────────┘└── build ───┘
+v1.8+git20260224-g79f3013+github.paulofduarte.gnumach+build.gec67ddf
+└──── describe-style core ────┘└──── fork / remote ──┘└── build ───┘
 ```
 
 | field | meaning | source |
@@ -442,13 +442,17 @@ v1.8+git20260224-g79f3013+github.paulofduarte.gnumach.aarch64-tests+build.gec67d
 | `v1.8` | upstream version, `v`-prefixed like the upstream tags | `version.m4` / `configure.ac` |
 | `+git<date>` | snapshot date (`YYYYMMDD`) | `gnumach-src` input commit date |
 | `-g<src>` | abbreviated source commit | `gnumach-src` input rev |
-| `+<host>.<owner>.<repo>.<branch>` | where the source came from | `flake.lock` (via `flakes/sources`) |
+| `+<host>.<owner>.<repo>` | where the source came from | `flake.lock` (via `flakes/sources`) |
 | `+build.g<rev>` | this build-system repo's commit (`-dirty` if its tree is dirty) | flake `self` |
 
+The branch is deliberately not in the fork section — `g<src>` already pins
+the commit uniquely, branches move (or get deleted), and detached pins have
+no branch.  `make show-srcs-pins` is where you go to see the branch a pin
+tracks.
+
 **Delimiter grammar.** `-` is the git-describe-native separator and stays
-inside the core; every appended metadata section is fenced by a `+`, which
-is unambiguous even though branch names carry dashes (`aarch64-tests`).
-Split on `+` → four fields.
+inside the core; every appended metadata section is fenced by a `+`.  Split
+on `+` → four fields.
 
 **Reproducibility.** Every field is host-independent (the source input's
 locked rev/date, the fork-id from `flake.lock`, the build-repo rev — nothing derived from the build host or
@@ -466,14 +470,31 @@ multiple `+`). `PACKAGE_VERSION` is a free-form string (a 512-byte
 *commit* date (not a real tag's date) and there is no commit-count — so the
 string is describe-*shaped* but won't always equal a true upstream tag
 (real describe would be `v1.8+git20260224-59-g79f3013`, note the `-59-`).
-A `src/<repo>` working tree that is dirty is **not** reflected (flake
-inputs lock to the committed rev); only the build-system repo's dirtiness
-shows, as a `-dirty` suffix on the `+build.` field. Release builds should
-be clean — given a clean `+build.<rev>`, `flake.lock` pins the entire
-toolchain (gcc, binutils + patches, libc), so the compiler version is
-already determined by that rev and is additionally recorded verbatim in the
-kernel's DWARF (`readelf -p .debug_str gnumach | grep 'GNU C'`); it is
-intentionally **not** duplicated into the version string.
+For the nix-built path, a `src/<repo>` working tree that is dirty is
+**not** reflected (flake inputs lock to the committed rev); only the
+build-system repo's dirtiness shows, as a `-dirty` suffix on the `+build.`
+field. Release builds should be clean — given a clean `+build.<rev>`,
+`flake.lock` pins the entire toolchain (gcc, binutils + patches, libc), so
+the compiler version is already determined by that rev and is additionally
+recorded verbatim in the kernel's DWARF
+(`readelf -p .debug_str gnumach | grep 'GNU C'`); it is intentionally
+**not** duplicated into the version string.
+
+**Local in-tree builds (`make mig` / `make mach`).** The same format is
+spliced into `src/<name>/version.m4` (or `configure.ac`) before
+`autoreconf`, by `flakes/sources/local-version.sh` calling the same
+composer the nix path uses (`.#srcs.<name>.localVersion`). Two differences
+from the nix-built string: (1) `<src>` tracks the local working clone's
+`HEAD` (which may be ahead of, or independent from, the pin), and (2) when
+the local `src/<name>` tree is dirty, a `-dirty` suffix appears on `-g<src>`
+in addition to the existing one on `+build.`. The splice is content-aware:
+when neither commit nor dirty-set has changed, the file isn't touched and
+`autoreconf` does not re-fire. The version file (`version.m4` /
+`configure.ac`) will show as modified in `git status` after a local build —
+that's expected; the splice is local-only, comparable to what the nix
+sandbox does in its private copy of the source. The dirty check
+deliberately ignores the version file itself, so the splice doesn't
+self-toggle `-dirty` between builds.
 
 ### Provisioning a Linux VM via cloud-init
 

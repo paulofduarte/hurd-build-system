@@ -581,8 +581,19 @@ dist: dist-headers dist-mach
 # autoreconfs inside its sandbox.
 prepare: $(GNUMACH_SRC)/configure
 
-$(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac
+$(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4 | _splice-version-gnumach
 	cd $(GNUMACH_SRC) && autoreconf -i
+
+# Splice a rich, nix-consistent PACKAGE_VERSION into the autoconf input before
+# autoreconf reads it (see flakes/sources/local-version.sh).  Order-only `| …`
+# above: the recipe always runs but only the spliced file's *content* drives
+# autoreconf staleness — steady-state is a no-op, real state transitions
+# (commit / dirty toggle) bump the mtime and trigger the rebuild.
+.PHONY: _splice-version-gnumach _splice-version-mig
+_splice-version-gnumach:
+	@bash $(FLAKES)/sources/local-version.sh splice gnumach
+_splice-version-mig:
+	@bash $(FLAKES)/sources/local-version.sh splice mig
 
 # ---- dist-headers ----
 # Public Mach headers come from `nix build .#gnumach-headers-$(ARCH)`,
@@ -642,7 +653,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 	    TARGET_CPPFLAGS="-I$(DIST_INCLUDE)"
 	cd $(MIG_BUILD) && $(MAKE) CC=gcc install
 
-$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
+$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac | _splice-version-mig
 	cd $(MIG_SRC) && autoreconf -i
 
 # ---- mach ----

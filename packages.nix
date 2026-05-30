@@ -38,7 +38,6 @@ in
         inherit nixpkgs system targets mig self mkCrossPkgs;
         srcInput = gnumach-src;
         forkUrl = gnumachInfo.forkUrl;
-        forkBranch = gnumachInfo.ref;
       };
       gnumachHeaders = import ./flakes/gnumach-headers {
         inherit nixpkgs system targets mkCrossPkgs;
@@ -48,7 +47,6 @@ in
         inherit nixpkgs system targets gnumachHeaders self mkCrossPkgs;
         srcInput = mig-src;
         forkUrl = migInfo.forkUrl;
-        forkBranch = migInfo.ref;
       };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 

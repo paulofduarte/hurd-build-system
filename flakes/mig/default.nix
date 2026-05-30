@@ -41,7 +41,7 @@
 #   - gnumach-headers for the target arch — TARGET_CPPFLAGS points at
 #     $gnumach-headers/include so cpu.symc sees <mach/message.h> etc.
 
-{ nixpkgs, system, targets, gnumachHeaders, mkCrossPkgs, self, srcInput, forkUrl, forkBranch }:
+{ nixpkgs, system, targets, gnumachHeaders, mkCrossPkgs, self, srcInput, forkUrl }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -54,7 +54,7 @@ let
 
   # PACKAGE_VERSION composed at eval time — fully pure.
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl forkBranch;
+    inherit upstreamVersion srcInput self forkUrl;
   };
 
   mkOne = name: target:

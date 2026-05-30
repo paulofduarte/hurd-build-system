@@ -18,7 +18,7 @@
 #                       builtins.readFile (`parseM4Version`,
 #                       `parseAcInitVersion`)
 #   <date>            — `<srcInput>.lastModifiedDate` (YYYYMMDD subset)
-#   <fork-id>         — owner/repo/ref of the source fork, passed in from
+#   <fork-id>         — owner/repo of the source fork, passed in from
 #                       ./sources.nix (`shortUrl`)
 #   <src-hash>        — `<srcInput>.shortRev`
 #   <build-hash>      — `self.shortRev or self.dirtyShortRev`
@@ -79,14 +79,14 @@ rec {
   # Parses common git hosting URLs into a dotted identifier string for the
   # fork/remote section of the version (see composeVersion):
   #
-  #   github URLs → "github.<owner>.<repo>[.<branch>]"
-  #   gitlab URLs → "gitlab.<owner>.<repo>[.<branch>]"
-  #   codeberg    → "codeberg.<owner>.<repo>[.<branch>]"
-  #   savannah    → "savannah.<project>.<repo>[.<branch>]"
-  #   any other   → "unknown.<branch?>"  (hostnames never leak)
+  #   github URLs → "github.<owner>.<repo>"
+  #   gitlab URLs → "gitlab.<owner>.<repo>"
+  #   codeberg    → "codeberg.<owner>.<repo>"
+  #   savannah    → "savannah.<project>.<repo>"
+  #   any other   → "unknown"  (hostnames never leak)
   #
   # Each `.`-separated piece is one semver build-metadata identifier
-  # (`[0-9A-Za-z-]`).  Branch is included only when non-empty.
+  # (`[0-9A-Za-z-]`).
 
   _parseUrl = url:
     let
@@ -106,15 +106,12 @@ rec {
     in
     builtins.foldl' tryOne null patterns;
 
-  # Build a dotted short identifier from a URL and an optional branch.
-  shortUrl = { url, branch ? "" }:
-    let
-      parsed = _parseUrl url;
-      base = if parsed == null
-             then "unknown"
-             else "${parsed.type}.${parsed.owner}.${parsed.repo}";
-    in
-    if branch == "" then base else "${base}.${branch}";
+  # Build a dotted short identifier from a URL.
+  shortUrl = { url }:
+    let parsed = _parseUrl url; in
+    if parsed == null
+    then "unknown"
+    else "${parsed.type}.${parsed.owner}.${parsed.repo}";
 
   # ==========================================================================
   # Compose the full version string at flake eval (no shell needed)
@@ -126,9 +123,29 @@ rec {
   #   v<upstream>+git<date>-g<src>+<short-url>+build.g<build>[-dirty]
   #
   # `-` stays inside the describe-style core; the fork and build sections are
-  # each `+`-fenced so branch-name dashes can't blur the boundaries.  Full
-  # format rationale (and why it is intentionally not semver) lives in the
-  # README "Versioning" section.
+  # each `+`-fenced.  Branch is intentionally omitted from the fork section —
+  # `<src>` already uniquely identifies the commit, branches move (or get
+  # deleted), and detached pins have no branch.  Full format rationale (and
+  # why it is intentionally not semver) lives in the README "Versioning"
+  # section.
+  #
+  # The actual string template lives in `composeFromParts` below so the
+  # local-source splice (flakes/sources/local-version.sh, via
+  # `.#srcs.<name>.localVersion`) shares it byte-for-byte.
+
+  # The raw template — both pure-eval (composeVersion, below) and impure
+  # local-git introspection feed into this.  Touching the format means
+  # touching this one place.
+  composeFromParts = {
+    upstreamVersion,
+    srcShort,
+    srcDate,
+    forkId,
+    buildShort,
+  }:
+    "v${upstreamVersion}+git${srcDate}-g${srcShort}+${forkId}+build.g${buildShort}";
+
+  # Pure-eval wrapper for the nix-built derivations.
   #
   # Caveat: pure eval can't run git, so <date> is the HEAD commit date (not a
   # real tag) and there is no commit-count — describe-SHAPED, not a true tag.
@@ -136,22 +153,21 @@ rec {
   # only the build-system tree's dirtiness shows, as `-dirty` on +build.
   #
   # Args (eval-time): upstreamVersion (parseM4Version/parseAcInitVersion),
-  # srcInput (source flake input → .shortRev + .lastModifiedDate), forkUrl +
-  # forkBranch (owner/repo/ref from ./sources.nix), self (build-rev).
+  # srcInput (source flake input → .shortRev + .lastModifiedDate), forkUrl
+  # (owner/repo from ./sources.nix), self (build-rev).
   composeVersion = {
     upstreamVersion,
     srcInput,
     forkUrl,
-    forkBranch,
     self,
   }:
-    let
-      srcShort = srcInput.shortRev or "unknown";
-      srcDate  = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
-      short  = shortUrl { url = forkUrl; branch = forkBranch; };
+    composeFromParts {
+      inherit upstreamVersion;
+      srcShort   = srcInput.shortRev or "unknown";
+      srcDate    = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
+      forkId     = shortUrl { url = forkUrl; };
       buildShort = buildRev self;
-    in
-    "v${upstreamVersion}+git${srcDate}-g${srcShort}+${short}+build.g${buildShort}";
+    };
 
   # ==========================================================================
   # Derivation-attrs bundle
