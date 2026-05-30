@@ -217,7 +217,7 @@ clones as usual — nix keeps building the pinned commit until you advance the
 pin:
 
 ```sh
-make update-srcs   # bump the pins to the forks' branch HEADs; then `make srcs`
+make pin-srcs      # bump the pins to the forks' branch HEADs; then `make srcs`
 ```
 
 `flake.lock` is the single source of truth for what nix builds — there's no

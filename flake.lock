@@ -3,18 +3,18 @@
     "gnumach-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1779579592,
-        "narHash": "sha256-zx+ov0whx6xZlPz8WZZzyqtInjz7ylXxmsXzHTDq2zs=",
-        "owner": "paulofduarte",
-        "repo": "gnumach",
-        "rev": "79f3013cce0c8b8363b9a6e0e63ccb16bcbbb101",
-        "type": "github"
+        "lastModified": 1779930130,
+        "narHash": "sha256-Fy4tH5aSZpObgXAdds2aapMv0RTr2fkfRu7pg8DipF8=",
+        "ref": "master",
+        "rev": "9d10f486be9d328870fab5979de48695d824e0c4",
+        "revCount": 3091,
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
       },
       "original": {
-        "owner": "paulofduarte",
-        "ref": "aarch64-tests",
-        "repo": "gnumach",
-        "type": "github"
+        "ref": "master",
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
       }
     },
     "mig-src": {
@@ -22,25 +22,25 @@
       "locked": {
         "lastModified": 1779829096,
         "narHash": "sha256-ImEIS3cpXxyItNU/YRqxkxbDu/8K3ZMmkufvODQ9Hrw=",
-        "owner": "paulofduarte",
-        "repo": "mig",
+        "ref": "master",
         "rev": "cb48044b30fcfe10529ecc1129dd68e93ed73835",
-        "type": "github"
+        "revCount": 214,
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
       },
       "original": {
-        "owner": "paulofduarte",
         "ref": "master",
-        "repo": "mig",
-        "type": "github"
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1779467186,
-        "narHash": "sha256-nOesoDCiXcUftqbRBMz9tt4blI5PvljMWbm3kuCA+0s=",
+        "lastModified": 1779796641,
+        "narHash": "sha256-ZsIrKmhp4vbBXoXXmR/tBXA/UCsAQiJL9vsgZEduhVY=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "b77b3de8775677f84492abe84635f87b0e153f0f",
+        "rev": "25f538306313eae3927264466c70d7001dcea1df",
         "type": "github"
       },
       "original": {

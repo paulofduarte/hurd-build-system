@@ -24,15 +24,25 @@
     # also feed PACKAGE_VERSION.  The local working clones under src/ are a
     # separate dev convenience populated by `make srcs` — nix never reads them.
     #
-    # The url/ref are the literal mirror of ./sources.nix.  Nix requires inputs
-    # to be static (it rejects `import`/computed values), so they can't be
-    # derived from it; `make srcs-check` guards the two against drift, and
-    # `make update-srcs` bumps the pin to the fork's branch HEAD.
-    gnumach-src = { url = "github:paulofduarte/gnumach/aarch64-tests"; flake = false; };
-    mig-src     = { url = "github:paulofduarte/mig/master";            flake = false; };
+    # Standard form is the attribute set (`type` + scheme fields directly), so
+    # any supported input type works (github, gitlab, sourcehut, git, …) without
+    # depending on built-in URL short schemes.  `make pin-srcs` bumps the pin
+    # (flake.lock only — your format choice in this block is preserved).
+    gnumach-src = {
+      type  = "git";
+      url   = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
+      ref   = "master";
+      flake = false;
+    };
+    mig-src = {
+      type  = "git";
+      url   = "https://git.savannah.gnu.org/git/hurd/mig.git";
+      ref   = "master";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, gnumach-src, mig-src, ... }:
+  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` — independent of host.
@@ -94,6 +104,6 @@
       # Source pins (owner/repo/ref/rev/url) derived from the `*-src` inputs
       # via flake.lock — consumed by `make srcs` to populate the src/ working
       # clones.  See flakes/sources.
-      srcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).all self;
+      srcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).all self inputs;
     };
 }

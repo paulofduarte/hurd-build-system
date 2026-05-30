@@ -28,8 +28,8 @@ let
   # Fork-id metadata (owner/repo/ref) derived from the `*-src` inputs via
   # flake.lock — see flakes/sources.  Feeds the version string's fork field.
   sourcesLib  = import ./flakes/sources { inherit lib; };
-  gnumachInfo = sourcesLib.info self "gnumach-src";
-  migInfo     = sourcesLib.info self "mig-src";
+  gnumachInfo = sourcesLib.info self "gnumach-src" gnumach-src;
+  migInfo     = sourcesLib.info self "mig-src" mig-src;
 in
 {
   packages = forAllSystems (system:

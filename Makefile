@@ -159,7 +159,8 @@ help:
 	@echo "  sidekick         build the helper VM (x86_64 Alpine, used by Hurd scenarios)"
 	@echo "  cache-push       push the $(ARCH) dev-shell closure to the project cachix cache"
 	@echo "  srcs             populate/reconcile src/ working clones from the nix source pins"
-	@echo "  update-srcs      bump the pinned source revs to their forks' branch HEADs"
+	@echo "  show-srcs-pins   print the current source pins (what nix is building from)"
+	@echo "  pin-srcs         bump the pinned source revs to their forks' branch HEADs (verbose)"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
 	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + flake gc-roots"
@@ -281,13 +282,23 @@ cache-push:
 srcs:
 	@bash flakes/sources/sync.sh
 
-# ---- update-srcs (always-on, arch-independent) ----
-# Bump the pinned source revs to their forks' branch HEADs; then `make srcs`
-# reconciles the working clones to the new pins.  flake.lock is the single
-# source of truth for what nix builds — nothing else to keep in sync.
-.PHONY: update-srcs
-update-srcs:
-	$(NIX_FLAKE) flake update gnumach-src mig-src
+# ---- pin-srcs (always-on, arch-independent) ----
+# Bump the pinned source revs to their tracked refs' current HEAD, then print
+# a before→after summary of what moved (so the rev change is visible in stdout
+# / PR descriptions, not buried in flake.lock JSON).  Auto-discovers which
+# inputs to update from `.#srcs`.  Run `make srcs` afterwards to reconcile the
+# working clones to the new pins.
+.PHONY: pin-srcs
+pin-srcs:
+	@bash flakes/sources/pin.sh
+
+# ---- show-srcs-pins (always-on, arch-independent) ----
+# Print the current source pins (from `.#srcs`) as a tabular line per source —
+# read-only, no network, the at-a-glance answer to "what's nix actually
+# building from."
+.PHONY: show-srcs-pins
+show-srcs-pins:
+	@bash flakes/sources/show-pins.sh
 
 # ============================================================
 # Categorize goals & decide whether to dispatch through nix.
@@ -301,7 +312,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # don't enter the dev shell — its nix build is arch-independent.  When pulled
 # in as a prereq of `run` (which DOES dispatch), it still runs inside the
 # dev shell as part of the inner-make recipe.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs update-srcs,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND

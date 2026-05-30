@@ -4,11 +4,19 @@
 # The pins come from the flake's `.#srcs` output (derived from flake.lock via
 # flakes/sources), so this always tracks exactly what nix builds.  Per source:
 #
-#   absent          → clone the pinned fork url, checkout the pinned rev
-#   present + clean  → ensure a remote for the pinned url exists (ADDED, never
-#                     replacing the dev's other remotes), fetch it, checkout
-#                     the pinned rev
-#   present + dirty  → REFUSE everything (we never touch uncommitted work)
+#   absent          → clone the pin's url, then RENAME git's default `origin`
+#                     to a stable host-named remote (e.g. github.<owner>.<repo>,
+#                     savannah.<project>.<repo>) so the canonical source is
+#                     named after what it IS — and so `origin` is free for the
+#                     dev's own fork to fill later.  Check out the pinned rev.
+#   present + clean → find a remote already pointing at the pin (ssh/https-
+#                     insensitive) for the fetch; AND always ensure the stable
+#                     host-named remote exists pointing at the pin (added
+#                     alongside the matched one if missing — never touches the
+#                     matched remote).  REFUSE if a remote with the stable
+#                     name already exists for a different url.  The dev's
+#                     other remotes are untouched.
+#   present + dirty → REFUSE everything (we never touch uncommitted work)
 #
 # When the pin's ref is a branch, the checkout lands on a local branch of that
 # name at the pinned rev (so you can commit/push) rather than a detached HEAD;
@@ -23,10 +31,11 @@ set -euo pipefail
 # Run from the repo root regardless of caller cwd.
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# name<TAB>url<TAB>rev<TAB>ref, one source per line.
+# name<TAB>url<TAB>rev<TAB>ref<TAB>remote, one source per line.
 lines=$(nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs --apply '
   srcs: builtins.concatStringsSep "\n" (map (n:
-    let s = srcs.${n}; in builtins.concatStringsSep "\t" [ n s.url s.rev s.ref ])
+    let s = srcs.${n};
+    in builtins.concatStringsSep "\t" [ n s.url s.rev s.ref s.name ])
     (builtins.attrNames srcs))')
 [ -n "$lines" ] || { echo "srcs: .#srcs is empty" >&2; exit 1; }
 
@@ -66,7 +75,7 @@ checkout_pinned() {
 }
 
 # Pass 1 — refuse if any existing working tree is dirty (before touching any).
-while IFS=$'\t' read -r name url rev ref; do
+while IFS=$'\t' read -r name url rev ref remote_name; do
   [ -n "${name:-}" ] || continue
   dir="src/$name"
   if [ -e "$dir/.git" ] && [ -n "$(git -C "$dir" status --porcelain)" ]; then
@@ -76,33 +85,70 @@ while IFS=$'\t' read -r name url rev ref; do
 done < <(printf '%s\n' "$lines")
 
 # Pass 2 — clone / reconcile / checkout the pinned rev.
-while IFS=$'\t' read -r name url rev ref; do
+while IFS=$'\t' read -r name url rev ref remote_name; do
   [ -n "${name:-}" ] || continue
   dir="src/$name"
 
   if [ ! -e "$dir/.git" ]; then
     echo "==> $name: cloning $url ($ref)"
     run git clone "$url" "$dir"
-    checkout_pinned "$dir" origin "$url" "$ref" "$rev"
+    # Rename git's clone-default `origin` to the stable host-named name.  The
+    # canonical source is then named after what it IS (savannah/<host>/<repo>),
+    # and `origin` is free for the dev to set to their own fork later.
+    # `git remote rename` also rewrites refs/remotes/origin/* and the tracking
+    # branches, so the local branch the clone landed on keeps working.
+    # Refuse to clobber a pre-existing remote with the target name (shouldn't
+    # exist on a fresh clone, but guards re-runs after a prior abort).
+    if [ "${SRCS_DRY_RUN:-}" != "1" ] \
+        && git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
+      echo "srcs: REFUSING — $dir already has a remote '$remote_name'." >&2
+      exit 1
+    fi
+    run git -C "$dir" remote rename origin "$remote_name"
+    checkout_pinned "$dir" "$remote_name" "$url" "$ref" "$rev"
     continue
   fi
 
-  # Existing tree: reuse a remote that already points at the pinned repo
-  # (ssh/https-insensitive), else add one named "pin" — leaving the dev's other
-  # remotes (origin, upstream, …) untouched.
+  # Existing tree: find a remote whose url already matches the pin
+  # (ssh/https-insensitive).  If none, add one under the stable host-named
+  # name — but REFUSE if a remote with that name already exists for a
+  # different url; we never silently overwrite the dev's setup.
   nurl=$(norm_url "$url")
   remote=""
   while read -r rname rurl _; do
     [ "$(norm_url "$rurl")" = "$nurl" ] && { remote="$rname"; break; }
   done < <(git -C "$dir" remote -v | awk '$3 == "(fetch)"')
   if [ -z "$remote" ]; then
-    remote=pin
-    if git -C "$dir" remote get-url "$remote" >/dev/null 2>&1; then
-      run git -C "$dir" remote set-url "$remote" "$url"
-    else
-      run git -C "$dir" remote add "$remote" "$url"
+    if git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
+      echo "srcs: REFUSING — $dir already has a remote '$remote_name' pointing" >&2
+      echo "        at $(git -C "$dir" remote get-url "$remote_name")," >&2
+      echo "        but the pin wants $url." >&2
+      echo "        Rename/fix that remote and re-run." >&2
+      exit 1
     fi
-    echo "==> $name: added remote '$remote' -> $url"
+    run git -C "$dir" remote add "$remote_name" "$url"
+    echo "==> $name: added remote '$remote_name' -> $url"
+    remote="$remote_name"
+  fi
+
+  # Always ensure the stable host-named remote is present, even when another
+  # remote already URL-matched the pin (so every clone advertises the canonical
+  # source under the same name).  Refuse if that name already exists for a
+  # different url; we never touch whichever remote we actually fetch from.
+  if [ "$remote" != "$remote_name" ]; then
+    existing_stable=$(git -C "$dir" remote get-url "$remote_name" 2>/dev/null || true)
+    if [ -n "$existing_stable" ]; then
+      if [ "$(norm_url "$existing_stable")" != "$nurl" ]; then
+        echo "srcs: REFUSING — $dir has a remote '$remote_name' pointing at" >&2
+        echo "        $existing_stable, but the pin wants $url." >&2
+        echo "        Rename/fix that remote and re-run." >&2
+        exit 1
+      fi
+      # Stable already configured correctly — nothing to do.
+    else
+      run git -C "$dir" remote add "$remote_name" "$url"
+      echo "==> $name: also added '$remote_name' -> $url (cross-env consistency)"
+    fi
   fi
 
   echo "==> $name: fetching '$remote', reconciling to '$ref' @ ${rev:0:12}"
