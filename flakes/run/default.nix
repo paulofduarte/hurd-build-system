@@ -8,37 +8,35 @@
 #   i686          → boot scenario for i686
 #   x86_64        → boot scenario for x86_64
 #
-# Each app is a wrapper that parses scenario + flags, sets the env
-# the harness expects, and exec's ./dispatch.sh (sibling file).
-# Same dispatch code path that `make run` uses — same scenario
-# scripts, same behaviour — just the kernel comes from the
-# nix-built `gnumach-<arch>` package instead of the in-tree work/
-# build.
+# Each app is a wrapper that parses scenario + flags, sets the env the
+# harness expects, and exec's ./dispatch.sh (sibling file).  Same dispatch
+# code path that `make run` uses — same scenario scripts, same behaviour
+# — just the kernel comes from the nix-built `gnumach-<arch>` package
+# instead of the in-tree work/ build.
 #
 # Cache for distro images lives at
 # `$XDG_CACHE_HOME/hurd-build-system/test-images/` (defaulting to
-# `~/.cache/...`), independent from the Makefile's
-# `work/test-images/`.
+# `~/.cache/...`), independent from the Makefile's `work/test-images/`.
 #
 # Args passed by the user (everything after `nix run .#<arch>`) are
-# interpreted by the inner script:
+# interpreted by ./app.sh:
 #
-#   <scenario>      one positional, default "boot"
-#   --vanilla       distro's bundled kernel (hurd-* only)
-#   --accel         -accel hvf/kvm
+#   <scenario>          one positional, default "boot"
+#   --vanilla           distro's bundled kernel (hurd-* only)
+#   --accel             -accel hvf/kvm
 #   --keep-overlay[=N]  keep + reuse overlay slot N (default 1) across runs
-#   --refresh       wipe the scenario's cached distro image
-#   --help, -h      usage
-#   -- ARGS         everything after `--` passes through to qemu
+#   --refresh           wipe the scenario's cached distro image
+#   --help, -h          usage
+#   -- ARGS             everything after `--` passes through to qemu
 
 { nixpkgs, system, targets, packages, crossToolchain }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
-  # Which arches we expose as `nix run` targets.  Xen variants don't
-  # boot under qemu (gnumach disables tests + the boot harness on
-  # them) so they're intentionally skipped here.
+  # Which arches we expose as `nix run` targets.  Xen variants don't boot
+  # under qemu (gnumach disables tests + the boot harness on them) so
+  # they're intentionally skipped here.
   archs = [ "aarch64" "i686" "x86_64" ];
 
   mkApp = arch:
@@ -55,110 +53,16 @@ let
           gnused gnugrep gawk
           gnutar gzip
         ];
+        # Tiny nix-interpolated prelude — sets the env vars + paths
+        # ./app.sh references; the body itself stays pure shell.
         text = ''
-          show_help() {
-            cat <<'EOF'
-          Usage: nix run .#${arch} [SCENARIO] [FLAGS] [-- QEMU_ARGS...]
-
-          Boot the nix-built GNU Mach kernel for ${arch} under qemu.
-
-          Positional:
-            SCENARIO         boot (default), hurd-debian, hurd-gentoo, hurd-guix
-
-          Flags:
-            --vanilla        boot the distro's bundled kernel instead of ours
-                             (hurd-* scenarios only)
-            --accel          use -accel hvf/kvm; host arch must match target
-            --keep-overlay[=N]
-                             keep + reuse qcow2 overlay slot N across runs so
-                             guest state persists (hurd-* scenarios; N an
-                             integer >= 1, default 1 -> overlay-N.qcow2).
-                             Without the flag each run starts from a fresh
-                             overlay (overlay.qcow2, discarded each run).
-            --refresh        wipe the scenario's cached distro image and re-fetch
-            --help, -h       show this help
-
-          Anything after a literal '--' is appended to qemu's command line
-          (e.g., -- -s -S, -- -monitor stdio, -- -d int,cpu_reset).
-
-          Examples:
-            nix run .#${arch}
-            nix run .#${arch} hurd-debian --accel
-            nix run .#${arch} hurd-debian --vanilla
-            nix run .#${arch} boot --refresh
-            nix run .#${arch} boot -- -s -S
-          EOF
-          }
-
-          SCENARIO=""
-          qemu_args=()
-
-          while [[ $# -gt 0 ]]; do
-            case "$1" in
-              --help|-h)      show_help; exit 0 ;;
-              --vanilla)      export RUN_VANILLA=1; shift ;;
-              --accel)        export RUN_ACCEL=1; shift ;;
-              --keep-overlay=*)
-                # `--keep-overlay=N`; empty (`--keep-overlay=`) defaults to 1.
-                RUN_KEEP_OVERLAY="''${1#*=}"
-                export RUN_KEEP_OVERLAY="''${RUN_KEEP_OVERLAY:-1}"
-                shift ;;
-              --keep-overlay)
-                # Bare flag -> slot 1.  `--keep-overlay N` consumes N only
-                # when numeric, so `--keep-overlay hurd-debian` still parses
-                # the scenario.  The value is validated downstream.
-                if [[ "''${2:-}" =~ ^[0-9]+$ ]]; then
-                  export RUN_KEEP_OVERLAY="$2"; shift 2
-                else
-                  export RUN_KEEP_OVERLAY=1; shift
-                fi ;;
-              --refresh)      export RUN_REFRESH=1; shift ;;
-              --)             shift; qemu_args+=("$@"); break ;;
-              --*)
-                echo "unknown flag: $1" >&2
-                echo "(use '--' to pass extra args through to qemu, or --help)" >&2
-                exit 2
-                ;;
-              *)
-                if [[ -z "$SCENARIO" ]]; then
-                  SCENARIO="$1"
-                else
-                  echo "unexpected positional: $1" >&2
-                  echo "(only one positional allowed; use '--' before qemu args)" >&2
-                  exit 2
-                fi
-                shift
-                ;;
-            esac
-          done
-
-          SCENARIO="''${SCENARIO:-boot}"
-
-          # Substituted at flake-eval time — nix-built artefacts.
           export ARCH=${arch}
           export GNUMACH_KERNEL=${gnumach}/boot/gnumach
           export SIDEKICK_KERNEL=${sidekick}/vmlinuz
           export SIDEKICK_INITRD=${sidekick}/initramfs.cpio.gz
-
-          # Cache for distro images — XDG-friendly default,
-          # overridable via $WORK (matches the Makefile knob).
-          export WORK="''${WORK:-''${XDG_CACHE_HOME:-$HOME/.cache}/hurd-build-system}"
-          mkdir -p "$WORK"
-
-          # Distro URLs from the shared source-of-truth — same file
-          # the Makefile's `run:` recipe sources.
-          # shellcheck source=/dev/null
-          . ${./lib/distro-urls.sh}
-          export HURD_DEBIAN_X86_64_URL HURD_DEBIAN_I686_URL \
-                 HURD_GENTOO_X86_64_URL HURD_GENTOO_I686_URL \
-                 HURD_GUIX_I686_URL HURD_GUIX_X86_64_URL
-
-          # dispatch.sh + its sibling scenarios + lib/ all live in
-          # this directory.  Copy as a single store path so the
-          # dispatch script's $(dirname "$0")/lib/... resolves
-          # correctly when invoked from /nix/store.
-          exec ${./.}/dispatch.sh "$SCENARIO" ''${qemu_args[@]+"''${qemu_args[@]}"}
-        '';
+          DISTRO_URLS_FILE=${./lib/distro-urls.sh}
+          DISPATCH_SCRIPT=${./.}/dispatch.sh
+        '' + builtins.readFile ./app.sh;
       };
     in
     {
@@ -168,10 +72,10 @@ let
 
   apps' = lib.listToAttrs (map (a: lib.nameValuePair a (mkApp a)) archs);
 
-  # `nix run .` picks the arch closest to the host CPU.  Hosts whose
-  # CPU doesn't match any of our supported arches fall through to
-  # aarch64 (per crossToolchain.defaultTargetName), which won't accel on
-  # x86 hosts but will still boot under TCG.
+  # `nix run .` picks the arch closest to the host CPU.  Hosts whose CPU
+  # doesn't match any of our supported arches fall through to aarch64
+  # (per crossToolchain.defaultTargetName), which won't accel on x86 hosts
+  # but will still boot under TCG.
   defaultArch = crossToolchain.defaultTargetName system;
 in
 apps' // { default = apps'.${defaultArch} or apps'.aarch64; }
