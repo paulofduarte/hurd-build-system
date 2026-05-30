@@ -106,6 +106,14 @@ MIG_BUILD        := $(WORK)/mig/$(ARCH)
 MIG_INSTALL_DIR  := $(MIG_BUILD)/install
 LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG)
 
+# Hurd source clone (populated by `make srcs` from the `hurd-src` flake
+# input pin).  The build-side paths are reserved here for forward
+# compatibility — the `hurd` / `dist-hurd` targets below currently exit
+# with a clear TODO message since nixpkgs has no Hurd cross-toolchain yet
+# (see flakes/hurd/default.nix for the porting plan).
+HURD_SRC         := $(SRC)/hurd
+HURD_BUILD       := $(WORK)/hurd/$(ARCH)
+
 # Nix-built per-target outputs.  `nix build -o <path>` creates a
 # gc-root symlink at <path> pointing into /nix/store.  Each `dist-*`
 # rule copies real bytes out of these into the user-visible $(DIST)
@@ -152,6 +160,8 @@ help:
 	@echo "  mach             build gnumach kernel in-tree under ./work/gnumach/$(ARCH)/ (incremental — for kernel iteration)"
 	@echo "  dist-mach        copy clean nix-built kernel into ./dist/$(ARCH)/boot/gnumach"
 	@echo "  dist             produce a tarball-ready ./dist/$(ARCH)/ (headers + kernel; mig is host-arch, not bundled)"
+	@echo "  hurd             (SKELETON — toolchain TODO) in-tree GNU Hurd userland build"
+	@echo "  dist-hurd        (SKELETON — toolchain TODO) clean nix-built Hurd into ./dist/$(ARCH)/"
 	@echo "  check            run upstream test suites (== check-mach; MIG tests run inline via nix)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
@@ -300,6 +310,24 @@ pin-srcs:
 show-srcs-pins:
 	@bash flakes/sources/show-pins.sh
 
+# ---- hurd / dist-hurd (SKELETON — toolchain TODO) ----
+# Source pin + flake skeleton are in place (see flakes/hurd/default.nix +
+# the hurd-src input in flake.nix), but the actual build is blocked on
+# adding a Hurd cross-toolchain.  nixpkgs has no Hurd kernel concept yet,
+# so building real Hurd userland needs an upstream port: a "hurd" kernel
+# in lib.systems, glibc-for-hurd, and gcc cross-targeting it.  These
+# targets exit with a clear pointer rather than attempt a doomed build.
+.PHONY: hurd dist-hurd
+hurd dist-hurd:
+	@echo "==> $@ ($(ARCH)): SKELETON — Hurd cross-toolchain not yet wired." >&2
+	@echo "    nixpkgs 25.11 has no Hurd kernel concept; building Hurd needs" >&2
+	@echo "    (1) adding a hurd kernel to lib.systems.parse.kernels," >&2
+	@echo "    (2) defining i686-pc-gnu / x86_64-pc-gnu cross-systems," >&2
+	@echo "    (3) packaging glibc-for-hurd, and (4) building gcc against it." >&2
+	@echo "    See flakes/hurd/default.nix for the porting plan; src/hurd/ is" >&2
+	@echo "    populated by 'make srcs' from the hurd-src flake input." >&2
+	@exit 1
+
 # ============================================================
 # Categorize goals & decide whether to dispatch through nix.
 # ============================================================
@@ -312,7 +340,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # don't enter the dev shell — its nix build is arch-independent.  When pulled
 # in as a prereq of `run` (which DOES dispatch), it still runs inside the
 # dev shell as part of the inner-make recipe.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins hurd dist-hurd,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND

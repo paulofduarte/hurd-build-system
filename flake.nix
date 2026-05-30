@@ -40,9 +40,15 @@
       ref   = "master";
       flake = false;
     };
+    hurd-src = {
+      type  = "git";
+      url   = "https://git.savannah.gnu.org/git/hurd/hurd.git";
+      ref   = "master";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, ... }:
+  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` — independent of host.
@@ -73,7 +79,7 @@
       # thus doesn't retrigger the toolchain-cache CI.
       pkgOutputs = import ./packages.nix {
         inherit nixpkgs self forAllSystems targets crossToolchain
-                gnumach-src mig-src;
+                gnumach-src mig-src hurd-src;
       };
     in
     {

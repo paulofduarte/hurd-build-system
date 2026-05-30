@@ -20,7 +20,7 @@
 #   srcInput               — the gnumach-src / mig-src flake input (pinned
 #                            github fork rev; see flakes/sources).
 
-{ nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src }:
+{ nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src, hurd-src }:
 
 let
   inherit (nixpkgs) lib;
@@ -30,6 +30,7 @@ let
   sourcesLib  = import ./flakes/sources { inherit lib; };
   gnumachInfo = sourcesLib.info self "gnumach-src" gnumach-src;
   migInfo     = sourcesLib.info self "mig-src" mig-src;
+  hurdInfo    = sourcesLib.info self "hurd-src" hurd-src;
 in
 {
   packages = forAllSystems (system:
@@ -48,6 +49,13 @@ in
         srcInput = mig-src;
         forkUrl = migInfo.forkUrl;
       };
+      # SKELETON — see flakes/hurd/default.nix.  Outputs are marked
+      # `meta.broken = true` until the Hurd cross-toolchain is wired up.
+      hurd = import ./flakes/hurd {
+        inherit nixpkgs system targets mig gnumachHeaders self mkCrossPkgs;
+        srcInput = hurd-src;
+        forkUrl = hurdInfo.forkUrl;
+      };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 
       # The cross-toolchain per target as a first-class output:
@@ -61,6 +69,7 @@ in
     gnumach
     // gnumachHeaders
     // mig
+    // hurd
     // sidekick
     // toolchains);
 

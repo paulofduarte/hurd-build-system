@@ -17,6 +17,23 @@
         "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
       }
     },
+    "hurd-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779923235,
+        "narHash": "sha256-38HTXX5e95YFFgne3bHUSjpZHxHwloArTPSBZOYMf0U=",
+        "ref": "master",
+        "rev": "1116445111547284a54f4a1d769d4603bd8498ef",
+        "revCount": 12992,
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
+      },
+      "original": {
+        "ref": "master",
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
+      }
+    },
     "mig-src": {
       "flake": false,
       "locked": {
@@ -53,6 +70,7 @@
     "root": {
       "inputs": {
         "gnumach-src": "gnumach-src",
+        "hurd-src": "hurd-src",
         "mig-src": "mig-src",
         "nixpkgs": "nixpkgs"
       }
