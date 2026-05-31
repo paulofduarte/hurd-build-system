@@ -220,10 +220,11 @@ clean-dist:
 mrproper:
 	rm -rf $(WORK)
 	rm -rf $(SIDEKICK)
-	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-*
+	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-* $(FLAKES)/hurd/result-*
 	rm -rf $(DIST_ROOT)
 	git -C $(GNUMACH_SRC) clean -fdX
 	git -C $(MIG_SRC)     clean -fdX
+	git -C $(HURD_SRC)    clean -fdX
 
 # ---- sidekick (always-on, arch-independent) ----
 # Builds the x86_64 Alpine helper VM the harness uses for operations
@@ -328,18 +329,20 @@ show-srcs-pins:
 # because an unescaped `#` starts a comment in a make variable assignment.
 HURD_DEVELOP := $(NIX_FLAKE) develop $(PROJ)\#hurd-$(ARCH) --command
 
-.PHONY: hurd dist-hurd _splice-version-hurd
+.PHONY: hurd dist-hurd
 
 # PHONY: always re-enter the build dir and run make (hurd's own Makefiles
 # do the incremental .c -> .o decisions).  config.status gates configure.
 hurd: $(HURD_CONFIGURED)
 	cd $(HURD_BUILD) && $(HURD_DEVELOP) make
 
-$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac | _splice-version-hurd
+# In-tree builds carry the plain upstream PACKAGE_VERSION (autoreconf reads
+# src/hurd's committed configure.ac as-is).  The rich build-rev version is
+# only stamped on the nix-built, shippable artefacts (flakes/hurd) — like
+# Debian/Guix, which keep the snapshot in the package metadata, not the
+# in-tree binary.  A hacker who wants a custom version edits configure.ac.
+$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
 	cd $(HURD_SRC) && $(HURD_DEVELOP) autoreconf -i
-
-_splice-version-hurd:
-	@bash $(FLAKES)/sources/local-version.sh splice hurd
 
 $(HURD_CONFIGURED): $(HURD_SRC)/configure
 	mkdir -p $(HURD_BUILD)
@@ -642,19 +645,13 @@ dist: dist-headers dist-mach
 # autoreconfs inside its sandbox.
 prepare: $(GNUMACH_SRC)/configure
 
-$(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4 | _splice-version-gnumach
+# In-tree builds carry the plain upstream PACKAGE_VERSION — autoreconf reads
+# src/gnumach's committed version.m4 / configure.ac as-is.  The rich build-rev
+# version is stamped only on the nix-built shippable artefacts (flakes/gnumach,
+# flakes/mig), matching Debian/Guix (snapshot lives in the package, not the
+# in-tree binary).  A hacker who wants a custom version edits version.m4.
+$(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4
 	cd $(GNUMACH_SRC) && autoreconf -i
-
-# Splice a rich, nix-consistent PACKAGE_VERSION into the autoconf input before
-# autoreconf reads it (see flakes/sources/local-version.sh).  Order-only `| …`
-# above: the recipe always runs but only the spliced file's *content* drives
-# autoreconf staleness — steady-state is a no-op, real state transitions
-# (commit / dirty toggle) bump the mtime and trigger the rebuild.
-.PHONY: _splice-version-gnumach _splice-version-mig
-_splice-version-gnumach:
-	@bash $(FLAKES)/sources/local-version.sh splice gnumach
-_splice-version-mig:
-	@bash $(FLAKES)/sources/local-version.sh splice mig
 
 # ---- dist-headers ----
 # Public Mach headers come from `nix build .#gnumach-headers-$(ARCH)`,
@@ -714,7 +711,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 	    TARGET_CPPFLAGS="-I$(DIST_INCLUDE)"
 	cd $(MIG_BUILD) && $(MAKE) CC=gcc install
 
-$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac | _splice-version-mig
+$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
 	cd $(MIG_SRC) && autoreconf -i
 
 # ---- mach ----

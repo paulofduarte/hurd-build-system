@@ -19,10 +19,7 @@
 #
 #   composeFromParts — the raw string template; takes already-resolved
 #     parts (srcShort, srcDate, forkId, and an optional buildShort —
-#     omitted ⇒ no `+build.g…` field).  The local-source splice path
-#     (flakes/sources/local-version.sh, via `.#srcs.<name>.localVersion`)
-#     feeds into this too, so the format stays in lockstep across
-#     nix-built and local in-tree paths.
+#     omitted ⇒ no `+build.g…` field).
 #
 #   composeVersion — pure-eval wrapper for the SHIPPED derivations.
 #     Resolves the parts itself from a source flake input + the flake's

@@ -461,12 +461,9 @@ rev, so a build-system commit must not rehash them (which would otherwise
 force a gcc/glibc rebuild every commit). A single source can back both
 roles — `hurd-src` yields the shipped hurd userland (with build-rev) and
 the toolchain hurd-headers (without) — so two artefacts from one source
-may differ by the build segment, by design. (This role split applies to
-the nix-built artefacts only. The in-tree `make` splice — a dev
-convenience that rewrites `src/<repo>` — is unchanged and still stamps the
-build-rev for every project, so a locally-built `make mig` binary's
-version differs cosmetically from the cached/nix `mig` which omits it; the
-nix artefacts are the ones whose identity drives rebuilds.)
+may differ by the build segment, by design. This role split applies to
+the **nix-built** artefacts; **in-tree `make` builds carry the plain
+upstream version** (see "Local in-tree builds" below).
 
 **Delimiter grammar.** `-` is the git-describe-native separator and stays
 inside the core; every appended metadata section is fenced by a `+`.  Split
@@ -498,21 +495,16 @@ recorded verbatim in the kernel's DWARF
 (`readelf -p .debug_str gnumach | grep 'GNU C'`); it is intentionally
 **not** duplicated into the version string.
 
-**Local in-tree builds (`make mig` / `make mach`).** The same format is
-spliced into `src/<name>/version.m4` (or `configure.ac`) before
-`autoreconf`, by `flakes/sources/local-version.sh` calling the same
-composer the nix path uses (`.#srcs.<name>.localVersion`). Two differences
-from the nix-built string: (1) `<src>` tracks the local working clone's
-`HEAD` (which may be ahead of, or independent from, the pin), and (2) when
-the local `src/<name>` tree is dirty, a `-dirty` suffix appears on `-g<src>`
-in addition to the existing one on `+build.`. The splice is content-aware:
-when neither commit nor dirty-set has changed, the file isn't touched and
-`autoreconf` does not re-fire. The version file (`version.m4` /
-`configure.ac`) will show as modified in `git status` after a local build —
-that's expected; the splice is local-only, comparable to what the nix
-sandbox does in its private copy of the source. The dirty check
-deliberately ignores the version file itself, so the splice doesn't
-self-toggle `-dirty` between builds.
+**Local in-tree builds (`make mig` / `make mach` / `make hurd`).** These
+carry the **plain upstream `PACKAGE_VERSION`** — `autoreconf` reads the
+committed `version.m4` / `configure.ac` as-is. In-tree builds **never
+write `src/<repo>`** (only `make srcs` may touch the source clones); the
+rich build-rev version is stamped solely on the nix-built, shippable
+artefacts. This mirrors Debian and Guix, whose in-tree/binary version is
+the plain upstream value while the snapshot/git provenance lives in the
+package metadata (for us, the nix store-path version). If you want a
+custom version in a local build, edit the autoconf source yourself — it's
+your tree to hack.
 
 ### Provisioning a Linux VM via cloud-init
 

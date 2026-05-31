@@ -13,13 +13,6 @@
 #                  `savannah.<project>.<repo>`).  What `make srcs` calls
 #                  the pin's remote, consistent across environments and
 #                  matching the PACKAGE_VERSION fork field.
-#   localVersion — function that composes a PACKAGE_VERSION from the
-#                  working clone's current git state.  Shares the same
-#                  format with the nix-built version (flakes/lib's
-#                  composeFromParts), same fork-id (this attrset's
-#                  `name`); the only extras are the `-dirty` markers
-#                  which pure-eval composeVersion can't see.  Feeds
-#                  flakes/sources/local-version.sh's splice step.
 #
 # No URL parsing of our own — we just consume the fields nix has already
 # parsed into `original`; only the git type defers to flakes/lib's
@@ -67,20 +60,5 @@
       ref  = o.ref or l.ref or "HEAD";
       rev  = l.rev;
       date = "${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
-
-      localVersion = {
-        upstreamVersion,
-        srcShort,
-        srcDate,
-        srcDirty   ? false,
-        buildShort,
-        buildDirty ? false,
-      }:
-        flakeLib.composeFromParts {
-          inherit upstreamVersion srcDate;
-          srcShort   = srcShort   + (if srcDirty   then "-dirty" else "");
-          buildShort = buildShort + (if buildDirty then "-dirty" else "");
-          forkId     = byType.name;
-        };
     };
 }
