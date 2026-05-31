@@ -188,6 +188,15 @@ let
       # nix store volume must be case-sensitive APFS (or any Linux fs).
       enableParallelBuilding = true;
 
+      # Keep glibc's `-g` DWARF (don't let stdenv strip it).  The ABI gate
+      # needs DWARF on both the working + reference glibc for abidiff/pahole;
+      # carrying it natively means the gate analyses the real libraries
+      # directly instead of building throwaway unstripped twins.  Stripping,
+      # if ever wanted for a release artifact, is a dist-phase concern (no
+      # dist-glibc exists today — glibc isn't a shipped artifact, only a
+      # toolchain component).  See TOOLCHAIN-LIBC-DECOUPLING.md / task #197.
+      dontStrip = true;
+
       # Smoke-validate the deliverable: libc.so.0.3 (Hurd SONAME,
       # NOT libc.so.6) and the dynamic linker per arch.  Fails the
       # build early if the install layout is wrong.

@@ -17,7 +17,7 @@
 # Entry points (both take the sidekick image + dispatch scripts, threaded
 # from packages.nix):
 #   mkAbiChecked … { working, reference, … }   the in-build gate wired into
-#     provider.working; on pass re-exports the real STRIPPED working glibc.
+#     provider.working; on pass re-exports the real working glibc (the gated sysroot).
 #   mkAbiReport  … { working, reference, level } the explicit `make
 #     check-glibc[-full]` report; same dispatch, emits a report at $out.
 
@@ -30,13 +30,10 @@ let
     let cpu = lib.head (lib.splitString "-" target.migTarget);
     in if cpu == "i686" || cpu == "i386" then "i386" else cpu;
 
-  # Tier-2 (abidiff) + pahole need DWARF, so we always compare throwaway
-  # UNSTRIPPED variants; the shipped sysroot stays stripped.
-  unstripped = drv: drv.overrideAttrs (_: { dontStrip = true; separateDebugInfo = false; });
-
   # Env + inputs shared by both entry points.  No libabigail/pahole here —
   # they live in the sidekick; we add qemu to boot it + the cross tools the
-  # host-side probes use.
+  # host-side probes use.  REF/WORK are the real glibcs (built dontStrip, so
+  # they carry the DWARF abidiff/pahole need — no throwaway unstripped twins).
   mkGateEnv = system: target: { working, reference, sidekick, glibcSrc ? null }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
@@ -48,8 +45,8 @@ let
       inherit pkgs;
       nativeBuildInputs = with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu ];
       env = {
-        REF             = unstripped reference;
-        WORK            = unstripped working;
+        REF             = reference;
+        WORK            = working;
         TP              = tp;
         ARCH            = abiArchOf target;
         CROSS_CC        = "${cc}/bin/${tp}-gcc";
@@ -96,7 +93,7 @@ in
 
   # The in-build gate (provider.working).  Runs the FULL suite via sidekick
   # on every host; keyed on (working, reference) so it runs once per
-  # working-glibc change and caches.  On pass, re-exports the real STRIPPED
+  # working-glibc change and caches.  On pass, re-exports the real
   # working glibc as a drop-in sysroot (symlink farm).
   mkAbiChecked = system: target: { working, reference, sidekick, dispatchLib, sendScript, glibcSrc ? null }:
     let g = mkGateEnv system target { inherit working reference sidekick glibcSrc; };
@@ -105,7 +102,7 @@ in
       ''
         ${sidekickRun { inherit dispatchLib sendScript; level = "full"; }}
         [ "$_abi_rc" -eq 0 ] || { echo "ABI gate FAILED (rc=$_abi_rc)"; exit "$_abi_rc"; }
-        # Gate passed — re-export the real (stripped) working glibc.
+        # Gate passed — re-export the real working glibc as the gated sysroot.
         mkdir -p "$out"
         cp -as "${working}"/. "$out"/
       '';
