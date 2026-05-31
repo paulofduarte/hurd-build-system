@@ -40,7 +40,7 @@
 # from a unified GNU/Hurd installation.
 
 { nixpkgs, system, targets, mkHurdCrossPkgs, mig, gnumachHeaders, hurdHeaders
-, self, srcInput, forkUrl }:
+, srcInput, forkUrl }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -57,8 +57,8 @@ let
     in
     if m == null then "unknown" else builtins.head m;
 
-  fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl;
+  fullVersion = helpers.composeToolchainVersion {
+    inherit upstreamVersion srcInput forkUrl;
   };
 
   # Targets carrying hurdCrossSystem only.

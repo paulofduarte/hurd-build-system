@@ -9,7 +9,8 @@
 #   url.nix            — turn a git hosting URL into a dotted identifier
 #                        for the version's fork section (shortUrl)
 #   compose-version.nix — compose the full PACKAGE_VERSION string at flake
-#                         eval (composeFromParts, composeVersion)
+#                         eval (composeFromParts, composeVersion,
+#                         composeToolchainVersion)
 #   repro.nix          — mkDerivation attrs that make the build host-
 #                        independent (mkReproAttrs)
 #

@@ -427,7 +427,9 @@ Trigger manually via the Actions tab → "Cache cross-toolchains" →
 
 Each built artefact gets a rich `PACKAGE_VERSION` (gnumach's `version[]`
 banner — what `host_get_kernel_version` returns — and MIG's `--version`),
-composed at flake-eval time in `flakes/lib/default.nix` (`composeVersion`).
+composed at flake-eval time in `flakes/lib/default.nix` (`composeVersion`
+for shipped artifacts, `composeToolchainVersion` for toolchain blocks —
+see "Build-rev by artifact role" below).
 It is shaped after the GNU Hurd projects' own `git describe --tags`
 strings (the form their commit-hooks publish, e.g. gnumach
 `v1.8+git20260224-59-g79f3013`):
@@ -443,16 +445,32 @@ v1.8+git20260224-g79f3013+github.paulofduarte.gnumach+build.gec67ddf
 | `+git<date>` | snapshot date (`YYYYMMDD`) | `gnumach-src` input commit date |
 | `-g<src>` | abbreviated source commit | `gnumach-src` input rev |
 | `+<host>.<owner>.<repo>` | where the source came from | `flake.lock` (via `flakes/sources`) |
-| `+build.g<rev>` | this build-system repo's commit (`-dirty` if its tree is dirty) | flake `self` |
+| `+build.g<rev>` | this build-system repo's commit (`-dirty` if its tree is dirty) — **shipped artifacts only** (see below) | flake `self` |
 
 The branch is deliberately not in the fork section — `g<src>` already pins
 the commit uniquely, branches move (or get deleted), and detached pins have
 no branch.  `make show-srcs-pins` is where you go to see the branch a pin
 tracks.
 
+**Build-rev by artifact role.** The `+build.g<rev>` field is provenance
+for the **shipped** artifacts — the gnumach kernel and the hurd userland
+(the example above is a gnumach string). The **toolchain building
+blocks** — gnumach-headers, hurd-headers, mig, glibc-hurd — omit it
+(`composeToolchainVersion`): their identity is upstream version + source
+rev, so a build-system commit must not rehash them (which would otherwise
+force a gcc/glibc rebuild every commit). A single source can back both
+roles — `hurd-src` yields the shipped hurd userland (with build-rev) and
+the toolchain hurd-headers (without) — so two artefacts from one source
+may differ by the build segment, by design. (This role split applies to
+the nix-built artefacts only. The in-tree `make` splice — a dev
+convenience that rewrites `src/<repo>` — is unchanged and still stamps the
+build-rev for every project, so a locally-built `make mig` binary's
+version differs cosmetically from the cached/nix `mig` which omits it; the
+nix artefacts are the ones whose identity drives rebuilds.)
+
 **Delimiter grammar.** `-` is the git-describe-native separator and stays
 inside the core; every appended metadata section is fenced by a `+`.  Split
-on `+` → four fields.
+on `+` → four fields (three when the build-rev is omitted).
 
 **Reproducibility.** Every field is host-independent (the source input's
 locked rev/date, the fork-id from `flake.lock`, the build-repo rev — nothing derived from the build host or

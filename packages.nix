@@ -47,12 +47,12 @@ in
         srcInput = gnumach-src;
       };
       mig = import ./flakes/mig {
-        inherit nixpkgs system targets gnumachHeaders self mkCrossPkgs;
+        inherit nixpkgs system targets gnumachHeaders mkCrossPkgs;
         srcInput = mig-src;
         forkUrl = migInfo.forkUrl;
       };
       hurdHeaders = import ./flakes/hurd-headers {
-        inherit nixpkgs system targets mig self;
+        inherit nixpkgs system targets mig;
         srcInput = hurd-src;
         forkUrl = hurdInfo.forkUrl;
       };
@@ -78,7 +78,7 @@ in
       # (flakes/hurd-toolchain/glibc.nix) so the Mach + Hurd headers +
       # mig get cleanly threaded.
       glibcHurd = import ./flakes/hurd-toolchain/glibc.nix {
-        inherit nixpkgs system targets mig gnumachHeaders hurdHeaders self;
+        inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
         inherit (hurdToolchain) mkHurdCrossPkgs;
         srcInput = glibc-src;
         forkUrl  = glibcInfo.forkUrl;

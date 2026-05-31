@@ -37,7 +37,7 @@
 # Source comes from the pinned `hurd-src` flake input (savannah master,
 # locked in flake.lock).
 
-{ nixpkgs, system, targets, mig, self, srcInput, forkUrl }:
+{ nixpkgs, system, targets, mig, srcInput, forkUrl }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -47,8 +47,8 @@ let
   # Upstream version parsed from configure.ac (`AC_INIT([GNU Hurd], …)`).
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
 
-  fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl;
+  fullVersion = helpers.composeToolchainVersion {
+    inherit upstreamVersion srcInput forkUrl;
   };
 
   # Hurd userland targets — only i686 / x86_64 today.  Xen variants
