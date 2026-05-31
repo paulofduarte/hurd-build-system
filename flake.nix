@@ -120,8 +120,18 @@
               headers = pkgsFor."gnumach-headers-${name}";
             })
             targets;
+          # Hurd userland dev shells (`nix develop .#hurd-<arch>`) for the
+          # in-tree `make hurd` build — only for targets with a Hurd
+          # toolchain (those carrying hurdCrossSystem).
+          hurdShells = nixpkgs.lib.mapAttrs'
+            (name: target: nixpkgs.lib.nameValuePair "hurd-${name}"
+              (hurdToolchain.mkHurdDevShell system name target {
+                toolchain = pkgsFor."hurd-toolchain-${name}";
+                mig       = pkgsFor."mig-${name}";
+              }))
+            (nixpkgs.lib.filterAttrs (_: t: t ? hurdCrossSystem) targets);
         in
-        shells // { default = shells.${crossToolchain.defaultTargetName system}; }
+        shells // hurdShells // { default = shells.${crossToolchain.defaultTargetName system}; }
       );
 
       # packages.<system> (gnumach-<t>, gnumach-headers-<t>, mig-<t>,

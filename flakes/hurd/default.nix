@@ -28,6 +28,8 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
+  # Configure flags shared with the in-tree dev shell (Makefile `make hurd`).
+  hurdConfig = import ../hurd-toolchain/hurd-config.nix;
 
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
   fullVersion = helpers.composeVersion {
@@ -100,32 +102,10 @@ let
       # the built-ins and propagate to sub-makes.
       makeFlags = [ "AR=${tp}-ar" "RANLIB=${tp}-ranlib" "NM=${tp}-nm" ];
 
-      configureFlags = [
-        "--host=${tp}"
-        "--disable-profile"
-        "--without-parted"
-        "--without-libbz2"
-        "--without-libz"
-        "--without-rump"
-        "--without-libtirpc"
-        "--without-libdaemon"
-        "--without-libcrypt"
-        "--disable-ncursesw"
-        "ac_cv_search_clnt_create=no"
-        # hurd's configure.ac calls AC_NO_EXECUTABLES when cross-compiling
-        # ("no working libc yet" during a bootstrap), which makes modern
-        # autoconf reject the AC_CHECK_FUNCS link tests at configure.ac:154.
-        # We DO have a working glibc-hurd, so pre-seed the cache with the
-        # ground-truth from its symbol table (nm libc.so.0.3) — the only
-        # link tests reachable once the --without-* options above prune
-        # the optional libc/parted/rump probes.
-        "ac_cv_func_file_exec_paths=yes"
-        "ac_cv_func_exec_exec_paths=yes"
-        "ac_cv_func__hurd_exec_paths=yes"
-        "ac_cv_func__hurd_libc_proc_init=yes"
-        "ac_cv_func_mach_port_set_ktype=no"
-        "ac_cv_func_file_utimens=yes"
-      ];
+      # Flag set is shared with the in-tree dev shell via hurd-config.nix
+      # (the --without-* disables + the cross-configure cache seeds); see
+      # that file for the rationale.  Only --host is per-derivation here.
+      configureFlags = [ "--host=${tp}" ] ++ hurdConfig.coreFlags;
 
       installPhase = ''
         runHook preInstall

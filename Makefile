@@ -107,12 +107,12 @@ MIG_INSTALL_DIR  := $(MIG_BUILD)/install
 LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG)
 
 # Hurd source clone (populated by `make srcs` from the `hurd-src` flake
-# input pin).  The build-side paths are reserved here for forward
-# compatibility — the `hurd` / `dist-hurd` targets below currently exit
-# with a clear TODO message since nixpkgs has no Hurd cross-toolchain yet
-# (see flakes/hurd/default.nix for the porting plan).
+# input pin) + in-tree build dir.  See the `hurd` / `dist-hurd` targets.
 HURD_SRC         := $(SRC)/hurd
 HURD_BUILD       := $(WORK)/hurd/$(ARCH)
+HURD_CONFIGURED  := $(HURD_BUILD)/config.status
+DIST_HURD        := $(DIST)/hurd
+NIX_HURD_RESULT  := $(FLAKES)/hurd/result-$(ARCH)
 
 # Nix-built per-target outputs.  `nix build -o <path>` creates a
 # gc-root symlink at <path> pointing into /nix/store.  Each `dist-*`
@@ -160,8 +160,8 @@ help:
 	@echo "  mach             build gnumach kernel in-tree under ./work/gnumach/$(ARCH)/ (incremental — for kernel iteration)"
 	@echo "  dist-mach        copy clean nix-built kernel into ./dist/$(ARCH)/boot/gnumach"
 	@echo "  dist             produce a tarball-ready ./dist/$(ARCH)/ (headers + kernel; mig is host-arch, not bundled)"
-	@echo "  hurd             (SKELETON — toolchain TODO) in-tree GNU Hurd userland build"
-	@echo "  dist-hurd        (SKELETON — toolchain TODO) clean nix-built Hurd into ./dist/$(ARCH)/"
+	@echo "  hurd             build the Hurd userland in-tree under ./work/hurd/$(ARCH)/ (incremental; needs ARCH=i686|x86_64)"
+	@echo "  dist-hurd        copy clean nix-built Hurd userland into ./dist/$(ARCH)/hurd/"
 	@echo "  check            run upstream test suites (== check-mach; MIG tests run inline via nix)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
@@ -310,23 +310,56 @@ pin-srcs:
 show-srcs-pins:
 	@bash flakes/sources/show-pins.sh
 
-# ---- hurd / dist-hurd (SKELETON — toolchain TODO) ----
-# Source pin + flake skeleton are in place (see flakes/hurd/default.nix +
-# the hurd-src input in flake.nix), but the actual build is blocked on
-# adding a Hurd cross-toolchain.  nixpkgs has no Hurd kernel concept yet,
-# so building real Hurd userland needs an upstream port: a "hurd" kernel
-# in lib.systems, glibc-for-hurd, and gcc cross-targeting it.  These
-# targets exit with a clear pointer rather than attempt a doomed build.
-.PHONY: hurd dist-hurd
-hurd dist-hurd:
-	@echo "==> $@ ($(ARCH)): SKELETON — Hurd cross-toolchain not yet wired." >&2
-	@echo "    nixpkgs 25.11 has no Hurd kernel concept; building Hurd needs" >&2
-	@echo "    (1) adding a hurd kernel to lib.systems.parse.kernels," >&2
-	@echo "    (2) defining i686-pc-gnu / x86_64-pc-gnu cross-systems," >&2
-	@echo "    (3) packaging glibc-for-hurd, and (4) building gcc against it." >&2
-	@echo "    See flakes/hurd/default.nix for the porting plan; src/hurd/ is" >&2
-	@echo "    populated by 'make srcs' from the hurd-src flake input." >&2
-	@exit 1
+# ---- hurd / dist-hurd ----
+# `make hurd`      — in-tree incremental userland build under
+#                    work/hurd/$(ARCH).  Counterpart to `make mach`: edit
+#                    src/hurd, re-run, only changed objects recompile.
+# `make dist-hurd` — clean nix-built userland copied into dist/$(ARCH)/hurd.
+#
+# Unlike mach/mig, these are NOT dispatched through the kernel dev shell
+# (they're filtered out of _BUILD_GOALS): the Hurd userland needs the
+# `*-gnu` hosted toolchain, so each recipe enters the `.#hurd-$(ARCH)`
+# dev shell itself.  That shell exports CC/AR/RANLIB/MIG/CFLAGS and
+# HURD_CONFIGURE_FLAGS (see flakes/hurd-toolchain/dev-shell.nix), so the
+# in-tree build uses the exact toolchain + flags the nix build uses.
+#
+# Run a command inside this arch's Hurd dev shell.  Absolute flakeref so
+# it resolves regardless of the recipe's cwd.  The `#` is escaped (`\#`)
+# because an unescaped `#` starts a comment in a make variable assignment.
+HURD_DEVELOP := $(NIX_FLAKE) develop $(PROJ)\#hurd-$(ARCH) --command
+
+.PHONY: hurd dist-hurd _splice-version-hurd
+
+# PHONY: always re-enter the build dir and run make (hurd's own Makefiles
+# do the incremental .c -> .o decisions).  config.status gates configure.
+hurd: $(HURD_CONFIGURED)
+	cd $(HURD_BUILD) && $(HURD_DEVELOP) make
+
+$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac | _splice-version-hurd
+	cd $(HURD_SRC) && $(HURD_DEVELOP) autoreconf -i
+
+_splice-version-hurd:
+	@bash $(FLAKES)/sources/local-version.sh splice hurd
+
+$(HURD_CONFIGURED): $(HURD_SRC)/configure
+	mkdir -p $(HURD_BUILD)
+	cd $(HURD_BUILD) && $(HURD_DEVELOP) sh -c \
+	  '$(HURD_SRC)/configure $$HURD_CONFIGURE_FLAGS --prefix=$(DIST_HURD)'
+
+# Clean nix-built userland, copied into $(DIST_HURD) as a self-contained
+# tree (hurd/ translators, lib/, libexec/, bin/, include/).  Counterpart
+# to `hurd`:  `make hurd` is the fast in-tree iteration; `make dist-hurd`
+# is the reproducible, cacheable artefact.
+dist-hurd: $(DIST_HURD)/.stamp
+
+$(DIST_HURD)/.stamp: flakes/hurd/default.nix flake.nix
+	@mkdir -p $(dir $(NIX_HURD_RESULT))
+	$(NIX_FLAKE) build .#hurd-$(ARCH) -o $(NIX_HURD_RESULT)
+	@rm -rf $(DIST_HURD)
+	@mkdir -p $(DIST_HURD)
+	cp -r $(NIX_HURD_RESULT)/. $(DIST_HURD)/
+	chmod -R u+w $(DIST_HURD)
+	@touch $(DIST_HURD)/.stamp
 
 # ============================================================
 # Categorize goals & decide whether to dispatch through nix.
