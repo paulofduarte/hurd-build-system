@@ -49,6 +49,11 @@ in
         srcInput = mig-src;
         forkUrl = migInfo.forkUrl;
       };
+      hurdHeaders = import ./flakes/hurd-headers {
+        inherit nixpkgs system targets mig self;
+        srcInput = hurd-src;
+        forkUrl = hurdInfo.forkUrl;
+      };
       # SKELETON — see flakes/hurd/default.nix.  Outputs are marked
       # `meta.broken = true` until the Hurd cross-toolchain is wired up.
       hurd = import ./flakes/hurd {
@@ -69,6 +74,7 @@ in
     gnumach
     // gnumachHeaders
     // mig
+    // hurdHeaders
     // hurd
     // sidekick
     // toolchains);
