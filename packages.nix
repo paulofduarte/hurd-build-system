@@ -56,13 +56,6 @@ in
         srcInput = hurd-src;
         forkUrl = hurdInfo.forkUrl;
       };
-      # SKELETON — see flakes/hurd/default.nix.  Outputs are marked
-      # `meta.broken = true` until the Hurd cross-toolchain is wired up.
-      hurd = import ./flakes/hurd {
-        inherit nixpkgs system targets mig gnumachHeaders self mkCrossPkgs;
-        srcInput = hurd-src;
-        forkUrl = hurdInfo.forkUrl;
-      };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 
       # The cross-toolchain per target as a first-class output:
@@ -94,6 +87,15 @@ in
       # Final cross-gcc + wrapped toolchain per target, built against
       # glibc-hurd: `hurd-gcc-<arch>` + `hurd-toolchain-<arch>`.
       hurdFinalPkgs = mkFinal system targets glibcHurd;
+
+      # The Hurd userland (core servers + libraries), built with the
+      # wrapped toolchain + mig + glibc-hurd sysroot.
+      hurd = import ./flakes/hurd {
+        inherit nixpkgs system targets mig glibcHurd self;
+        hurdToolchain = hurdFinalPkgs;
+        srcInput = hurd-src;
+        forkUrl = hurdInfo.forkUrl;
+      };
     in
     gnumach
     // gnumachHeaders

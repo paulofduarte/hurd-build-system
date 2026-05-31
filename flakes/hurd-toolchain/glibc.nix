@@ -209,9 +209,22 @@ let
         chmod -R u+w $out/include
         cp -an ${gnumach-headers}/include/. $out/include/ ; chmod -R u+w $out/include
         cp -an ${hurd-headers}/include/.    $out/include/ ; chmod -R u+w $out/include
+
+        # Augment the libc.so linker script so `-lc` also pulls the Mach
+        # + Hurd RPC stub libraries.  libc.so.0.3 has undefined refs to
+        # __mach_port_*, __io_*, __proc_*, __file_* … which live in
+        # libmachuser / libhurduser; without adding them to the GROUP,
+        # every Hurd userland link fails on those undefined references.
+        # (Same step as Guix's augment-libc.so.)  Restrict the sed to
+        # the GROUP line so OUTPUT_FORMAT(...) — which also ends in ')'
+        # — is untouched.
+        sed -i "/^GROUP/ s|)\$| $out/lib/libmachuser.so $out/lib/libhurduser.so )|" \
+          $out/lib/libc.so
+
         ls $out/lib/libc.so.0.3               || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
         ls $out/include/stdio.h               || { echo "ERROR: stdio.h missing"; exit 1; }
         ls $out/include/mach/machine/fp_reg.h || { echo "ERROR: mach kernel headers not merged"; exit 1; }
+        grep -q libmachuser $out/lib/libc.so  || { echo "ERROR: libc.so not augmented"; exit 1; }
       '';
 
       # Documents what this is, but glibc-hurd doesn't have a

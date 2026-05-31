@@ -1,93 +1,151 @@
-# GNU Hurd — per-target userland derivations.  **SKELETON ONLY.**
+# GNU Hurd userland — per-target derivations.
 #
-# This file lands the structure (source pin, version splice, per-target
-# attrs, mkReproAttrs) that mirrors flakes/gnumach + flakes/mig — but the
-# actual `mkDerivation` is stubbed because nixpkgs 25.11 has zero Hurd
-# kernel concept: `lib.systems.parse.kernels` only knows linux / darwin /
-# freebsd / … / none / wasi / windows.  Building real Hurd userland
-# requires several pre-conditions that don't exist yet:
+# Builds the core Hurd servers + libraries with the Hurd cross-toolchain
+# (flakes/hurd-toolchain): the wrapped cc, mig, and glibc-hurd as the
+# sysroot.  Output layout (hurd's `make install prefix=$out`):
 #
-#   1. Add a "hurd" (or "gnu") kernel to `lib.systems.parse.kernels` via
-#      an overlay / fork — `i686-pc-gnu` currently fails to parse.
-#   2. Define `i686-pc-gnu` / `x86_64-pc-gnu` cross-systems with the
-#      right ABI / libc fields.
-#   3. Provide a glibc-for-hurd derivation (Debian patches against
-#      upstream glibc + the Hurd headers).
-#   4. Build gcc cross-targeting that system (probably via overlay on
-#      flakes/cross-toolchain).
-#   5. Wire all of the above into a hurd-specific `mkCrossPkgs`.
+#   $out/hurd/...        translators (ext2fs, isofs, pflocal, exec, …)
+#   $out/lib/...         the hurd libraries (libports, libdiskfs, …)
+#   $out/libexec/...     runsystem + boot helpers
+#   $out/include/hurd/...
+#   $out/bin, $out/sbin  userland utilities
 #
-# Until then, each `hurd-<arch>` output is marked `meta.broken = true`,
-# so `nix build` refuses it with a clear message and the cache CI skips
-# it.  The placeholder `runCommand` just stages a README pointer at the
-# source so `nix path-info --json .#hurd-<arch>` returns something
-# inspectable.
-#
-# Targets: only i686 / x86_64 (no -xen variant — Hurd doesn't run on
-# Xen; no aarch64 — Sergey's port to ARM is on a separate branch and
-# isn't on savannah master yet).  The mig sub-flake's per-arch derivations
-# are passed through (they share the same toolchain pattern), so each
-# hurd-<arch> already has a matching mig-<arch> in its closure once the
-# real build comes online.
+# Optional components with external dependencies (parted, rump, nfs via
+# libtirpc, lwip, pci-arbiter/acpi via libpciaccess, console xkbcommon,
+# libgcrypt, libdaemon) are disabled for now: the goal here is the core
+# ext2fs-bootable userland.  They configure off cleanly — the PKG_CHECK
+# probes find nothing with an empty PKG_CONFIG_PATH, and the rest are
+# --without-* flags.  Driver/filesystem extras are a follow-up.
 #
 # Source comes from the pinned `hurd-src` flake input (savannah master,
-# locked in flake.lock); local working clone at `src/hurd/` is a dev
-# convenience populated by `make srcs`.
+# locked in flake.lock).
+#
+# Filtered to targets with a `hurdCrossSystem` field (i686, x86_64).
 
-{ nixpkgs, system, targets, mig, gnumachHeaders, mkCrossPkgs, self, srcInput, forkUrl }:
+{ nixpkgs, system, targets, mig, hurdToolchain, glibcHurd, self, srcInput, forkUrl }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
 
-  # Upstream version parsed from configure.ac (`AC_INIT([GNU Hurd], …)`).
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
-
-  # Same composeVersion the gnumach / mig derivations use — keeps the
-  # PACKAGE_VERSION shape consistent across all built artefacts.
   fullVersion = helpers.composeVersion {
     inherit upstreamVersion srcInput self forkUrl;
   };
 
-  # Hurd only targets i686 / x86_64 today.  The xen variants share the
-  # same i686/x86_64 ABI but bring no separate hurd build, so we filter
-  # them out here.  aarch64-hurd is parked until upstream catches up.
-  hurdTargets = lib.filterAttrs
-    (name: target:
-      (target.crossSystem == "i686-elf" || target.crossSystem == "x86_64-elf")
-      && target.platform != "xen")
-    targets;
+  hurdTargets = lib.filterAttrs (name: target: target ? hurdCrossSystem) targets;
 
   mkOne = name: target:
     let
-      pname = "hurd-${target.migTarget}";
+      tp        = target.migTarget;                       # e.g. i686-gnu
+      toolchain = hurdToolchain."hurd-toolchain-${name}"; # wrapped cross cc
+      crossMig  = mig."mig-${name}";
+      pname     = "hurd-${tp}";
     in
-    pkgs.runCommand pname {
+    pkgs.stdenv.mkDerivation ({
+      inherit pname;
       version = fullVersion;
+      src = srcInput;
+
+      # autoreconfHook regenerates configure; texinfo/perl are build-time
+      # needs.  The wrapped cross cc (provides ${tp}-gcc) + cross mig
+      # (provides ${tp}-mig) are found by configure's host-prefixed tool
+      # search.  pkg-config is present so the optional PKG_CHECK_MODULES
+      # probes run and report "not found" rather than erroring.
+      nativeBuildInputs =
+        [ pkgs.autoreconfHook ]
+        ++ (with pkgs; [ texinfo perl pkg-config ])
+        ++ [ toolchain crossMig ];
+
+      # hurd predates gcc's -fno-common default (gcc 10+); -fcommon keeps
+      # its tentative-definition globals linking.
+      CFLAGS = "-fcommon -g -O2";
+
+      postPatch = ''
+        sed -i.bak \
+          -e 's|^AC_INIT(\[GNU Hurd\], \[[^]]*\],|AC_INIT([GNU Hurd], [${fullVersion}],|' \
+          configure.ac
+        rm configure.ac.bak
+        grep "^AC_INIT" configure.ac
+
+        # The setuid install ops (mail.local, login, ids, ps, w) pass
+        # `-o root -m 4755` to install.  Both fail in the nix sandbox:
+        # chown is forbidden, and the store disallows the setuid bit.
+        # Strip the owner and drop the setuid bit to a plain 0755 — the
+        # setuid owner+bit are a booting-system concern, applied at
+        # deploy (nix strips setuid in the store regardless).
+        find . -name Makefile -exec sed -i \
+          -e 's/-o root //g' -e 's/-m 4755/-m 0755/g' {} +
+      '';
+
+      # Empty PKG_CONFIG_PATH → the optional PKG_CHECK_MODULES probes
+      # (xkbcommon, blkid, libgcrypt, lwip, pciaccess) find nothing and
+      # their components stay off.  CC/MIG are pinned to the cross tools
+      # so autoreconfHook's host-gcc setup-hook doesn't shadow them.
+      preConfigure = ''
+        export PKG_CONFIG_PATH=
+        export CC=${tp}-gcc
+        export MIG=${tp}-mig
+        export USER_MIG=${tp}-mig
+      '';
+
+      # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive
+      # rule uses $(AR)/$(RANLIB), but those resolve to make's built-in
+      # `ar`/`ranlib` (the build host's) — configure's AC_CHECK_TOOL
+      # result doesn't reach the recursive sub-makes.  On a non-Linux
+      # host the host ar/ranlib can't index i686-gnu ELF objects, so the
+      # static archives come out empty ("no global symbols") and every
+      # .static program fails to link.  Command-line make vars override
+      # the built-ins and propagate to sub-makes.
+      makeFlags = [ "AR=${tp}-ar" "RANLIB=${tp}-ranlib" "NM=${tp}-nm" ];
+
+      configureFlags = [
+        "--host=${tp}"
+        "--disable-profile"
+        "--without-parted"
+        "--without-libbz2"
+        "--without-libz"
+        "--without-rump"
+        "--without-libtirpc"
+        "--without-libdaemon"
+        "--without-libcrypt"
+        "--disable-ncursesw"
+        "ac_cv_search_clnt_create=no"
+        # hurd's configure.ac calls AC_NO_EXECUTABLES when cross-compiling
+        # ("no working libc yet" during a bootstrap), which makes modern
+        # autoconf reject the AC_CHECK_FUNCS link tests at configure.ac:154.
+        # We DO have a working glibc-hurd, so pre-seed the cache with the
+        # ground-truth from its symbol table (nm libc.so.0.3) — the only
+        # link tests reachable once the --without-* options above prune
+        # the optional libc/parted/rump probes.
+        "ac_cv_func_file_exec_paths=yes"
+        "ac_cv_func_exec_exec_paths=yes"
+        "ac_cv_func__hurd_exec_paths=yes"
+        "ac_cv_func__hurd_libc_proc_init=yes"
+        "ac_cv_func_mach_port_set_ktype=no"
+        "ac_cv_func_file_utimens=yes"
+      ];
+
+      installPhase = ''
+        runHook preInstall
+        make install prefix=$out $makeFlags
+        runHook postInstall
+      '';
+
+      # Serial build: hurd's top Makefile builds lib-subdirs and
+      # prog-subdirs without declaring the prog→lib dependency, so a
+      # parallel build races — prog-subdirs (exec, storeio, …) link
+      # before lib-subdirs (libports, libtrivfs, libshouldbeinlibc)
+      # finish, failing on undefined ports_*/trivfs_* symbols.
+      enableParallelBuilding = false;
+
       passthru = { inherit target; };
       meta = with lib; {
-        description = "GNU Hurd userland for ${target.migTarget} (SKELETON — toolchain pending)";
+        description = "GNU Hurd userland (core servers) for ${tp}";
         platforms = platforms.all;
-        broken    = true;
-        longDescription = ''
-          Skeleton derivation. nixpkgs has no Hurd kernel concept yet, so
-          building real userland is blocked on: (1) adding a hurd kernel
-          to lib.systems.parse.kernels; (2) defining i686-pc-gnu /
-          x86_64-pc-gnu cross-systems; (3) packaging glibc-for-hurd; (4)
-          building gcc against it.  See flakes/hurd/default.nix for the
-          full TODO.
-        '';
+        license = licenses.gpl2Plus;
       };
-    } ''
-      mkdir -p $out
-      cat > $out/README <<EOF
-      hurd-${name} skeleton (toolchain TODO).
-      Pinned src: ${srcInput}
-      Version:    ${fullVersion}
-      Fork:       ${forkUrl}
-      See flakes/hurd/default.nix for the multi-session port plan.
-      EOF
-    '';
+    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-${name}" (mkOne name target)) hurdTargets
