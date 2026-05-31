@@ -1,19 +1,18 @@
-# Sidekick helper VM — Linux Swiss-army-knife for harness operations
-# that darwin can't do natively (read ext2, run grub-mkrescue, etc.).
+# Sidekick helper VM — a generic Debian (glibc) command dispatcher for
+# harness operations darwin can't do natively (abidiff/pahole for the ABI
+# gate, grub-mkrescue/ext-mount for the run scenarios).  The VM is dumb: it
+# runs host-supplied commands/scripts (see dispatcher.sh); all logic lives
+# host-side (the ABI gate + flakes/run).  See SIDEKICK-DISPATCHER.md.
 #
-# Built by FETCHING pre-built Alpine x86_64 binaries (no compilation),
-# so the same derivation builds identically on darwin, linux-arm64,
-# linux-x86_64 — fully reproducible via pinned APK hashes.
+# Built by FETCHING pre-built binaries (no compilation), reproducibly:
+#   - kernel + modules: the Alpine linux-virt bzImage (libc-agnostic boot
+#     vehicle, small, 9p-ready), pinned by APK hash (packages.nix);
+#   - userland: a glibc Debian tool closure, pinned by snapshot.debian.org
+#     version+SHA256 (debian-packages.nix, regen via refresh-packages.sh).
+# So the same derivation builds identically on darwin / linux-arm64 /
+# linux-x86_64.
 #
-# Inputs (host-system pkgs): tar, gzip, cpio.  All POSIX tools, present
-# in any nixpkgs.  No Linux-only build tools needed.
-#
-# Output (under $out):
-#   vmlinuz             Alpine linux-virt bzImage (x86_64)
-#   initramfs.cpio.gz   minimal Alpine rootfs + /init dispatcher
-#
-# The VM dispatches on SIDEKICK_OP=<extract|mkiso> in the kernel
-# cmdline.  See flakes/sidekick/init.sh.
+# Output (under $out): vmlinuz + initramfs.cpio.gz.
 
 { nixpkgs, system }:
 
@@ -21,100 +20,68 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   inherit (pkgs) lib runCommand fetchurl writeText;
 
-  spec = import ./packages.nix;
-  inherit (spec) alpineBranch alpineRepo alpineArch packages;
-
-  # fetchurl per pinned APK.  HTTPS-fetched from dl-cdn.alpinelinux.org;
-  # sha256 protects against any future tampering.
-  apkFor = name: { version, sha256 }: fetchurl {
-    url = "https://dl-cdn.alpinelinux.org/alpine/${alpineBranch}/${alpineRepo}/${alpineArch}/${name}-${version}.apk";
-    inherit sha256;
+  # --- Alpine linux-virt kernel (kernel + modules only) ---
+  alpine = import ./packages.nix;
+  kernelApk = fetchurl {
+    url = "https://dl-cdn.alpinelinux.org/alpine/${alpine.alpineBranch}/${alpine.alpineRepo}/${alpine.alpineArch}/linux-virt-${alpine.packages.linux-virt.version}.apk";
+    inherit (alpine.packages.linux-virt) sha256;
   };
-  fetchedApks = lib.mapAttrs apkFor packages;
 
-  # /init script — separate file so it's editable + diff-friendly.
-  initScript = writeText "sidekick-init" (builtins.readFile ./init.sh);
+  # --- Debian glibc userland (the tools) ---
+  deb = import ./debian-packages.nix;
+  fetchedDebs = lib.mapAttrs (_: { url, sha256, ... }: fetchurl { inherit url sha256; }) deb.packages;
 
-  # Build-host tools used during runCommand.  Available on any platform.
-  hostTools = with pkgs; [ gnutar gzip cpio findutils ];
-
+  dispatcher = writeText "sidekick-dispatcher" (builtins.readFile ./dispatcher.sh);
+  # gnutar/gzip/cpio (POSIX) + ar (.deb) + xz/zstd (data.tar.{xz,zst}).
+  hostTools = with pkgs; [ gnutar gzip cpio findutils binutils xz zstd ];
 in
 {
   sidekick = runCommand "sidekick-vm" {
-  nativeBuildInputs = hostTools;
-  passthru = { inherit fetchedApks; };
-  meta = with lib; {
-    description = "x86_64 Linux helper VM for the GNU Hurd build-system test harness.";
-    platforms = platforms.all;
-  };
-} ''
-  set -eu
-  rootfs=$PWD/rootfs
-  kpkg=$PWD/kernel-pkg
-  mkdir -p "$rootfs" "$kpkg" "$out"
+    nativeBuildInputs = hostTools;
+    passthru = { inherit fetchedDebs; inherit (deb) snapshot; };
+    meta = with lib; {
+      description = "Debian glibc helper VM (generic dispatcher) for the GNU Hurd build-system harness.";
+      platforms = platforms.all;
+    };
+  } ''
+    set -eu
+    rootfs=$PWD/rootfs; kpkg=$PWD/kernel-pkg
+    mkdir -p "$rootfs" "$kpkg" "$out"
 
-  # ---- Extract the Linux kernel ------------------------------------
-  # linux-virt APK ships /boot/vmlinuz-virt + /lib/modules/<ver>/...
-  # The bzImage goes to $out; the modules go into the initramfs (so
-  # /init can modprobe ext2/3/4 if they aren't built in).
-  tar -xzf ${fetchedApks.linux-virt} -C "$kpkg" 2>/dev/null || true
-  # vmlinuz-virt is at /boot/vmlinuz-virt — pluck it out.
-  if [ ! -f "$kpkg/boot/vmlinuz-virt" ]; then
-    echo "FATAL: linux-virt APK did not contain /boot/vmlinuz-virt" >&2
-    find "$kpkg" -maxdepth 3 -type f | head -20 >&2
-    exit 1
-  fi
-  cp "$kpkg/boot/vmlinuz-virt" "$out/vmlinuz"
+    # ---- Alpine linux-virt kernel + modules (libc-agnostic) ----
+    tar -xzf ${kernelApk} -C "$kpkg" 2>/dev/null || true
+    [ -f "$kpkg/boot/vmlinuz-virt" ] || { echo "FATAL: linux-virt APK lacked /boot/vmlinuz-virt" >&2; exit 1; }
+    cp "$kpkg/boot/vmlinuz-virt" "$out/vmlinuz"
+    mkdir -p "$rootfs/lib"
+    [ -d "$kpkg/lib/modules" ] && cp -a "$kpkg/lib/modules" "$rootfs/lib/"
 
-  # Copy kernel modules into the rootfs so modprobe works.
-  mkdir -p "$rootfs/lib"
-  if [ -d "$kpkg/lib/modules" ]; then
-    cp -a "$kpkg/lib/modules" "$rootfs/lib/"
-  fi
+    # Decompress the 9p-over-virtio stack into /mods (dependency order) —
+    # busybox insmod wants uncompressed .ko.  (Block/ext modules for the
+    # overlay op are modprobe'd on demand from /lib/modules.)
+    moddir=$(echo "$rootfs"/lib/modules/*)
+    mkdir -p "$rootfs/mods"; i=0
+    for m in fs/netfs/netfs net/9p/9pnet net/9p/9pnet_virtio fs/9p/9p; do
+      src="$moddir/kernel/$m.ko.gz"
+      [ -f "$src" ] && gzip -dc "$src" > "$rootfs/mods/$(printf '%02d' "$i")-$(basename "$m").ko" && i=$((i+1)) || true
+    done
 
-  # ---- Extract every other APK into the rootfs ---------------------
-  # APKs are concatenated gzip streams: control segment first (.PKGINFO,
-  # .SIGN.*, .trigger, sometimes .scripts.tar) then a data segment with
-  # the actual files.  `tar -xzf` happens to accept this and yields
-  # both segments interleaved.  We just delete control files at the
-  # end before packing.
-  ${lib.concatMapStringsSep "\n" (name:
-    if name == "linux-virt" then ""
-    else ''tar -xzf ${fetchedApks.${name}} -C "$rootfs" 2>/dev/null || true''
-  ) (builtins.attrNames fetchedApks)}
+    # ---- Debian .deb data trees → rootfs (ar then data.tar.*) ----
+    ${lib.concatMapStringsSep "\n" (name: ''
+      ( tmp=$(mktemp -d); cd "$tmp"; ar x ${fetchedDebs.${name}}; \
+        tar xf data.tar.* -C "$rootfs"; cd /; rm -rf "$tmp" )
+    '') (builtins.attrNames fetchedDebs)}
 
-  # ---- Clean up APK control files ----------------------------------
-  rm -f "$rootfs/.PKGINFO" "$rootfs/.SIGN."* "$rootfs/.trigger" \
-        "$rootfs/.scripts.tar"* "$rootfs/.pre-install" \
-        "$rootfs/.post-install" "$rootfs/.pre-upgrade" \
-        "$rootfs/.post-upgrade" "$rootfs/.pre-deinstall" \
-        "$rootfs/.post-deinstall" 2>/dev/null || true
+    # busybox applet symlinks aren't created (no postinst); dispatcher.sh
+    # runs `busybox --install -s /bin` at boot, but give it /bin/sh up front.
+    [ -e "$rootfs/bin/sh" ] || ln -s busybox "$rootfs/bin/sh"
 
-  # ---- Standard rootfs setup ---------------------------------------
-  # Some Alpine packages assume /var, /tmp, /proc, /sys, /dev exist.
-  mkdir -p "$rootfs/var" "$rootfs/tmp" "$rootfs/proc" "$rootfs/sys" \
-           "$rootfs/dev" "$rootfs/mnt" "$rootfs/shared" "$rootfs/run" \
-           "$rootfs/etc"
+    mkdir -p "$rootfs"/{proc,sys,dev,tmp,shared,run,mnt,etc,nix/store}
+    : > "$rootfs/etc/passwd"; : > "$rootfs/etc/group"
+    cp ${dispatcher} "$rootfs/init"; chmod 755 "$rootfs/init"
 
-  # Minimal /etc files so musl/glibc don't complain.
-  : > "$rootfs/etc/passwd"
-  : > "$rootfs/etc/group"
-  : > "$rootfs/etc/fstab"
-
-  # ---- Install /init -----------------------------------------------
-  cp ${initScript} "$rootfs/init"
-  chmod 755 "$rootfs/init"
-
-  # ---- Pack the initramfs ------------------------------------------
-  # cpio + gzip — POSIX tools, same on every host.  Use newc format
-  # (the standard initramfs format Linux's early-init expects).
-  cd "$rootfs"
-  find . -print0 \
-    | cpio --null --create --format=newc 2>/dev/null \
-    | gzip -9 > "$out/initramfs.cpio.gz"
-
-  # Report sizes — useful when iterating on what to include.
-  echo "sidekick: vmlinuz=$(stat -c%s "$out/vmlinuz" 2>/dev/null || stat -f%z "$out/vmlinuz") bytes" >&2
-  echo "sidekick: initramfs.cpio.gz=$(stat -c%s "$out/initramfs.cpio.gz" 2>/dev/null || stat -f%z "$out/initramfs.cpio.gz") bytes" >&2
+    cd "$rootfs"
+    find . -print0 | cpio --null --create --format=newc 2>/dev/null \
+      | gzip -9 > "$out/initramfs.cpio.gz"
+    echo "sidekick: vmlinuz=$(stat -c%s "$out/vmlinuz" 2>/dev/null || stat -f%z "$out/vmlinuz") initramfs=$(stat -c%s "$out/initramfs.cpio.gz" 2>/dev/null || stat -f%z "$out/initramfs.cpio.gz") bytes" >&2
   '';
 }

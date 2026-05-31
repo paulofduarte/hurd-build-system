@@ -60,6 +60,7 @@ let
           export GNUMACH_KERNEL=${gnumach}/boot/gnumach
           export SIDEKICK_KERNEL=${sidekick}/vmlinuz
           export SIDEKICK_INITRD=${sidekick}/initramfs.cpio.gz
+          export SIDEKICK_DISPATCH=${../sidekick/sidekick-dispatch.sh}
           DISTRO_URLS_FILE=${./lib/distro-urls.sh}
           DISPATCH_SCRIPT=${./.}/dispatch.sh
         '' + builtins.readFile ./app.sh;

@@ -126,14 +126,25 @@ in
 
       hurdTargets = lib.filterAttrs (_: t: t ? hurdCrossSystem) targets;
 
+      # The ABI gate dispatches its Linux-only analysers (abidiff/pahole)
+      # into the Debian sidekick VM, so it runs on every host (no darwin
+      # skip, no nixpkgs libabigail/pahole dep).  Thread the sidekick image
+      # + the host-side dispatch scripts to the gate.  See
+      # SIDEKICK-DISPATCHER.md.
+      sidekickArgs = {
+        sidekick    = sidekick.sidekick;
+        dispatchLib = ./flakes/sidekick/sidekick-dispatch.sh;
+        sendScript  = ./flakes/sidekick/sidekick-send.sh;
+      };
+
       # The ABI-gated working glibc — what the wrapped cc + userland bind.
       # Per target: if the working and reference glibc resolve to the same
       # store path (ref pin == working tip → the collapse property) the
       # gate is a no-op and we pass the working glibc straight through; once
       # they diverge (hacking src/, or the ref pinned to an older release
-      # tag) the gate derivation runs the auto probe set and re-exports the
-      # working glibc on pass.  gcc is unaffected either way — it binds the
-      # reference glibc (ungated), so the gate never triggers a gcc rebuild.
+      # tag) the gate runs the FULL probe suite (via sidekick) and re-exports
+      # the working glibc on pass.  gcc is unaffected either way — it binds
+      # the reference glibc (ungated), so the gate never rebuilds gcc.
       gatedGlibcHurd = lib.mapAttrs' (name: target:
         let
           w = glibcHurd."glibc-hurd-${name}";
@@ -141,7 +152,7 @@ in
         in lib.nameValuePair "glibc-hurd-${name}"
           (if w.drvPath == r.drvPath
            then w
-           else mkAbiChecked system target { working = w; reference = r; glibcSrc = glibc-src; }))
+           else mkAbiChecked system target ({ working = w; reference = r; glibcSrc = glibc-src; } // sidekickArgs)))
         hurdTargets;
 
       # Final cross-gcc + wrapped toolchain per target: gcc binds the
@@ -151,27 +162,20 @@ in
         working   = gatedGlibcHurd;
       };
 
-      # `make check-glibc` / `check-glibc-full` back-ends: the explicit deep
-      # report (Tier-2 abidiff on unstripped variants + the heavy probes).
-      # Compares the RAW working glibc against the reference, so it reflects
-      # the unhacked or hacked src/ as-is.
-      #
-      # Linux-only: the deep/full tier needs libabigail (abidiff) + pahole,
-      # which nixpkgs packages for Linux only.  Exposed only on `*-linux`
-      # systems so darwin eval / `nix flake show` never trips their
-      # `meta.platforms` gate; `make check-glibc` skips on darwin and runs on
-      # a Linux host (e.g. orb).  The automatic gate (mkAbiChecked) is
-      # DWARF-free and stays on every host.  A future sidekick-backed shim
-      # will make these uniform across hosts (see TOOLCHAIN-LIBC-DECOUPLING).
-      abiReportPkgs = lib.optionalAttrs (lib.hasSuffix "-linux" system)
-        (lib.listToAttrs (lib.concatLists (lib.mapAttrsToList (name: target:
-          let
-            w = glibcHurd."glibc-hurd-${name}";
-            r = glibcRefHurd."glibc-hurd-${name}";
-          in [
-            { name = "abi-check-${name}";      value = mkAbiReport system target { working = w; reference = r; level = "deep"; glibcSrc = glibc-src; }; }
-            { name = "abi-check-full-${name}"; value = mkAbiReport system target { working = w; reference = r; level = "full"; glibcSrc = glibc-src; }; }
-          ]) hurdTargets)));
+      # `make check-glibc` / `check-glibc-full` back-ends: the explicit
+      # report (`deep` = Tier-1/2 + headers; `full` adds the heavy probes).
+      # Dispatches abidiff/pahole via the sidekick like the in-build gate, so
+      # it runs on EVERY host now (the old darwin-only `meta.platforms` skip
+      # is gone).  Compares the RAW working glibc against the reference.
+      abiReportPkgs = lib.listToAttrs (lib.concatLists (lib.mapAttrsToList (name: target:
+        let
+          w = glibcHurd."glibc-hurd-${name}";
+          r = glibcRefHurd."glibc-hurd-${name}";
+          mk = level: mkAbiReport system target ({ working = w; reference = r; inherit level; glibcSrc = glibc-src; } // sidekickArgs);
+        in [
+          { name = "abi-check-${name}";      value = mk "deep"; }
+          { name = "abi-check-full-${name}"; value = mk "full"; }
+        ]) hurdTargets));
 
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
