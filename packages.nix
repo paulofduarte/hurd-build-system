@@ -20,11 +20,12 @@
 #   srcInput               — the gnumach-src / mig-src flake input (pinned
 #                            github fork rev; see flakes/sources).
 
-{ nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src, hurd-src }:
+{ nixpkgs, self, forAllSystems, targets, crossToolchain, hurdToolchain, gnumach-src, mig-src, hurd-src }:
 
 let
   inherit (nixpkgs) lib;
   inherit (crossToolchain) mkCrossPkgs mkToolchain;
+  inherit (hurdToolchain) mkAll;
   # Fork-id metadata (owner/repo/ref) derived from the `*-src` inputs via
   # flake.lock — see flakes/sources.  Feeds the version string's fork field.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -70,6 +71,13 @@ in
       toolchains = lib.mapAttrs'
         (name: target: lib.nameValuePair "toolchain-${name}" (mkToolchain system target))
         targets;
+
+      # Hurd cross-toolchain components: per-target
+      # `hurd-binutils-<arch>` + `hurd-gcc-stage1-<arch>`, filtered to
+      # targets with a `hurdCrossSystem` field (i686, x86_64 today —
+      # see target-archs.nix).  Uses the patched nixpkgs from
+      # flakes/lib-systems-hurd so the *-gnu triplet parses.
+      hurdToolchainPkgs = mkAll system targets;
     in
     gnumach
     // gnumachHeaders
@@ -77,7 +85,8 @@ in
     // hurdHeaders
     // hurd
     // sidekick
-    // toolchains);
+    // toolchains
+    // hurdToolchainPkgs);
 
   apps = forAllSystems (system: import ./flakes/run {
     inherit nixpkgs system targets crossToolchain;

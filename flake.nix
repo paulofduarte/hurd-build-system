@@ -73,12 +73,20 @@
       # gas-determinism patch, and the host-system → default-target mapping.
       crossToolchain = import ./flakes/cross-toolchain { inherit nixpkgs; };
 
+      # Hurd userland cross-toolchain.  Distinct from crossToolchain
+      # (bare-metal *-elf for the gnumach kernel).  Uses the lib.systems
+      # patch from flakes/lib-systems-hurd to make the *-gnu triplet
+      # parse, then produces hurd-binutils-<arch> + hurd-gcc-stage1-<arch>
+      # per target.
+      libHurd = import ./flakes/lib-systems-hurd { inherit nixpkgs; };
+      hurdToolchain = import ./flakes/hurd-toolchain { inherit nixpkgs libHurd; };
+
       # packages.<system> + apps.<system> wiring (kernel, headers, mig,
       # sidekick + `nix run` apps).  Extracted to ./packages.nix so adding a
       # sub-flake (e.g. hurd) doesn't touch flake.nix / target-archs.nix and
       # thus doesn't retrigger the toolchain-cache CI.
       pkgOutputs = import ./packages.nix {
-        inherit nixpkgs self forAllSystems targets crossToolchain
+        inherit nixpkgs self forAllSystems targets crossToolchain hurdToolchain
                 gnumach-src mig-src hurd-src;
       };
     in
