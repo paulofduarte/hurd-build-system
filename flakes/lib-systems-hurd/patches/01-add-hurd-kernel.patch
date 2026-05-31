@@ -1,0 +1,175 @@
+Re-add GNU Hurd kernel support to lib/systems.
+
+Restores the support that lived in nixpkgs from ~2012 through 2018 and was
+removed in PR #45721 (commit history under pkgs/os-specific/gnu/).  This
+patch is purely additive (no existing behaviour changes) and just makes
+nixpkgs willing to PARSE `i686-gnu` / `x86_64-gnu` / `*-pc-gnu` /
+`*-hurd-gnu` triplets and produce canonical `<cpu>-gnu` configs from them.
+The actual glibc-hurd, hurd-headers, and hurd userland packages live in
+this flake under flakes/{hurd-toolchain,hurd-headers,hurd}/.
+
+Triplet choice: `i686-gnu` / `x86_64-gnu` is the canonical user-facing
+form across the entire gnumach/MIG/Hurd ecosystem — upstream
+gnumach building.html, upstream MIG building.html, cross-hurd's
+CROSS_HURD_TARGET, Debian's DEB_HOST_GNU_TYPE for hurd-i386/hurd-amd64,
+Sergey Bugaev's upstream glibc submissions, and Guix's %hurd-systems
+all use the 2-tuple `<cpu>-gnu` form.  `<cpu>-pc-gnu` is what config.sub
+canonicalises that to internally for autotools; `<cpu>-unknown-gnu` is a
+pre-canonicalisation artefact of config.guess never used as an input.
+
+Changes:
+  - lib/systems/parse.nix: add the `hurd` kernel (ELF, no family,
+    `.name = "gnu"`).  Add `gnu` as an alias (mirrors
+    `darwin = kernels.macos`) so 2-tuple `i686-gnu` resolves.  Add
+    `gnu`/`hurd` to the 3-tuple cpu-vendor-os allow-list so
+    `i686-pc-gnu` doesn't hit the ambiguous-3-component throw.
+    Special-case `tripleFromSystem` to emit the canonical 2-tuple
+    `<cpu>-gnu` (no vendor, no abi suffix) for Hurd targets — this
+    drives stdenv.cc.targetPrefix → cross-binaries `i686-gnu-gcc`,
+    matching cross-hurd's bin naming.
+  - lib/systems/inspect.nix: add `isHurd` predicate (gets it free via
+    `matchAnyAttrs`).  Include `isHurd` in `isUnix`.
+  - lib/systems/default.nix: `isHurd → libc = "glibc"` in the libc
+    cascade; `|| isHurd` in `hasSharedLibraries`; uname.system entry
+    `gnu = "GNU"` (keyed by parsed.kernel.name, which is "gnu").
+
+The patch is small (~50 lines across 3 files) so refreshing it on a
+nixpkgs bump is mechanical.  Verified against nixpkgs nixos-25.11
+(rev 25f53830...) — the line numbers below are stable across the 25.11
+branch but expect a one-line fuzz on next minor bumps.
+
+--- a/lib/systems/parse.nix
++++ b/lib/systems/parse.nix
+@@ -617,6 +617,19 @@
+       windows = {
+         execFormat = pe;
+         families = { };
++      };
++      # GNU Hurd.  `.name = "gnu"` matches the upstream canonical naming
++      # used by gnumach/MIG building docs, cross-hurd's CROSS_HURD_TARGET,
++      # Debian's DEB_HOST_GNU_TYPE for hurd-i386 / hurd-amd64, Sergey
++      # Bugaev's glibc upstream submissions, and Guix's %hurd-systems.
++      # The kernel attribute is still named `hurd` (so `kernels.hurd` and
++      # the `isHurd` predicate read naturally) but `.name` — which feeds
++      # tripleFromSystem → config → cc.targetPrefix — is "gnu" so
++      # cross-binaries land as `i686-gnu-gcc` (not `i686-hurd-gcc`).
++      hurd = {
++        execFormat = elf;
++        families = { };
++        name = "gnu";
+       };
+       cygwin = {
+         execFormat = pe;
+@@ -642,6 +655,10 @@
+       watchos = kernels.ios;
+       tvos = kernels.ios;
+       win32 = kernels.windows;
++      # `gnu` resolves to the Hurd kernel — used by 2-tuple parsing of
++      # `i686-gnu`, the form upstream gnumach/MIG/Hurd documentation
++      # uses on its configure invocations.
++      gnu = kernels.hurd;
+     };
+ 
+   ################################################################################
+@@ -815,8 +832,22 @@
+             kernel = elemAt l 1;
+           };
+       "3" =
+-        # cpu-kernel-environment
++        # GNU Hurd: `<cpu>-<vendor>-gnu` (e.g. i686-pc-gnu, i686-unknown-gnu).
++        # Must be checked BEFORE the cpu-kernel-environment branch below —
++        # that branch's `elem (elemAt l 2) [... "gnu" ...]` check would
++        # otherwise mis-match Hurd's `gnu` as the abi field with
++        # kernel=<vendor>, which then fails with "Unknown kernel: pc".
+         if
++          elemAt l 2 == "gnu"
++          && (elemAt l 1 == "pc" || elemAt l 1 == "unknown")
++        then
++          {
++            cpu = elemAt l 0;
++            vendor = elemAt l 1;
++            kernel = "gnu";
++          }
++        # cpu-kernel-environment
++        else if
+           elemAt l 1 == "linux"
+           || elem (elemAt l 2) [
+             "eabi"
+@@ -839,6 +870,8 @@
+             "mmixware"
+             "ghcjs"
+             "mingw32"
++            "gnu"
++            "hurd"
+           ]
+           || hasPrefix "freebsd" (elemAt l 2)
+           || hasPrefix "netbsd" (elemAt l 2)
+@@ -962,7 +995,18 @@
+       optAbi = optionalString (abi != abis.unknown) "-${abi.name}";
+       cpuName = if kernel.families ? darwin then darwinArch cpu else cpu.name;
+     in
+-    "${cpuName}-${vendor.name}-${kernelName kernel}${optExecFormat}${optAbi}";
++    # GNU Hurd uses the 2-tuple form `i686-gnu` / `x86_64-gnu` everywhere
++    # in the upstream ecosystem (gnumach docs, MIG docs, cross-hurd,
++    # Debian's DEB_HOST_GNU_TYPE for hurd-i386/hurd-amd64, Sergey
++    # Bugaev's upstream submissions, Guix manifests).  config.sub
++    # canonicalises `i686-gnu` → `i686-pc-gnu` internally for autotools,
++    # but the user-facing prefix (driving cc.targetPrefix) stays as the
++    # 2-tuple — so cross-binaries are named `i686-gnu-gcc`, matching
++    # what every other Hurd consumer expects.
++    if kernel == kernels.hurd then
++      "${cpuName}-${kernel.name}"
++    else
++      "${cpuName}-${vendor.name}-${kernelName kernel}${optExecFormat}${optAbi}";
+ 
+   ################################################################################
+ 
+--- a/lib/systems/inspect.nix
++++ b/lib/systems/inspect.nix
+@@ -300,6 +300,9 @@
+       kernel = {
+         families = { inherit (kernelFamilies) darwin; };
+       };
++    };
++    isHurd = {
++      kernel = kernels.hurd;
+     };
+     isUnix = [
+       isBSD
+@@ -308,6 +311,7 @@
+       isSunOS
+       isCygwin
+       isRedox
++      isHurd
+     ];
+ 
+     isMacOS = {
+--- a/lib/systems/default.nix
++++ b/lib/systems/default.nix
+@@ -154,6 +154,8 @@
+             null
+           else if final.isNone then
+             "newlib"
++          else if final.isHurd then
++            "glibc"
+           # TODO(@Ericson2314) think more about other operating systems
+           else
+             "native/impure";
+@@ -214,6 +216,9 @@
+               wasi = "Wasi";
+               redox = "Redox";
+               genode = "Genode";
++              # GNU Hurd: parsed.kernel.name is "gnu" (see kernels.hurd
++              # in parse.nix); uname -s on real Hurd reports "GNU".
++              gnu = "GNU";
+             }
+             .${final.parsed.kernel.name} or null;
+ 
+@@ -245,6 +250,7 @@
+           (
+             isAndroid
+             || isGnu
++            || isHurd
+             || isMusl # Linux (allows multiple libcs)
+             || isDarwin
+             || isSunOS
