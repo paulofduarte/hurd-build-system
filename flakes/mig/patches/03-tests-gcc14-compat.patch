@@ -1,0 +1,79 @@
+From 39baf09b58d626d46be3da79a3ab4f41deb37426 Mon Sep 17 00:00:00 2001
+From: Flavio Cruz <flaviocruz@gmail.com>
+Date: Wed, 3 Jul 2024 21:38:43 +0100
+Subject: [PATCH] Make the MiG test suite compatible with GCC 14.
+
+We need to expose the function declarations in mig_support.h.
+
+Also fix test setup to work well in cases the build directory is not
+inside the source directory.
+Message-ID: <jjbpmhtxy4nybcmhlzueeenyv5taj4zygmsx6w336ggzcbr5yx@tnkp2ycfkf3t>
+---
+ tests/bad/Makefile.am             |  2 +-
+ tests/generate-only/Makefile.am   |  2 +-
+ tests/good/Makefile.am            |  2 +-
+ tests/includes/mach/mig_support.h | 18 +++++++++++++++++-
+ 4 files changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/tests/bad/Makefile.am b/tests/bad/Makefile.am
+index 2e1bf37..3af60eb 100644
+--- a/tests/bad/Makefile.am
++++ b/tests/bad/Makefile.am
+@@ -18,6 +18,6 @@
+ 
+ TESTS = invalid_subsystem.defs no_request_port.defs no_subsystem.defs
+ EXTRA_DIST = $(TESTS) run_bad_test.sh
+-DEFS_LOG_COMPILER = sh ./$(srcdir)/run_bad_test.sh
++DEFS_LOG_COMPILER = sh $(srcdir)/run_bad_test.sh
+ 
+ include $(srcdir)/../Makeconf.am
+diff --git a/tests/generate-only/Makefile.am b/tests/generate-only/Makefile.am
+index d936d8a..d6294fa 100644
+--- a/tests/generate-only/Makefile.am
++++ b/tests/generate-only/Makefile.am
+@@ -18,6 +18,6 @@
+ 
+ TESTS = subsystem-kernel.defs subsystem-user.defs
+ EXTRA_DIST = $(TESTS) run_generate_only_test.sh
+-DEFS_LOG_COMPILER = sh ./$(srcdir)/run_generate_only_test.sh
++DEFS_LOG_COMPILER = sh $(srcdir)/run_generate_only_test.sh
+ 
+ include $(srcdir)/../Makeconf.am
+diff --git a/tests/good/Makefile.am b/tests/good/Makefile.am
+index c5d8d7e..f01ccea 100644
+--- a/tests/good/Makefile.am
++++ b/tests/good/Makefile.am
+@@ -19,6 +19,6 @@
+ TESTS = case.defs complex-types.defs directions.defs import.defs \
+         routine.defs types.defs waittime.defs
+ EXTRA_DIST = $(TESTS) run_good_test.sh
+-DEFS_LOG_COMPILER = sh ./$(srcdir)/run_good_test.sh
++DEFS_LOG_COMPILER = sh $(srcdir)/run_good_test.sh
+ 
+ include $(srcdir)/../Makeconf.am
+diff --git a/tests/includes/mach/mig_support.h b/tests/includes/mach/mig_support.h
+index e725a63..78c1f03 100644
+--- a/tests/includes/mach/mig_support.h
++++ b/tests/includes/mach/mig_support.h
+@@ -1 +1,17 @@
+-/* This file allows the testsuite to compile under Linux.  */
++/* This file allows the testsuite to compile under Linux
++ * which doesn't have mach/mig_support.h */
++
++#ifndef	_MACH_MIG_SUPPORT_H
++
++#define	_MACH_MIG_SUPPORT_H 1
++
++#include <mach/std_types.h>
++#include <string.h>
++
++mach_port_t mig_get_reply_port (void);
++void mig_dealloc_reply_port (mach_port_t);
++void mig_put_reply_port (mach_port_t);
++void mig_allocate (vm_address_t *__addr_p, vm_size_t __size);
++void mig_deallocate (vm_address_t __addr, vm_size_t __size);
++
++#endif
+-- 
+2.54.0
+

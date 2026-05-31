@@ -81,6 +81,28 @@ let
       # iterative dev — that path bypasses nix).
       src = srcInput;
 
+      # Cross-build fixes that landed upstream after the v1.8+git20231217
+      # release tag but before our v1.8+git20260524 baseline, needed to build
+      # an older mig source (the reference uses that 2023 tag) in this setup:
+      #   00  accept a TARGET_CC whose name isn't <target>-gcc (we supply the
+      #       bare-metal i686-unknown-none-elf-gcc, not i686-gnu-gcc) — without
+      #       it configure aborts with "could not find a compiler".
+      #   01  test harness honours external CFLAGS (our gnumach-headers -I).
+      #   02  test harness preprocesses .defs with the target compiler.
+      #   03  GCC-14 compat: declare the mig_*_reply_port prototypes and pull
+      #       <string.h> into the test's bundled mig_support.h (modern compilers
+      #       reject the implicit declarations the 2023 fixtures relied on).
+      # All four are in current / post-merge pins, so this guard is a no-op
+      # for the working source; it only fires for an older mig-src rev (the
+      # reference tag).  Guarded by the input's commit date.
+      patches = lib.optionals
+        (builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000") < "20260524")
+        [ ./patches/00-accept-non-canonical-cross-compilers.patch
+          ./patches/01-tests-honour-external-cflags.patch
+          ./patches/02-tests-preprocess-defs-target-compiler.patch
+          ./patches/03-tests-gcc14-compat.patch
+        ];
+
       # autoreconfHook supplies autoconf/automake/libtool/m4 + runs autoreconf.
       # bison/flex are MIG's own needs (parser.y + lexxer.l); awk comes from
       # stdenv.  The cross cc is for TARGET_CC (cpu.symc) + the test stubs.

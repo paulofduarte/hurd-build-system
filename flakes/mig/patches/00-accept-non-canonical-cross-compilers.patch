@@ -1,0 +1,26 @@
+From d9d2d5936e71e65e8f35ca79cae3f07c00db3515 Mon Sep 17 00:00:00 2001
+From: Samuel Thibault <samuel.thibault@ens-lyon.org>
+Date: Fri, 2 Feb 2024 11:07:22 +0100
+Subject: [PATCH] Accept non-canonical cross-compilers
+
+to let people use gnu 32bit compilers from e.g. Linux
+---
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/configure.ac b/configure.ac
+index e4645bd..7effa43 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -42,7 +42,7 @@ AC_HEADER_STDC
+   TARGET_CC='${CC}'
+ else]
+   AC_CHECK_PROG([TARGET_CC], [$target_alias-gcc], [$target_alias-gcc], [none])
+-  [if [ x"$TARGET_CC" != x"$target_alias"-gcc ]; then]
++  [if [ x"$TARGET_CC" = xnone ]; then]
+     AC_MSG_ERROR([could not find a compiler for the target you requested])
+   [fi
+ fi]
+-- 
+2.54.0
+

@@ -60,9 +60,57 @@
       ref   = "release/2.43/master";
       flake = false;
     };
+
+    # Reference pins for the cross-toolchain (Part 2 of the libc decoupling,
+    # see .claude/docs/build/TOOLCHAIN-LIBC-DECOUPLING.md).  gcc's libgcc_s /
+    # libstdc++ are built against the REFERENCE glibc, which is built from
+    # these *-ref-src trees (+ the headers / mig they consume).  The working
+    # *-src inputs above feed the wrapped cc + the userland.
+    #
+    # Pinned to upstream RELEASE TAGS — gcc binds released versions, a stable
+    # baseline.  `nix flake update` moves the working branches but leaves the
+    # tags put, so gcc rebuilds only on a deliberate rebaseline (bump a tag).
+    # The tags trail the working branch tips, so the reference and working
+    # chains are distinct builds (no collapse): the reference is the frozen
+    # baseline, the working chain is what you hack.  mig's latest release tag
+    # predates our test-harness fixes, so the reference mig picks them up via
+    # the date-guarded patches in flakes/mig/default.nix.
+    #
+    # The savannah tags carry their resolved `rev` too: the tag is the
+    # human-readable pin; the rev makes the lock reproducible and resolvable
+    # from a local cache when savannah is unreachable (it is flaky — sourceware
+    # is reliable, so glibc-ref stays tag-only).
+    gnumach-ref-src = {
+      type  = "git";
+      url   = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
+      ref   = "refs/tags/v1.8+git20260224";
+      rev   = "004116a3a862e872df005e8f6af0d4ea87d506fe";
+      flake = false;
+    };
+    mig-ref-src = {
+      type  = "git";
+      url   = "https://git.savannah.gnu.org/git/hurd/mig.git";
+      ref   = "refs/tags/v1.8+git20231217";
+      rev   = "3b1fcb2b83bb26d43dc912884499345f561d0b6a";
+      flake = false;
+    };
+    hurd-ref-src = {
+      type  = "git";
+      url   = "https://git.savannah.gnu.org/git/hurd/hurd.git";
+      ref   = "refs/tags/v0.9.git20260527";
+      rev   = "d6a94f56ef421ca92f3cd573262f6a096191b240";
+      flake = false;
+    };
+    glibc-ref-src = {
+      type  = "git";
+      url   = "https://sourceware.org/git/glibc.git";
+      ref   = "refs/tags/glibc-2.43";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src, ... }:
+  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src
+                   , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src, ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` — independent of host.
@@ -101,7 +149,8 @@
       # thus doesn't retrigger the toolchain-cache CI.
       pkgOutputs = import ./packages.nix {
         inherit nixpkgs self forAllSystems targets crossToolchain hurdToolchain
-                gnumach-src mig-src hurd-src glibc-src;
+                gnumach-src mig-src hurd-src glibc-src
+                gnumach-ref-src mig-ref-src hurd-ref-src glibc-ref-src;
       };
     in
     {

@@ -1,0 +1,56 @@
+From f29ab50fa90365ddca025c57af19c7f2ffc31e86 Mon Sep 17 00:00:00 2001
+From: Paulo Duarte <paulofernandobd@gmail.com>
+Date: Sun, 24 May 2026 03:07:36 +0100
+Subject: [PATCH] tests: honour external CFLAGS in test_lib.sh
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The test harness hardcoded CFLAGS="-I$TEST_DIR/includes", overwriting
+any externally-supplied CFLAGS. That works on a Hurd development box
+(or any host with Mach userland headers installed under standard
+search paths) but breaks `make check` on every other host: the
+generated stubs `#include <mach/boolean.h>` etc., and the test
+includes/ tree only ships `mach/mig_support.h` — the rest were
+implicitly expected to come from the system's installed Mach
+headers.
+
+Append rather than overwrite, so cross-build users can supply their
+target's installed Mach headers via the standard CFLAGS env var:
+
+    make check CFLAGS="-I/path/to/dist/include"
+
+Test-suite stubs still take precedence (they come first on the
+include path), so any test relying on a stub definition is
+unaffected.
+
+Verified by running `make check` on macOS aarch64 with a freshly
+installed gnumach header tree — all 7 tests in tests/good/ now
+pass; bad/ and generate-only/ behaviour unchanged.
+Message-ID: <20260524020736.70776-1-paulofernandobd@gmail.com>
+---
+ tests/test_lib.sh | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/tests/test_lib.sh b/tests/test_lib.sh
+index 60241d9..43ef738 100644
+--- a/tests/test_lib.sh
++++ b/tests/test_lib.sh
+@@ -20,7 +20,13 @@
+ 
+ MIGCOM="$BUILDDIR/migcom"
+ TEST_DIR="$SRCDIR/tests"
+-CFLAGS="-I$TEST_DIR/includes"
++
++# Honour an externally-supplied CFLAGS so that cross-build / non-Hurd
++# hosts can point the test harness at their installed Mach userland
++# headers (e.g. `make check CFLAGS=-I/path/to/mach/include`). The
++# test-suite's own stubs come first so test-controlled definitions
++# always win, with external paths searched as a fallback.
++CFLAGS="-I$TEST_DIR/includes ${CFLAGS:-}"
+ 
+ failure () {
+   msg="$1"
+-- 
+2.54.0
+

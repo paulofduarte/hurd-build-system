@@ -114,6 +114,24 @@ HURD_CONFIGURED  := $(HURD_BUILD)/config.status
 DIST_HURD        := $(DIST)/hurd
 NIX_HURD_RESULT  := $(FLAKES)/hurd/result-$(ARCH)
 
+# Working glibc clone (populated by `make srcs`, hackable like the kernel
+# sources — see flakes/sources toolchainOnly + TOOLCHAIN-LIBC-DECOUPLING.md).
+GLIBC_SRC        := $(SRC)/glibc
+
+# In-tree working-source overrides.  When a src/<name> clone exists, point
+# the matching WORKING flake input at it (bare local path → nix git-tree
+# semantics: tracked + uncommitted edits, without copying .git) so nix
+# builds the working chain from local edits — the point of in-tree
+# hacking.  The frozen `*-ref-src` twins are NEVER overridden, so gcc's
+# reference glibc — and thus gcc — stays put: a glibc/header/mig hack
+# rebuilds the working glibc + userland, never the 25-min gcc.  Applied to
+# every nix invocation that builds the userland or its toolchain (dev shell
+# + dist-hurd + check-glibc).  (Commit edits before cross-host verifying —
+# nix caches the dirty tree per the known dirty-source nuance.)
+_WORKING_SRC_NAMES := gnumach mig hurd glibc
+_WORKING_OVERRIDES := $(foreach n,$(_WORKING_SRC_NAMES),\
+  $(if $(wildcard $(SRC)/$(n)/.git),--override-input $(n)-src $(SRC)/$(n),))
+
 # Nix-built per-target outputs.  `nix build -o <path>` creates a
 # gc-root symlink at <path> pointing into /nix/store.  Each `dist-*`
 # rule copies real bytes out of these into the user-visible $(DIST)
@@ -171,6 +189,9 @@ help:
 	@echo "  srcs             populate/reconcile src/ working clones from the nix source pins"
 	@echo "  show-srcs-pins   print the current source pins (what nix is building from)"
 	@echo "  pin-srcs         bump the pinned source revs to their forks' branch HEADs (verbose)"
+	@echo "  check-glibc      deep glibc ABI check vs the reference (Tier-2 abidiff; Linux host)"
+	@echo "  check-glibc-full deep + heavy ABI probes (pahole/conform/acc; Linux host)"
+	@echo "  rebaseline-ref   re-resolve the frozen *-ref-src pins (new gcc ABI baseline; ~25min)"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
 	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + flake gc-roots"
@@ -311,6 +332,48 @@ pin-srcs:
 show-srcs-pins:
 	@bash flakes/sources/show-pins.sh
 
+# ---- ABI gate deep checks (arch-specific) ----
+# The AUTOMATIC gate (Tier-1 + cheap/Hurd Tier-3 probes 00,10-19) already
+# runs inside every nix build whose working glibc diverges from the
+# reference — no command needed, DWARF-free, on every host.  These targets
+# run the EXPLICIT deep checks the doc reserves for the hacker / CI:
+#   check-glibc       deep: + Tier-2 abidiff (struct/signature drift behind
+#                     a stable symbol) on unstripped variants built on
+#                     demand, + header self-include (probe 21).
+#   check-glibc-full  + heavy Tier-3: pahole struct-offsets/layout, glibc
+#                     conform, abi-compliance-checker (probes 20,22,23,24).
+# Tier-2/heavy tooling (libabigail, pahole) is Linux-only in nixpkgs, so
+# these BUILD ONLY ON A LINUX HOST (e.g. `orb` aarch64/x86_64); on darwin
+# nix reports the unsupported platform and stops.  The override flags feed
+# any src/ working clones, so the check reflects local edits.
+# SKIP on darwin: libabigail/pahole are Linux-only in nixpkgs, so these
+# deep/full reports only exist on `*-linux` (see packages.nix abiReportPkgs).
+# Run them on a Linux host (e.g. `orb` aarch64-linux).  The automatic ABI
+# gate runs on every nix build regardless of host.  The planned
+# sidekick-backed shim will make these uniform across hosts.
+.PHONY: check-glibc check-glibc-full
+_DARWIN_SKIP = echo "$@: SKIPPED on darwin — libabigail/pahole are Linux-only in nixpkgs."; \
+	echo "  The automatic ABI gate still runs on every nix build here; run this deep check on a Linux host"; \
+	echo "  (e.g. 'orb' aarch64-linux).  Uniform sidekick-backed tooling is the planned follow-up."
+
+check-glibc:
+	@if [ "$$(uname -s)" = "Darwin" ]; then $(_DARWIN_SKIP); else \
+	  $(NIX_FLAKE) build $(_WORKING_OVERRIDES) $(PROJ)\#abi-check-$(ARCH) --no-link -L; fi
+
+check-glibc-full:
+	@if [ "$$(uname -s)" = "Darwin" ]; then $(_DARWIN_SKIP); else \
+	  $(NIX_FLAKE) build $(_WORKING_OVERRIDES) $(PROJ)\#abi-check-full-$(ARCH) --no-link -L; fi
+
+# ---- rebaseline-ref (always-on, arch-independent) ----
+# The deliberate "the working ABI changed on purpose — accept it as the new
+# baseline" action.  Re-resolves the frozen reference pins (the *-ref-src
+# tags) to their current rev, so gcc rebuilds once against the new
+# reference (~25 min) and the gate thereafter compares against it.  For a
+# NEW release baseline, bump the tag in flake.nix first, then run this.
+.PHONY: rebaseline-ref
+rebaseline-ref:
+	$(NIX_FLAKE) flake update glibc-ref-src gnumach-ref-src hurd-ref-src mig-ref-src
+
 # ---- hurd / dist-hurd ----
 # `make hurd`      — in-tree incremental userland build under
 #                    work/hurd/$(ARCH).  Counterpart to `make mach`: edit
@@ -327,7 +390,7 @@ show-srcs-pins:
 # Run a command inside this arch's Hurd dev shell.  Absolute flakeref so
 # it resolves regardless of the recipe's cwd.  The `#` is escaped (`\#`)
 # because an unescaped `#` starts a comment in a make variable assignment.
-HURD_DEVELOP := $(NIX_FLAKE) develop $(PROJ)\#hurd-$(ARCH) --command
+HURD_DEVELOP := $(NIX_FLAKE) develop $(_WORKING_OVERRIDES) $(PROJ)\#hurd-$(ARCH) --command
 
 .PHONY: hurd dist-hurd
 
@@ -357,7 +420,7 @@ dist-hurd: $(DIST_HURD)/.stamp
 
 $(DIST_HURD)/.stamp: flakes/hurd/default.nix flake.nix
 	@mkdir -p $(dir $(NIX_HURD_RESULT))
-	$(NIX_FLAKE) build .#hurd-$(ARCH) -o $(NIX_HURD_RESULT)
+	$(NIX_FLAKE) build $(_WORKING_OVERRIDES) .#hurd-$(ARCH) -o $(NIX_HURD_RESULT)
 	@rm -rf $(DIST_HURD)
 	@mkdir -p $(DIST_HURD)
 	cp -r $(NIX_HURD_RESULT)/. $(DIST_HURD)/
@@ -376,7 +439,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # don't enter the dev shell — its nix build is arch-independent.  When pulled
 # in as a prereq of `run` (which DOES dispatch), it still runs inside the
 # dev shell as part of the inner-make recipe.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins hurd dist-hurd,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins hurd dist-hurd check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND

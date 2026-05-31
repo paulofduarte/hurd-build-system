@@ -1,0 +1,29 @@
+From cb48044b30fcfe10529ecc1129dd68e93ed73835 Mon Sep 17 00:00:00 2001
+From: Paulo Duarte <paulofernandobd@gmail.com>
+Date: Tue, 26 May 2026 07:08:50 +0100
+Subject: [PATCH] tests: preprocess .defs with target compiler, not host cpp
+
+run_mig used bare cpp, so cross-test preprocessing saw host
+macros, not the target's.  Switch to "$CC -E -x c" -- matches
+mig.in's production preprocessing.
+Message-ID: <20260526060850.74536-1-paulofernandobd@gmail.com>
+---
+ tests/test_lib.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/test_lib.sh b/tests/test_lib.sh
+index 43ef738..7cbe639 100644
+--- a/tests/test_lib.sh
++++ b/tests/test_lib.sh
+@@ -38,7 +38,7 @@ run_mig () {
+   file="$1"
+   module="$2"
+   echo "Generating stubs for $module..."
+-  cpp $file -I$TEST_DIR | $MIGCOM -server $module-server.c -user $module-user.c -header $module-header.h
++  ${CC:-cc} -E -x c $file -I$TEST_DIR | $MIGCOM -server $module-server.c -user $module-user.c -header $module-header.h
+ }
+ 
+ test_module () {
+-- 
+2.54.0
+

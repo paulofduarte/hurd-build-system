@@ -28,6 +28,7 @@ let
   pkgs       = import ./pkgs.nix      { inherit nixpkgs libHurd; };
   toolchain  = import ./toolchain.nix { inherit nixpkgs; inherit (pkgs) mkHurdCrossPkgs; };
   devShell   = import ./dev-shell.nix { inherit nixpkgs; };
+  abiCheck   = import ./abi-check.nix { inherit nixpkgs; inherit (pkgs) mkHurdCrossPkgs; };
 in
 
-pkgs // toolchain // devShell
+pkgs // toolchain // devShell // abiCheck

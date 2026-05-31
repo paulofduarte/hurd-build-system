@@ -39,27 +39,35 @@ let
   # present (withoutTargetLibc=false) so it builds libgcc_s + libstdc++,
   # C++ enabled, shared libs on.  Reusing the stage-1 cc's `.override`
   # keeps every nixpkgs gcc patch/phase; only the libc-facing knobs flip.
-  finalGcc = system: target: glibcHurd:
+  #
+  # libcCross is the REFERENCE glibc (Part 2 of the libc decoupling):
+  # libgcc_s / libstdc++ are built against it once and stay valid against the
+  # ABI-compatible working glibc (the POSIX wall — they don't encode the Mach
+  # RPC ABI).  So gcc rebuilds only when the reference changes (a deliberate
+  # *-ref-src bump), NOT when you hack the working glibc / headers / mig.
+  finalGcc = system: target: refGlibc:
     (mkHurdCrossPkgs system target).buildPackages.gccWithoutTargetLibc.cc.override {
       withoutTargetLibc = false;
       langCC            = true;
-      libcCross         = glibcHurd;
+      libcCross         = refGlibc;
       enableShared      = true;
     };
 
-  # The wrapped cross-cc.  Both the cc-wrapper and the bintools-wrapper
-  # are pointed at glibc-hurd; using the glibc-hurd-wrapped binutils
-  # (rather than the default cross binutils wrapper) avoids dragging in
-  # nixpkgs' own glibc, whose meta.platforms gate refuses the Hurd
-  # target at eval time.
-  wrappedToolchain = system: target: glibcHurd:
+  # The wrapped cross-cc.  `cc` is the reference-built gcc; the cc-wrapper and
+  # bintools-wrapper are pointed at the WORKING glibc (its headers / crt /
+  # ld.so / augmented libc.so GROUP).  Re-pointing `working` is a wrapper
+  # rebuild (seconds) — `wrapCCWith` never recompiles `cc`, so hacking the
+  # working glibc doesn't rebuild gcc.  (Using the glibc-wrapped binutils
+  # rather than the default cross binutils wrapper avoids dragging in nixpkgs'
+  # own glibc, whose meta.platforms gate refuses the Hurd target at eval time.)
+  wrappedToolchain = system: target: { reference, working }:
     let bp = (mkHurdCrossPkgs system target).buildPackages; in
     bp.wrapCCWith {
-      cc       = finalGcc system target glibcHurd;
-      libc     = glibcHurd;
+      cc       = finalGcc system target reference;
+      libc     = working;
       bintools = bp.wrapBintoolsWith {
         bintools = bp.binutils-unwrapped;
-        libc     = glibcHurd;
+        libc     = working;
       };
     };
 in
@@ -89,16 +97,20 @@ in
     lib.listToAttrs pairs;
 
   # Post-libc components merged into packages.<system>: the final gcc +
-  # wrapped toolchain per target.  `glibcHurd` is the attrset returned
-  # by glibc.nix (keys `glibc-hurd-<name>`), threaded in from
-  # packages.nix once glibc-hurd is built.
-  mkFinal = system: targets: glibcHurd:
+  # wrapped toolchain per target.  `provider` is { reference; working; },
+  # each the attrset glibc.nix returns (keys `glibc-hurd-<name>`): gcc's
+  # libcCross binds the reference glibc, the wrapped cc points at the working
+  # one.  Threaded in from packages.nix once both glibcs are built.
+  mkFinal = system: targets: { reference, working }:
     let
       hts = hurdTargets targets;
       pairs = lib.concatLists (lib.mapAttrsToList (name: target:
-        let g = glibcHurd."glibc-hurd-${name}"; in [
-          { name = "hurd-gcc-${name}";       value = finalGcc system target g; }
-          { name = "hurd-toolchain-${name}"; value = wrappedToolchain system target g; }
+        let
+          refG  = reference."glibc-hurd-${name}";
+          workG = working."glibc-hurd-${name}";
+        in [
+          { name = "hurd-gcc-${name}";       value = finalGcc system target refG; }
+          { name = "hurd-toolchain-${name}"; value = wrappedToolchain system target { reference = refG; working = workG; }; }
         ]) hts);
     in
     lib.listToAttrs pairs;

@@ -1,0 +1,13 @@
+# libabigail suppression file for the Tier-2 `abidiff` probe (05-abidiff).
+# Curates out known-benign noise so a real incompatibility (abidiff exit
+# bit 0x08) isn't drowned by harmless churn.  Format: libabigail's
+# suppression-specification syntax (see `info libabigail`).
+#
+# Start empty — add stanzas only for confirmed false positives, with a
+# one-line reason, so the gate stays honest.  Common candidates on glibc:
+# IFUNC resolver thunks and hand-written asm aliases that carry no DWARF
+# (abidiff reports them as "no debug info"); uncomment if they appear.
+
+# [suppress_function]
+#   # IFUNC selectors have no DWARF; their ABI is the resolved impl's.
+#   name_regexp = ^__.*_ifunc$
