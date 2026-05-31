@@ -46,9 +46,23 @@
       ref   = "master";
       flake = false;
     };
+    # GNU libc for the Hurd cross-toolchain.  Pinned to the 2.43
+    # release branch — x86_64-gnu support landed in 2.40 (July 2024)
+    # and the active hurd-amd64 patch set lives in 2.40+.  The
+    # release/2.43/master branch is the stable tip with all backports.
+    # Source comes from upstream sourceware, mirroring the convention
+    # used by the other *-src inputs (savannah for the Hurd projects,
+    # sourceware for glibc — both authoritative for their respective
+    # codebases).
+    glibc-src = {
+      type  = "git";
+      url   = "https://sourceware.org/git/glibc.git";
+      ref   = "release/2.43/master";
+      flake = false;
+    };
   };
 
-  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, ... }:
+  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src, ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` — independent of host.
@@ -87,7 +101,7 @@
       # thus doesn't retrigger the toolchain-cache CI.
       pkgOutputs = import ./packages.nix {
         inherit nixpkgs self forAllSystems targets crossToolchain hurdToolchain
-                gnumach-src mig-src hurd-src;
+                gnumach-src mig-src hurd-src glibc-src;
       };
     in
     {

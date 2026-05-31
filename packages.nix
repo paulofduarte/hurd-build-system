@@ -20,7 +20,7 @@
 #   srcInput               — the gnumach-src / mig-src flake input (pinned
 #                            github fork rev; see flakes/sources).
 
-{ nixpkgs, self, forAllSystems, targets, crossToolchain, hurdToolchain, gnumach-src, mig-src, hurd-src }:
+{ nixpkgs, self, forAllSystems, targets, crossToolchain, hurdToolchain, gnumach-src, mig-src, hurd-src, glibc-src }:
 
 let
   inherit (nixpkgs) lib;
@@ -32,6 +32,7 @@ let
   gnumachInfo = sourcesLib.info self "gnumach-src" gnumach-src;
   migInfo     = sourcesLib.info self "mig-src" mig-src;
   hurdInfo    = sourcesLib.info self "hurd-src" hurd-src;
+  glibcInfo   = sourcesLib.info self "glibc-src" glibc-src;
 in
 {
   packages = forAllSystems (system:
@@ -78,6 +79,17 @@ in
       # see target-archs.nix).  Uses the patched nixpkgs from
       # flakes/lib-systems-hurd so the *-gnu triplet parses.
       hurdToolchainPkgs = mkAll system targets;
+
+      # glibc-hurd: per-target Hurd C library, built from vanilla
+      # upstream glibc via the stage-1 cross-toolchain.  Its own module
+      # (flakes/hurd-toolchain/glibc.nix) so the Mach + Hurd headers +
+      # mig get cleanly threaded.
+      glibcHurd = import ./flakes/hurd-toolchain/glibc.nix {
+        inherit nixpkgs system targets mig gnumachHeaders hurdHeaders self;
+        inherit (hurdToolchain) mkHurdCrossPkgs;
+        srcInput = glibc-src;
+        forkUrl  = glibcInfo.forkUrl;
+      };
     in
     gnumach
     // gnumachHeaders
@@ -86,7 +98,8 @@ in
     // hurd
     // sidekick
     // toolchains
-    // hurdToolchainPkgs);
+    // hurdToolchainPkgs
+    // glibcHurd);
 
   apps = forAllSystems (system: import ./flakes/run {
     inherit nixpkgs system targets crossToolchain;

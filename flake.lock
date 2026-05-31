@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "glibc-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779975260,
+        "narHash": "sha256-8YU0hRdT52qn+bw4+XF5pqGD0GNPXmiUbFx1vJW4FZE=",
+        "ref": "release/2.43/master",
+        "rev": "a47b5b2b3eee486c4bea0df65af775296a13f09d",
+        "revCount": 43355,
+        "type": "git",
+        "url": "https://sourceware.org/git/glibc.git"
+      },
+      "original": {
+        "ref": "release/2.43/master",
+        "type": "git",
+        "url": "https://sourceware.org/git/glibc.git"
+      }
+    },
     "gnumach-src": {
       "flake": false,
       "locked": {
@@ -69,6 +86,7 @@
     },
     "root": {
       "inputs": {
+        "glibc-src": "glibc-src",
         "gnumach-src": "gnumach-src",
         "hurd-src": "hurd-src",
         "mig-src": "mig-src",

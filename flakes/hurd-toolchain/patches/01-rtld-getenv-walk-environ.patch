@@ -1,0 +1,46 @@
+elf/rtld: walk _environ directly in process_envvars_secure (Hurd link fix).
+
+The plain `getenv(nextp)` call inside process_envvars_secure (added in
+glibc commit 59974938fe1f4add, 2024-04-16) is unresolved when linking
+ld.so: ld.so does not link against libc, and the elf/Makefile
+rtld-libc.a discovery pass does not always pull stdlib/getenv.os in via
+the libc_pic.a probe.  A Linux host happens to satisfy this through its
+libc_pic.a symbol-table walk; cross-building from a non-Linux host
+(e.g. macOS) trips with `undefined reference to 'getenv'` at the ld.so
+link, which is done with -Wl,-z,defs (no undefined symbols permitted).
+
+Fix: walk _environ directly.  _environ, strlen, strncmp, and unsetenv
+are all already used in this same function, so this adds no new
+link-time dependency.  The semantic is identical: increment skip_env
+iff the named variable is set, then unsetenv it.  Correct on every
+port, so upstreamable as-is.
+
+--- a/elf/rtld.c
++++ b/elf/rtld.c
+@@ -2555,12 +2555,20 @@
+   do
+     {
+       /* Keep track of the number of environment variables that were set in
+-         the environment and are unset below.  Use getenv() which returns
+-	 non-NULL if the variable is set in the environment.  This count is
+-	 needed if we need to adjust the location of the AUX vector on the
+-	 stack when running ld.so directly. */
+-      if (getenv (nextp) != NULL)
+-        skip_env++;
++         the environment and are unset below.  Walk _environ directly
++         instead of calling getenv(): on the GNU Hurd, ld.so does not link
++         against libc, so the elf/Makefile rtld-libc.a discovery pass does
++         not always pull stdlib/getenv.os in (the Linux build happens to,
++         via a libc_pic.a quirk we don't share).  The count feeds into the
++         auxv shuffle in _dl_start_args_adjust when running ld.so directly,
++         so a working substitute is required, not a stub returning NULL.  */
++      size_t nlen = strlen (nextp);
++      for (char **ep = _environ; *ep != NULL; ++ep)
++	if (strncmp (*ep, nextp, nlen) == 0 && (*ep)[nlen] == '=')
++	  {
++	    skip_env++;
++	    break;
++	  }
+ 
+       unsetenv (nextp);
+       nextp = strchr (nextp, '\0') + 1;
