@@ -25,7 +25,7 @@
 let
   inherit (nixpkgs) lib;
   inherit (crossToolchain) mkCrossPkgs mkToolchain;
-  inherit (hurdToolchain) mkAll;
+  inherit (hurdToolchain) mkAll mkFinal;
   # Fork-id metadata (owner/repo/ref) derived from the `*-src` inputs via
   # flake.lock — see flakes/sources.  Feeds the version string's fork field.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -90,6 +90,10 @@ in
         srcInput = glibc-src;
         forkUrl  = glibcInfo.forkUrl;
       };
+
+      # Final cross-gcc + wrapped toolchain per target, built against
+      # glibc-hurd: `hurd-gcc-<arch>` + `hurd-toolchain-<arch>`.
+      hurdFinalPkgs = mkFinal system targets glibcHurd;
     in
     gnumach
     // gnumachHeaders
@@ -99,7 +103,8 @@ in
     // sidekick
     // toolchains
     // hurdToolchainPkgs
-    // glibcHurd);
+    // glibcHurd
+    // hurdFinalPkgs);
 
   apps = forAllSystems (system: import ./flakes/run {
     inherit nixpkgs system targets crossToolchain;
