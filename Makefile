@@ -362,13 +362,36 @@ show-srcs-pins:
 # bumps only the mig pin.  The source name is passed through to the same
 # scripts, which validate it against .#srcs and abort on an unknown name — so
 # these pattern rules need no hardcoded source list (a new *-src input gets its
-# targets for free).  No file is ever named src-*/pin-src-*, so the recipe
-# always runs (effectively phony; .PHONY can't carry a % pattern).
-src-%:
+# targets for free).
+#
+# `src-<name>` is gated by a sentinel against flake.lock: the pin it reconciles
+# to is derived from flake.lock (via .#srcs), so a sync is only needed when
+# flake.lock moved since the last one (e.g. after `make pin-src-<name>`).  The
+# per-source stamp lives under work/ — never in src/, which a stamp would
+# dirty.  When flake.lock is unchanged, `make src-<name>` is a no-op (no git
+# fetch/checkout).  Removing the stamp — or `make mrproper`, which wipes work/
+# — forces a re-sync; `make srcs` (all) stays unconditional as the hammer.
+# (pin-src-<name> mutates flake.lock, so it is never gated.)
+SRC_STAMP_DIR := $(WORK)/.src-stamps
+
+src-%: $(SRC_STAMP_DIR)/%
+	@:
+
+$(SRC_STAMP_DIR)/%: $(PROJ)/flake.lock
+	@mkdir -p $(SRC_STAMP_DIR)
 	@bash flakes/sources/sync.sh $*
+	@touch $@
 
 pin-src-%:
 	@bash flakes/sources/pin.sh $*
+
+# Goals that build from each in-tree source — used to auto-bootstrap an absent
+# clone (see the _dispatch gating below).  mach + the header/dist goals build
+# from src/gnumach; hurd + all/dist build from src/hurd.  (hurd itself does NOT
+# need src/gnumach: its Mach headers come from the toolchain sysroot, and mig
+# from the shell unless opted in.)
+_GNUMACH_GOALS := prepare headers dist-headers mach dist-mach check check-mach all dist
+_HURD_GOALS    := hurd dist-hurd all dist
 
 # ---- mig (no-op when not opted into in-tree; always-on, arch-independent) ----
 # Without an in-tree src/mig, mig is provided by the dev shell ($MIG) — so
@@ -721,6 +744,28 @@ _dispatch:
 
 $(_BUILD_GOALS): _dispatch
 	@:
+
+# Auto-bootstrap an absent in-tree source before dispatching the build.  When
+# src/gnumach (resp. src/hurd) has no clone and a goal that builds from it is
+# requested, make _dispatch depend on src-gnumach (resp. src-hurd): the dev
+# shell can't run until the clone completes, so a bare checkout self-bootstraps
+# without a manual `make srcs` — robust under -j (a hard prereq, not sibling
+# ordering).  Present sources are never touched (no auto-sync; local edits are
+# safe).  A stale flake.lock stamp from a since-deleted clone is dropped first
+# so src-gnumach actually re-clones rather than short-circuiting.  mig stays
+# opt-in — no bootstrap.
+ifeq ($(wildcard $(GNUMACH_SRC)/.git),)
+ifneq ($(filter $(_GNUMACH_GOALS),$(_BUILD_GOALS)),)
+_RESET_GNUMACH_STAMP := $(shell rm -f $(SRC_STAMP_DIR)/gnumach 2>/dev/null)
+_dispatch: src-gnumach
+endif
+endif
+ifeq ($(wildcard $(HURD_SRC)/.git),)
+ifneq ($(filter $(_HURD_GOALS),$(_BUILD_GOALS)),)
+_RESET_HURD_STAMP := $(shell rm -f $(SRC_STAMP_DIR)/hurd 2>/dev/null)
+_dispatch: src-hurd
+endif
+endif
 endif
 
 else
