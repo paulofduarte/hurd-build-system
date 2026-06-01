@@ -228,7 +228,6 @@ make pin-srcs      # bump the pins to the forks' branch HEADs; then `make srcs`
 | Target | Action |
 |---|---|
 | `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
-| `prepare` | `autoreconf -i` on `src/gnumach` (MIG no longer needs local autoreconf — its nix derivation handles it) |
 | `dist-headers` | copy gnumach public headers (from nix-built `gnumach-headers-<ARCH>`) into `dist/$(ARCH)/include` |
 | `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` — incremental compile, the path you want while iterating on `src/mig` inside `nix develop`.  For the clean nix-built wrapper, use `nix build .#mig-<ARCH>` directly — MIG is a host-arch tool, intentionally not bundled into `dist/` |
 | `mach` | build the gnumach kernel binary **in-tree** under `work/gnumach/$(ARCH)/` using the in-tree MIG from `make mig` — incremental compile, the path you want while iterating on `src/gnumach` |

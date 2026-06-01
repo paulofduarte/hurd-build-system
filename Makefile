@@ -193,7 +193,6 @@ SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 help:
 	@echo "Targets (for ARCH=$(ARCH)):"
 	@echo "  all              build the gnumach kernel in-tree (default; same as 'mach')"
-	@echo "  prepare          autoreconf the source trees"
 	@echo "  dist-headers     copy gnumach public headers into ./dist/$(ARCH)/include (via nix)"
 	@echo "  mig              build MIG in-tree under ./work/mig/$(ARCH)/ (incremental — for MIG iteration)"
 	@echo "                   (clean nix-built MIG is available via 'nix build .#mig-$(ARCH)')"
@@ -390,7 +389,7 @@ pin-src-%:
 # from src/gnumach; hurd + all/dist build from src/hurd.  (hurd itself does NOT
 # need src/gnumach: its Mach headers come from the toolchain sysroot, and mig
 # from the shell unless opted in.)
-_GNUMACH_GOALS := prepare headers dist-headers mach dist-mach check check-mach all dist
+_GNUMACH_GOALS := headers dist-headers mach dist-mach check check-mach all dist
 _HURD_GOALS    := hurd dist-hurd all dist
 
 # ---- mig (no-op when not opted into in-tree; always-on, arch-independent) ----
@@ -487,7 +486,6 @@ _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push 
 # Goals with no entry here are conservatively always unsatisfied — dispatch
 # runs and gnumach's own make decides what to do.
 
-_PREPARE_FILES   := $(GNUMACH_SRC)/configure
 # The public Mach headers live in the build-only sysroot (mig depends on
 # this).  dist-headers additionally copies them into $(DIST_HEADERS)/include
 # for packaging, but nothing depends on the dist copy's mtime.
@@ -502,10 +500,6 @@ _MIG_FILES       := $(_HEADERS_FILES)
 endif
 _MACH_FILES      := $(_MIG_FILES) $(GNUMACH_KERNEL)
 _DIST_MACH_FILES := $(DIST_MACH)/boot/gnumach
-
-_SENTINEL.prepare      := $(_PREPARE_FILES)
-_PRIMARY.prepare       := $(_PREPARE_FILES)
-_WATCH.prepare         := $(GNUMACH_SRC)/configure.ac
 
 # `headers` installs the Mach public headers into the build-only sysroot
 # (what mig consumes).
@@ -786,7 +780,7 @@ REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC
 $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#x86_64' (or .#x86_64-xen / .#i686 / .#i686-xen))))
 
-.PHONY: all dist prepare headers dist-headers mig mach dist-mach \
+.PHONY: all dist headers dist-headers mig mach dist-mach \
         check check-mach run run-help
 
 # Explicit default — `help` (defined above) would otherwise win the
@@ -801,22 +795,17 @@ all: mach hurd
 
 dist: dist-headers dist-mach dist-hurd
 
-# ---- prepare ----
-# `autoreconf -i` (no -f): install missing aux files and regenerate ONLY
-# when inputs are newer than outputs. Without -f, autoreconf won't rewrite
-# `configure` if it's already up to date — so the mtime stays stable and
-# the downstream ./configure chain doesn't fire spuriously. -fi (force)
-# would unconditionally touch every output, defeating that.
-#
-# MIG no longer has a local autoreconf step — `nix build .#mig-$(ARCH)`
-# autoreconfs inside its sandbox.
-prepare: $(GNUMACH_SRC)/configure
-
 # In-tree builds carry the plain upstream PACKAGE_VERSION — autoreconf reads
 # src/gnumach's committed version.m4 / configure.ac as-is.  The rich build-rev
 # version is stamped only on the nix-built shippable artefacts (flakes/gnumach,
 # flakes/mig), matching Debian/Guix (snapshot lives in the package, not the
 # in-tree binary).  A hacker who wants a custom version edits version.m4.
+#
+# `autoreconf -i` (no -f): install missing aux files and regenerate ONLY when
+# inputs are newer than outputs, so `configure`'s mtime stays stable and the
+# downstream ./configure chain doesn't fire spuriously (-fi would touch every
+# output unconditionally).  Run on demand by the build — there is no separate
+# `prepare` step.
 $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4
 	cd $(GNUMACH_SRC) && autoreconf -i
 
