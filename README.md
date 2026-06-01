@@ -228,11 +228,10 @@ make pin-srcs      # bump the pins to the forks' branch HEADs; then `make srcs`
 | Target | Action |
 |---|---|
 | `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
-| `dist-headers` | copy gnumach public headers (from nix-built `gnumach-headers-<ARCH>`) into `dist/$(ARCH)/include` |
 | `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` — incremental compile, the path you want while iterating on `src/mig` inside `nix develop`.  For the clean nix-built wrapper, use `nix build .#mig-<ARCH>` directly — MIG is a host-arch tool, intentionally not bundled into `dist/` |
 | `mach` | build the gnumach kernel binary **in-tree** under `work/gnumach/$(ARCH)/` using the in-tree MIG from `make mig` — incremental compile, the path you want while iterating on `src/gnumach` |
 | `dist-mach` | copy clean nix-built kernel (`gnumach-<ARCH>`) into `dist/$(ARCH)/boot/gnumach`, plus the GNU Mach Info manual into `dist/$(ARCH)/share/info/mach.info*` and the RPC message-ID table into `dist/$(ARCH)/share/msgids/gnumach.msgids` |
-| `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-headers` + `dist-mach`; mig is host-arch, not bundled).  Real copies, not symlinks — `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
+| `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-mach` + `dist-hurd`; the Mach headers come from `dist-mach`'s `make install`, mig is host-arch, not bundled).  Real copies, not symlinks — `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
 | `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
 | `check-mach` | the actual kernel-tests recipe `check` delegates to |
 | `run` | boot the built kernel in qemu — see the [Run](#3-run) section for scenarios/flags |
