@@ -92,13 +92,35 @@ WORK          := $(PROJ)/work
 FLAKES        := $(PROJ)/flakes
 SIDEKICK      := $(PROJ)/.sidekick
 DIST_ROOT     := $(PROJ)/dist
-DIST          := $(DIST_ROOT)/$(ARCH)
+# DIST is the per-arch output tree; override to install elsewhere.
+# DIST_MACH / DIST_HURD / DIST_HEADERS each default to DIST (so with no
+# override all dist-* targets populate one tree, dist/$(ARCH)) but can be
+# pointed at separate trees independently.
+DIST          ?= $(DIST_ROOT)/$(ARCH)
+DIST_MACH     ?= $(DIST)
+DIST_HURD     ?= $(DIST)
+DIST_HEADERS  ?= $(DIST)
 
 # In-tree iterative build dirs.
 GNUMACH_SRC      := $(SRC)/gnumach
 GNUMACH_BUILD    := $(WORK)/gnumach/$(ARCH)
 GNUMACH_KERNEL   := $(GNUMACH_BUILD)/gnumach
 GNUMACH_CONFIGURED := $(GNUMACH_BUILD)/config.status
+# Separate build dir for the headers-only install: it configures with a stub
+# USER_MIG so it can run BEFORE mig exists (mig needs the Mach headers), and
+# installs into the build-only SYSROOT below — distinct from the kernel build
+# dir, which uses the real mig + --prefix=$(DIST_MACH).
+GNUMACH_HDR_BUILD := $(WORK)/gnumach-headers/$(ARCH)
+GNUMACH_HDR_CONFIGURED := $(GNUMACH_HDR_BUILD)/config.status
+
+# Build-only sysroot for the public Mach headers.  This is what mig (and any
+# other in-tree consumer) depends on — a STABLE location that nothing installs
+# into later in the build.  Crucially NOT under $(DIST): the hurd userland's
+# `make install` writes $(DIST)/include too, so if mig depended on the dist
+# include dir, hurd's install would bump its mtime and make mig perpetually
+# stale (a reconfigure/rebuild feedback loop).  dist-headers copies from here
+# into the user-facing $(DIST) tree purely as a packaging step.
+SYSROOT          := $(WORK)/sysroot/$(ARCH)
 
 MIG_SRC          := $(SRC)/mig
 MIG_BUILD        := $(WORK)/mig/$(ARCH)
@@ -110,8 +132,6 @@ LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG)
 HURD_SRC         := $(SRC)/hurd
 HURD_BUILD       := $(WORK)/hurd/$(ARCH)
 HURD_CONFIGURED  := $(HURD_BUILD)/config.status
-DIST_HURD        := $(DIST)/hurd
-NIX_HURD_RESULT  := $(FLAKES)/hurd/result-$(ARCH)
 
 # Working glibc clone (populated by `make srcs`, hackable like the kernel
 # sources — see flakes/sources toolchainOnly + TOOLCHAIN-LIBC-DECOUPLING.md).
@@ -131,13 +151,6 @@ _WORKING_SRC_NAMES := gnumach mig hurd glibc
 _WORKING_OVERRIDES := $(foreach n,$(_WORKING_SRC_NAMES),\
   $(if $(wildcard $(SRC)/$(n)/.git),--override-input $(n)-src $(SRC)/$(n),))
 
-# Nix-built per-target outputs.  `nix build -o <path>` creates a
-# gc-root symlink at <path> pointing into /nix/store.  Each `dist-*`
-# rule copies real bytes out of these into the user-visible $(DIST)
-# tree, so dist/<arch>/ is a self-contained release prefix — no
-# symlinks back into /nix/store for the kernel or headers.
-NIX_HEADERS_RESULT := $(FLAKES)/gnumach-headers/result-$(ARCH)
-NIX_MACH_RESULT    := $(FLAKES)/gnumach/result-$(ARCH)
 
 # Dist artefacts — real copies, so each file's mtime is the cp time
 # and make's regular mtime arithmetic just works (no separate stamp
@@ -149,8 +162,6 @@ NIX_MACH_RESULT    := $(FLAKES)/gnumach/result-$(ARCH)
 # kernel + headers in a single tree makes no sense for a release.
 # Use `nix build .#mig-<arch>` or `make mig` (in-tree dev build) to
 # get the wrapper when you need it.
-DIST_INCLUDE := $(DIST)/include
-DIST_KERNEL  := $(DIST)/boot/gnumach
 
 # Sidekick helper VM artefacts (x86_64 Alpine; built via the root flake's
 # `packages.<system>.sidekick` output — see flakes/sidekick/default.nix
@@ -412,19 +423,31 @@ _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push 
 # runs and gnumach's own make decides what to do.
 
 _PREPARE_FILES   := $(GNUMACH_SRC)/configure
-_HEADERS_FILES   := $(DIST_INCLUDE)
+# The public Mach headers live in the build-only sysroot (mig depends on
+# this).  dist-headers additionally copies them into $(DIST_HEADERS)/include
+# for packaging, but nothing depends on the dist copy's mtime.
+_HEADERS_FILES   := $(SYSROOT)/include
 _MIG_FILES       := $(_HEADERS_FILES) $(LOCAL_MIG)
 _MACH_FILES      := $(_MIG_FILES) $(GNUMACH_KERNEL)
-_DIST_MACH_FILES := $(DIST_KERNEL)
-_DIST_FILES      := $(_HEADERS_FILES) $(_DIST_MACH_FILES)
+_DIST_MACH_FILES := $(DIST_MACH)/boot/gnumach
 
 _SENTINEL.prepare      := $(_PREPARE_FILES)
 _PRIMARY.prepare       := $(_PREPARE_FILES)
 _WATCH.prepare         := $(GNUMACH_SRC)/configure.ac
 
-_SENTINEL.dist-headers := $(_HEADERS_FILES)
-_PRIMARY.dist-headers  := $(DIST_INCLUDE)
-_WATCH.dist-headers    := $(GNUMACH_SRC)/include flakes/gnumach-headers
+# `headers` installs the Mach public headers into the build-only sysroot
+# (what mig consumes).
+_SENTINEL.headers      := $(_HEADERS_FILES)
+_PRIMARY.headers       := $(SYSROOT)/include
+_WATCH.headers         := $(GNUMACH_SRC)/include
+
+# `dist-headers` copies the sysroot headers into the dist tree (packaging).
+# In-tree: `cp -r $(SYSROOT)/include` — its only source is the Mach public
+# headers, exactly what `headers` watches.  It no longer pulls from the nix
+# gnumach-headers derivation, so flakes/gnumach-headers is not a dependency.
+_SENTINEL.dist-headers := $(DIST_HEADERS)/include
+_PRIMARY.dist-headers  := $(DIST_HEADERS)/include
+_WATCH.dist-headers    := $(GNUMACH_SRC)/include
 
 _SENTINEL.mig          := $(_MIG_FILES)
 _PRIMARY.mig           := $(LOCAL_MIG)
@@ -434,17 +457,38 @@ _SENTINEL.mach         := $(_MACH_FILES)
 _PRIMARY.mach          := $(GNUMACH_KERNEL)
 _WATCH.mach            := $(GNUMACH_SRC)
 
-_SENTINEL.all          := $(_MACH_FILES)
-_PRIMARY.all           := $(GNUMACH_KERNEL)
-_WATCH.all             := $(GNUMACH_SRC)
+# `hurd` — userland compile.  No single output binary, so the sentinel is a
+# build stamp; transitively requires mig + headers (via _MACH_FILES' deps,
+# reused here as the toolchain prereqs).  Watch src/hurd for source edits.
+_SENTINEL.hurd         := $(_MIG_FILES) $(HURD_BUILD)/.built
+_PRIMARY.hurd          := $(HURD_BUILD)/.built
+_WATCH.hurd            := $(HURD_SRC)
 
+# `all` = mach + hurd — a COMPOSITE goal: stale iff a component is stale
+# (see _stale's _COMPOSE branch).  We do NOT flatten the components'
+# primaries+watches into one set: that would compare the OLDEST primary
+# (e.g. the gnumach kernel) against EVERY watch (incl. src/hurd), so a tree
+# with hurd freshly rebuilt but gnumach untouched would falsely dispatch.
+_COMPOSE.all           := mach hurd
+
+# `dist-mach` installs the in-tree kernel into the dist tree — same source
+# as `mach` (it no longer copies from the nix gnumach derivation).
 _SENTINEL.dist-mach    := $(_DIST_MACH_FILES)
-_PRIMARY.dist-mach     := $(DIST_KERNEL)
-_WATCH.dist-mach       := $(GNUMACH_SRC) flakes/gnumach
+_PRIMARY.dist-mach     := $(DIST_MACH)/boot/gnumach
+_WATCH.dist-mach       := $(GNUMACH_SRC)
 
-_SENTINEL.dist         := $(_DIST_FILES)
-_PRIMARY.dist          := $(DIST_KERNEL)
-_WATCH.dist            := $(GNUMACH_SRC) $(MIG_SRC) flakes/gnumach flakes/mig flakes/gnumach-headers
+# `dist-hurd` — install the userland into the dist tree.  Sentinel is the
+# installed ext2fs translator (a real install result, mirroring dist-mach's
+# boot/gnumach); rebuilds when src/hurd changes (which also bumps .built).
+_SENTINEL.dist-hurd    := $(DIST_HURD)/hurd/ext2fs
+_PRIMARY.dist-hurd     := $(DIST_HURD)/hurd/ext2fs
+_WATCH.dist-hurd       := $(HURD_SRC)
+
+# `dist` = dist-headers + dist-mach + dist-hurd — COMPOSITE (same rationale
+# as `all`): stale iff a component is stale, evaluated per component so the
+# dist-mach primary is only ever compared against src/gnumach, the dist-hurd
+# primary only against src/hurd, etc.
+_COMPOSE.dist          := dist-headers dist-mach dist-hurd
 
 # We rely on `git ls-files` to enumerate "real source" — anything else
 # (configure, Makefile.in, autom4te.cache/, INSTALL, doc/stamp-vti, ...) is
@@ -452,9 +496,16 @@ _WATCH.dist            := $(GNUMACH_SRC) $(MIG_SRC) flakes/gnumach flakes/mig fl
 # exactly what `git clean -fdX` would NOT touch.
 
 # Resolve to the oldest existing PRIMARY sentinel for `goal` — the staleness
-# reference. Anything newer than this means real source moved after the
-# goal was completed.
-_oldest_primary = $(shell ls -t $(_PRIMARY.$(1)) 2>/dev/null | tail -1)
+# reference (an ABSOLUTE path; all _PRIMARY entries are rooted at $(CURDIR)).
+# Anything newer than this means real source moved after the goal completed.
+#   `-d` is load-bearing: a PRIMARY may be a DIRECTORY (e.g. dist-headers'
+#   $(DIST_HEADERS)/include).  Without -d, `ls -t <dir>` lists the dir's
+#   CONTENTS as bare basenames — losing the path and yielding a name that
+#   _newer_tracked_one then resolves inside the (wrong) watch dir, where a
+#   missing file makes every `-nt` test true → permanent false-stale.  With
+#   -d, ls lists each PRIMARY entry by its own mtime (a dir as itself, the
+#   absolute path preserved), which is exactly the goal's completion time.
+_oldest_primary = $(shell ls -td $(_PRIMARY.$(1)) 2>/dev/null | tail -1)
 
 # Returns any sentinel file (in the full transitive set) that doesn't exist.
 _missing_sentinel = $(strip $(foreach f,$(_SENTINEL.$(1)),$(if $(wildcard $(f)),,$(f))))
@@ -472,15 +523,19 @@ _newer_tracked_one = $(shell \
 _newer_tracked = $(strip $(foreach d,$(_WATCH.$(1)),$(call _newer_tracked_one,$(call _oldest_primary,$(1)),$(d))))
 
 # $(call _stale,goal) returns non-empty if `goal` needs to be rebuilt.
+#   _COMPOSE goal — non-empty iff ANY listed component is stale (recursion
+#                   terminates: components are leaves with no _COMPOSE).
 #   <filename>   — at least one sentinel is missing
 #   <filename>   — all sentinels exist but some tracked file is newer
 #   (empty)      — fresh, nothing to do
 _stale = $(strip \
-  $(if $(_SENTINEL.$(1)), \
-    $(if $(call _missing_sentinel,$(1)), \
-      $(call _missing_sentinel,$(1)), \
-      $(call _newer_tracked,$(1))), \
-    yes))
+  $(if $(_COMPOSE.$(1)), \
+    $(foreach s,$(_COMPOSE.$(1)),$(call _stale,$(s))), \
+    $(if $(_SENTINEL.$(1)), \
+      $(if $(call _missing_sentinel,$(1)), \
+        $(call _missing_sentinel,$(1)), \
+        $(call _newer_tracked,$(1))), \
+      yes)))
 
 # Detect any unsatisfied build goal.
 _UNSATISFIED :=
@@ -637,7 +692,7 @@ REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC
 $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#x86_64' (or .#x86_64-xen / .#i686 / .#i686-xen))))
 
-.PHONY: all dist prepare dist-headers mig mach dist-mach \
+.PHONY: all dist prepare headers dist-headers mig mach dist-mach \
         check check-mach run run-help
 
 # Explicit default — `help` (defined above) would otherwise win the
@@ -648,9 +703,9 @@ $(foreach v,$(REQUIRED_VARS), \
 # `all` and `dist` are NOT aliases: they list real dependencies we'll
 # grow over time (e.g. once Hurd userland builds, add `hurd` /
 # `dist-hurd` here).
-all: mach
+all: mach hurd
 
-dist: dist-headers dist-mach
+dist: dist-headers dist-mach dist-hurd
 
 # ---- prepare ----
 # `autoreconf -i` (no -f): install missing aux files and regenerate ONLY
@@ -671,22 +726,43 @@ prepare: $(GNUMACH_SRC)/configure
 $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4
 	cd $(GNUMACH_SRC) && autoreconf -i
 
-# ---- dist-headers ----
-# Public Mach headers come from `nix build .#gnumach-headers-$(ARCH)`,
-# copied (not symlinked) into $(DIST_INCLUDE) so the dist/ tree is
-# self-contained and tarball-able.  The directory's mtime is set
-# explicitly at the end so make's stat() sees a real timestamp
-# (cp -r preserves source mtimes, which are /nix/store epoch).
-dist-headers: $(DIST_INCLUDE)
+# ---- headers (sysroot) ----
+# Install the public Mach headers into the build-only sysroot ($(SYSROOT)),
+# in-tree via gnumach's `make install-data`.  This is mig's stable header
+# dependency — see the SYSROOT comment for why it must NOT be the dist tree.
+# Mirrors the flakes/gnumach-headers derivation: a separate build dir
+# configured with a STUB USER_MIG=/bin/true so it can run BEFORE mig exists
+# (mig needs these headers; install-data compiles nothing and never invokes
+# mig, so the stub satisfies configure's AC_CHECK_PROG).  Headers-only — the
+# kernel itself is never built here.
+headers: $(SYSROOT)/include
 
-$(DIST_INCLUDE): flakes/gnumach-headers/default.nix flake.nix
-	@mkdir -p $(dir $(NIX_HEADERS_RESULT))
-	$(NIX_FLAKE) build .#gnumach-headers-$(ARCH) -o $(NIX_HEADERS_RESULT)
-	@mkdir -p $(DIST)
-	@rm -rf $(DIST_INCLUDE)
-	cp -r $(NIX_HEADERS_RESULT)/include $(DIST_INCLUDE)
-	chmod -R u+w $(DIST_INCLUDE)
-	@touch $(DIST_INCLUDE)
+$(GNUMACH_HDR_CONFIGURED): $(GNUMACH_SRC)/configure
+	mkdir -p $(GNUMACH_HDR_BUILD)
+	cd $(GNUMACH_HDR_BUILD) && \
+	  USER_MIG=/bin/true \
+	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(SYSROOT) \
+	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
+
+# Src prereqs ($(GNUMACH_SRC_FILES)) are intentionally omitted here: that var
+# is defined further down (next to the kernel rule, after _tracked_files), so
+# referencing it at this point would expand empty.  Staleness across source
+# edits is handled for the dispatched path by _WATCH.headers
+# ($(GNUMACH_SRC)/include); install-data is cheap + idempotent (merges).
+$(SYSROOT)/include: $(GNUMACH_HDR_CONFIGURED)
+	cd $(GNUMACH_HDR_BUILD) && $(MAKE) install-data
+	@touch $(SYSROOT)/include
+
+# ---- dist-headers ----
+# Package the Mach headers into the user-facing dist tree by copying them out
+# of the sysroot.  A copy (not the source of truth) so nothing depends on this
+# dir's mtime — the hurd userland's `make install` also writes $(DIST)/include
+# (when DIST_HEADERS == DIST_HURD, the default), and that must not perturb
+# mig's staleness.  Merge-copy (no rm -rf) so it coexists with hurd's headers.
+dist-headers: $(SYSROOT)/include
+	@mkdir -p $(DIST_HEADERS)/include
+	cp -r $(SYSROOT)/include/. $(DIST_HEADERS)/include/
+	chmod -R u+w $(DIST_HEADERS)/include
 
 # ---- mig ----
 # In-tree iterative MIG build.  autoreconf in src/mig (writes
@@ -712,7 +788,11 @@ mig: $(LOCAL_MIG)
 _tracked_files = $(addprefix $(1)/,$(shell cd $(1) 2>/dev/null && git ls-files))
 
 MIG_SRC_FILES := $(call _tracked_files,$(MIG_SRC))
-$(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
+# Defined here (before the hurd recipe that uses it) so it expands non-empty:
+# editing a tracked src/hurd file makes $(HURD_BUILD)/.built stale → inner make
+# re-runs (hurd's own dep tracking handles the .c→.o decisions).
+HURD_SRC_FILES := $(call _tracked_files,$(HURD_SRC))
+$(LOCAL_MIG): $(MIG_SRC)/configure $(SYSROOT)/include $(MIG_SRC_FILES)
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool — it runs on the build host and
 	@# emits portable .c/.h.  The dev-shell's $CC is the wrapped
@@ -726,7 +806,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 	  $(MIG_SRC)/configure \
 	    --target=$(MIG_TARGET) \
 	    --prefix=$(MIG_INSTALL_DIR) \
-	    TARGET_CPPFLAGS="-I$(DIST_INCLUDE)"
+	    TARGET_CPPFLAGS="-I$(SYSROOT)/include"
 	cd $(MIG_BUILD) && $(MAKE) CC=gcc install
 
 $(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
@@ -744,7 +824,7 @@ $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(LOCAL_MIG)
 	mkdir -p $(GNUMACH_BUILD)
 	cd $(GNUMACH_BUILD) && \
 	  USER_MIG=$(LOCAL_MIG) MIG=$(LOCAL_MIG) \
-	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST) \
+	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST_MACH) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
 # Src prereqs via $(_tracked_files) — see its defining comment above.
@@ -753,47 +833,23 @@ $(GNUMACH_KERNEL): $(LOCAL_MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 	cd $(GNUMACH_BUILD) && $(MAKE)
 
 # ---- dist-mach ----
-# Clean nix-built kernel, copied into $(DIST_KERNEL) as a real file.
-# Counterpart to `mach`:
-#
-#   `make mach`       — in-tree, incremental, fast iteration
-#   `make dist-mach`  — nix-built, fully reproducible, cacheable via
-#                       cachix; the file that ships in a release
-#                       tarball of dist/<arch>/.
-#
-# Also pulls in the docs the gnumach package emits alongside the
-# kernel — `share/info/mach.info*` (the GNU Mach reference manual,
-# ~408K of Info pages) and `share/msgids/gnumach.msgids` (~12K, the
-# RPC message-ID table debuggers use to decode wire traces).  These
-# come from the same nix derivation as the kernel, so adding them
-# here is free — and they're exactly what a userspace SDK consumer
-# wants alongside the kernel + headers + mig.
-dist-mach: $(DIST_KERNEL)
+# Install the in-tree kernel build into $(DIST_MACH).  Counterpart to `mach`:
+#   `make mach`       — in-tree compile under work/, fast iteration.
+#   `make dist-mach`  — `make install` that in-tree build into $(DIST_MACH)
+#                       (gnumach configured --prefix=$(DIST_MACH)); kernel
+#                       under boot/ + the share/ docs (mach.info, msgids).
+# Depends on the compiled kernel, so it builds first if needed.  gnumach's
+# install is plain (no setuid/-o root), so no fakeroot needed here.
+dist-mach: $(DIST_MACH)/boot/gnumach
 
-$(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
-	@mkdir -p $(dir $(NIX_MACH_RESULT))
-	$(NIX_FLAKE) build .#gnumach-$(ARCH) -o $(NIX_MACH_RESULT)
-	@mkdir -p $(DIST)/boot
-	install -m 0644 $(NIX_MACH_RESULT)/boot/gnumach $(DIST_KERNEL)
-	@# aarch64-only: also ship the unstripped ELF for gdb / debugging.
-	@# The flake's postInstall puts it under boot/gnumach.elf; on
-	@# x86_64 / i686 it doesn't exist (boot/gnumach is already ELF).
-	@if [ -f $(NIX_MACH_RESULT)/boot/gnumach.elf ]; then \
-	  install -m 0644 $(NIX_MACH_RESULT)/boot/gnumach.elf $(DIST)/boot/gnumach.elf; \
-	fi
-	@# Refresh share/ each time so removed files don't linger.  The
-	@# cp -r preserves /nix/store epoch mtimes, so touch the tree
-	@# afterwards to give make sane staleness arithmetic.
-	@rm -rf $(DIST)/share
-	cp -r $(NIX_MACH_RESULT)/share $(DIST)/share
-	chmod -R u+w $(DIST)/share
-	@find $(DIST)/share -exec touch {} +
+$(DIST_MACH)/boot/gnumach: $(GNUMACH_KERNEL)
+	cd $(GNUMACH_BUILD) && $(MAKE) install prefix=$(DIST_MACH)
 
 # ---- hurd / dist-hurd ----
 # `make hurd`      — in-tree incremental userland build under
 #                    work/hurd/$(ARCH).  Counterpart to `make mach`: edit
 #                    src/hurd, re-run, only changed objects recompile.
-# `make dist-hurd` — clean nix-built userland copied into dist/$(ARCH)/hurd.
+# `make dist-hurd` — `make install` that in-tree build into dist/$(ARCH).
 #
 # Aligned with mach: in-tree `make hurd` runs as plain `cd … && make/
 # configure` inside the dispatched per-arch dev shell (no inner `nix develop`
@@ -805,10 +861,19 @@ $(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
 # predates gcc's -fno-common default; scoped here so the kernel never sees it).
 .PHONY: hurd dist-hurd
 
-# PHONY: always re-enter the build dir and run make (hurd's own Makefiles
-# do the incremental .c -> .o decisions).  config.status gates configure.
-hurd: $(LOCAL_MIG) $(HURD_CONFIGURED)
+# `make hurd` builds the userland under work/hurd/$(ARCH).  Unlike mach (whose
+# kernel is a single file sentinel, $(GNUMACH_KERNEL)), hurd produces many
+# outputs and no single binary, so we use a build stamp ($(HURD_BUILD)/.built)
+# as its sentinel — touched after a successful compile.  Combined with the
+# _SENTINEL.hurd / _WATCH.hurd entries above, a no-op `make hurd` short-circuits
+# (no dispatch, no recursing every subdir printing "nothing to be done") unless
+# a tracked src/hurd file is newer than the stamp.  The $(HURD_SRC_FILES) prereq
+# makes the inner make re-run when source actually changed.
+hurd: $(HURD_BUILD)/.built
+
+$(HURD_BUILD)/.built: $(LOCAL_MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 	cd $(HURD_BUILD) && $(MAKE) MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG)
+	@touch $(HURD_BUILD)/.built
 
 # In-tree builds carry the plain upstream PACKAGE_VERSION (autoreconf reads
 # src/hurd's committed configure.ac as-is).  The rich build-rev version is
@@ -823,19 +888,23 @@ $(HURD_CONFIGURED): $(LOCAL_MIG) $(HURD_SRC)/configure
 	    MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG) CFLAGS="-fcommon -g -O2" \
 	    --prefix=$(DIST_HURD)
 
-# Clean nix-built userland, copied into $(DIST_HURD) as a self-contained tree.
-# Counterpart to `hurd`: `make hurd` is fast in-tree iteration; `make
-# dist-hurd` is the reproducible, cacheable artefact (like dist-mach).
-dist-hurd: $(DIST_HURD)/.stamp
+# Install the in-tree userland build into $(DIST_HURD) as a self-contained
+# tree.  Counterpart to `hurd`: `make hurd` is fast in-tree iteration; `make
+# dist-hurd` produces the installable artefact (like dist-mach).
+dist-hurd: $(DIST_HURD)/hurd/ext2fs
 
-$(DIST_HURD)/.stamp: flakes/hurd/default.nix flake.nix
-	@mkdir -p $(dir $(NIX_HURD_RESULT))
-	$(NIX_FLAKE) build $(_WORKING_OVERRIDES) .#hurd-$(ARCH) -o $(NIX_HURD_RESULT)
-	@rm -rf $(DIST_HURD)
-	@mkdir -p $(DIST_HURD)
-	cp -r $(NIX_HURD_RESULT)/. $(DIST_HURD)/
-	chmod -R u+w $(DIST_HURD)
-	@touch $(DIST_HURD)/.stamp
+# Install the in-tree userland build into $(DIST_HURD) (hurd configured
+# --prefix=$(DIST_HURD)).  Under fakeroot: hurd's daemons/ + utils/ install
+# some programs `-o root -m 4755` (setuid), which a non-root install can't do
+# — fakeroot fakes the chown/setuid so the install completes without touching
+# real privilege (the bits are cosmetic for a dev dist tree).  Same MIG as the
+# build.  Keyed on the installed ext2fs translator — the headline userland
+# output, the analog of dist-mach's boot/gnumach — so dist/ holds only install
+# results (no completion stamp).  `make install` rebuilds the whole tree; make
+# only compares ext2fs's mtime against the build stamp to decide staleness.
+$(DIST_HURD)/hurd/ext2fs: $(HURD_BUILD)/.built
+	cd $(HURD_BUILD) && fakeroot $(MAKE) install prefix=$(DIST_HURD) \
+	  MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG)
 
 # ---- check ----
 # Test suite shipped by upstream gnumach, surfaced as a make target:

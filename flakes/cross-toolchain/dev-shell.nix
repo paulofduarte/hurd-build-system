@@ -72,11 +72,14 @@ in
       #   git/nix    source ops + Makefile re-dispatch into a target shell
       #   qemu       qemu-system-* (+ qemu-img) for `make run`
       #   curl/which run scenarios + gnumach's run-qemu.sh test gate
+      #   fakeroot   `make dist-hurd` install: hurd's daemons/utils install
+      #              some programs -o root -m 4755 (setuid); fakeroot fakes
+      #              the chown/setuid so a non-root install completes.
       # gnumake + awk + coreutils come from stdenv.
       nativeBuildInputs =
         [ toolchain binu ]
         ++ inferredBuildInputs
-        ++ (with pkgs; [ gcc pkg-config git nix qemu curl which ])
+        ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot ])
         # gnumach's x86 `make check` builds a multiboot ISO with
         # grub-mkrescue (needs xorriso + mtools) and the run scenarios
         # build/boot images; nixpkgs' grub2 is linux-only, so gate on

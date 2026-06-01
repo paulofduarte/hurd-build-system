@@ -66,7 +66,7 @@ let
       # (--shrink-rpath), which its setup-hook would otherwise register.
       nativeBuildInputs =
         [ pkgs.autoreconfHook ]
-        ++ (with pkgs; [ texinfo perl pkg-config patchelf ])
+        ++ (with pkgs; [ texinfo perl pkg-config patchelf fakeroot ])
         ++ [ toolchain crossMig ];
 
       # hurd predates gcc's -fno-common default (gcc 10+); -fcommon keeps
@@ -79,15 +79,6 @@ let
           configure.ac
         rm configure.ac.bak
         grep "^AC_INIT" configure.ac
-
-        # The setuid install ops (mail.local, login, ids, ps, w) pass
-        # `-o root -m 4755` to install.  Both fail in the nix sandbox:
-        # chown is forbidden, and the store disallows the setuid bit.
-        # Strip the owner and drop the setuid bit to a plain 0755 — the
-        # setuid owner+bit are a booting-system concern, applied at
-        # deploy (nix strips setuid in the store regardless).
-        find . -name Makefile -exec sed -i \
-          -e 's/-o root //g' -e 's/-m 4755/-m 0755/g' {} +
       '';
 
       # Empty PKG_CONFIG_PATH → the optional PKG_CHECK_MODULES probes
@@ -116,9 +107,17 @@ let
       # that file for the rationale.  Only --host is per-derivation here.
       configureFlags = [ "--host=${tp}" ] ++ hurdConfig.coreFlags;
 
+      # Install under fakeroot: hurd's daemons/ + utils/ install some programs
+      # `-o root -m 4755` (setuid), which the sandbox can't do (chown is
+      # forbidden, the store disallows setuid).  fakeroot fakes the chown +
+      # setuid so the install completes; the bits don't persist (nix strips
+      # setuid in the store regardless — they're a deploy-time concern), so
+      # the outcome matches the host `make dist-hurd` path.  This replaces the
+      # old find|sed that rewrote `-o root -m 4755` → `-m 0755` in the source
+      # Makefiles, keeping the source unmutated.
       installPhase = ''
         runHook preInstall
-        make install prefix=$out $makeFlags
+        fakeroot make install prefix=$out $makeFlags
         runHook postInstall
       '';
 
