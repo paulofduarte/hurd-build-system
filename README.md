@@ -237,7 +237,7 @@ make pin-srcs      # bump the pins to the forks' branch HEADs; then `make srcs`
 | `run` | boot the built kernel in qemu — see the [Run](#3-run) section for scenarios/flags |
 | `run-help` | print all `make run` options (`ARCH`/`SCENARIO`/`RUN_*`) |
 | `sidekick` | build the helper VM (x86_64 Alpine — used by Hurd scenarios for ext2 extraction + grub-mkrescue ISO assembly; auto-built on demand) |
-| `cache-push` | push the current `$(ARCH)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
+| `push-cache` | push the current `$(ARCH)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` — preserves configure state |
 | `clean-dist` | `rm -rf dist/$(ARCH)/` (current target only) |
 | `mrproper` | `rm -rf work/`, the project-root install dir (`.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-toolchain,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
@@ -363,7 +363,7 @@ declares.  You never need to type `nix develop` manually; just `make`.
 
 Targets that don't need the cross-toolchain run at the top level
 without spawning a shell: `clean`, `clean-dist`, `mrproper`, `help`,
-`sidekick`, and `cache-push`.
+`sidekick`, and `push-cache`.
 
 ### Binary cache
 
@@ -377,8 +377,8 @@ bootstrapping each one (~20 min/target → ~30 s/target).
 To populate the cache after a fresh cross-toolchain build:
 
 ```sh
-make cache-push                    # current ARCH
-make cache-push ARCH=x86_64      # a specific arch
+make push-cache                    # current ARCH
+make push-cache ARCH=x86_64      # a specific arch
 ```
 
 `cachix authtoken <token>` once per host is enough; push is

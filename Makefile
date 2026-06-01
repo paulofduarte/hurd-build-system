@@ -191,31 +191,31 @@ SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 .PHONY: help
 help:
 	@echo "Targets (for ARCH=$(ARCH)):"
-	@echo "  all              build the gnumach kernel in-tree (default; same as 'mach')"
-	@echo "  mig              build MIG in-tree under ./work/mig/$(ARCH)/ (incremental — for MIG iteration)"
-	@echo "                   (clean nix-built MIG is available via 'nix build .#mig-$(ARCH)')"
+	@echo "  all              build the kernel + Hurd userland in-tree (default; = mach + hurd)"
+	@echo "  mig              build MIG in-tree — opt-in for iterating on MIG (run 'make src-mig' first)"
+	@echo "                   (otherwise a no-op: MIG is always available without it)"
 	@echo "  mach             build gnumach kernel in-tree under ./work/gnumach/$(ARCH)/ (incremental — for kernel iteration)"
-	@echo "  dist-mach        copy clean nix-built kernel into ./dist/$(ARCH)/boot/gnumach"
-	@echo "  dist             produce a tarball-ready ./dist/$(ARCH)/ (headers + kernel; mig is host-arch, not bundled)"
+	@echo "  dist-mach        install the in-tree kernel into ./dist/$(ARCH)/ (boot/gnumach + headers + docs)"
+	@echo "  dist             install kernel + Hurd userland into ./dist/$(ARCH)/ (= dist-mach + dist-hurd; mig is host-arch, not bundled)"
 	@echo "  hurd             build the Hurd userland in-tree under ./work/hurd/$(ARCH)/ (incremental; needs ARCH=i686|x86_64)"
-	@echo "  dist-hurd        copy clean nix-built Hurd userland into ./dist/$(ARCH)/hurd/"
-	@echo "  check            run upstream test suites (== check-mach; MIG tests run inline via nix)"
+	@echo "  dist-hurd        install the in-tree Hurd userland into ./dist/$(ARCH)/ (under fakeroot)"
+	@echo "  check            run the kernel test suite (== check-mach)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
 	@echo "  run-help         show all 'make run' options (ARCH/SCENARIO/RUN_*)"
-	@echo "  sidekick         build the helper VM (x86_64 Alpine, used by Hurd scenarios)"
-	@echo "  cache-push       push the $(ARCH) dev-shell closure to the project cachix cache"
-	@echo "  srcs             populate/reconcile src/ working clones from the nix source pins"
+	@echo "  sidekick         build the helper VM (x86_64 Debian-tool dispatcher; ABI gate + Hurd run scenarios)"
+	@echo "  push-cache       push the $(ARCH) build environment to the shared binary cache"
+	@echo "  srcs             populate/reconcile src/ working clones from the pinned source revisions"
 	@echo "  src-<name>       same, for ONE source only (e.g. 'make src-gnumach')"
-	@echo "  show-srcs-pins   print the current source pins (what nix is building from)"
+	@echo "  show-srcs-pins   print the current source pins (the revisions the build uses)"
 	@echo "  pin-srcs         bump the pinned source revs to their forks' branch HEADs (verbose)"
 	@echo "  pin-src-<name>   same, for ONE source only (e.g. 'make pin-src-mig')"
 	@echo "  check-glibc      deep glibc ABI check vs the reference (Tier-2 abidiff; Linux host)"
 	@echo "  check-glibc-full deep + heavy ABI probes (pahole/conform/acc; Linux host)"
-	@echo "  rebaseline-ref   re-resolve the frozen *-ref-src pins (new gcc ABI baseline; ~25min)"
+	@echo "  rebaseline-ref   re-resolve the frozen reference-source pins (new gcc ABI baseline; ~25min)"
 	@echo "  clean            per-subdir 'make clean' — preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
-	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + flake gc-roots"
+	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + cached build links"
 	@if [ -z "$(NIX)" ]; then \
 	  echo ""; \
 	  echo "Warning: nix is not installed. Targets require it."; \
@@ -298,7 +298,7 @@ $(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flak
 # without re-running the build.
 $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
-# ---- cache-push (always-on, arch-independent) ----
+# ---- push-cache (always-on, arch-independent) ----
 # Push the current ARCH's dev-shell closure to the project's cachix cache.
 # We push the closure of the dev shell's `inputDerivation` — its output's
 # references ARE all the shell's build inputs (the cross-toolchain etc.).
@@ -310,10 +310,10 @@ $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 # level — no dev-shell dispatch.
 _CACHE_NAME := hurd-build-system
 
-.PHONY: cache-push
-cache-push:
+.PHONY: push-cache
+push-cache:
 	@command -v cachix >/dev/null 2>&1 || \
-	  { echo "cache-push: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
+	  { echo "push-cache: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
 	echo "==> Pushing dev-shell closure for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
 	echo "  realising closure"; \
@@ -323,7 +323,7 @@ cache-push:
 	echo "  pushing"; \
 	$(NIX) --accept-flake-config path-info --recursive "$$out" \
 	  | cachix push $(_CACHE_NAME)
-	@echo "==> cache-push done"
+	@echo "==> push-cache done"
 
 # ---- srcs (always-on, arch-independent) ----
 # Populate / reconcile the src/<name> working clones from the nix source pins
@@ -464,7 +464,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # `mig` is a build goal ONLY when an in-tree src/mig opts in; without it `make
 # mig` is a no-op served by the shell's MIG, so it's filtered out (runs its own
 # top-level recipe, no dev-shell dispatch) — like srcs/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins src-% pin-src-% $(if $(MIG_IN_TREE),,mig) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache srcs pin-srcs show-srcs-pins src-% pin-src-% $(if $(MIG_IN_TREE),,mig) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND
