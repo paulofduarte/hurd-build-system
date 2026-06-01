@@ -197,8 +197,10 @@ help:
 	@echo "  sidekick         build the helper VM (x86_64 Alpine, used by Hurd scenarios)"
 	@echo "  cache-push       push the $(ARCH) dev-shell closure to the project cachix cache"
 	@echo "  srcs             populate/reconcile src/ working clones from the nix source pins"
+	@echo "  src-<name>       same, for ONE source only (e.g. 'make src-gnumach')"
 	@echo "  show-srcs-pins   print the current source pins (what nix is building from)"
 	@echo "  pin-srcs         bump the pinned source revs to their forks' branch HEADs (verbose)"
+	@echo "  pin-src-<name>   same, for ONE source only (e.g. 'make pin-src-mig')"
 	@echo "  check-glibc      deep glibc ABI check vs the reference (Tier-2 abidiff; Linux host)"
 	@echo "  check-glibc-full deep + heavy ABI probes (pahole/conform/acc; Linux host)"
 	@echo "  rebaseline-ref   re-resolve the frozen *-ref-src pins (new gcc ABI baseline; ~25min)"
@@ -342,6 +344,20 @@ pin-srcs:
 show-srcs-pins:
 	@bash flakes/sources/show-pins.sh
 
+# ---- per-source src / pin-src (always-on, arch-independent) ----
+# `srcs`/`pin-srcs` operate on every source; these let you work with one at a
+# time.  `make src-gnumach` reconciles just src/gnumach; `make pin-src-mig`
+# bumps only the mig pin.  The source name is passed through to the same
+# scripts, which validate it against .#srcs and abort on an unknown name — so
+# these pattern rules need no hardcoded source list (a new *-src input gets its
+# targets for free).  No file is ever named src-*/pin-src-*, so the recipe
+# always runs (effectively phony; .PHONY can't carry a % pattern).
+src-%:
+	@bash flakes/sources/sync.sh $*
+
+pin-src-%:
+	@bash flakes/sources/pin.sh $*
+
 # ---- ABI gate deep checks (arch-specific) ----
 # The AUTOMATIC gate (Tier-1 + cheap/Hurd Tier-3 probes 00,10-19) already
 # runs inside every nix build whose working glibc diverges from the
@@ -402,7 +418,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # don't enter the dev shell — its nix build is arch-independent.  When pulled
 # in as a prereq of `run` (which DOES dispatch), it still runs inside the
 # dev shell as part of the inner-make recipe.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins src-% pin-src-% check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND

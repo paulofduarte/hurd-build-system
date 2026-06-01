@@ -39,6 +39,25 @@ lines=$(nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs
     (builtins.attrNames srcs))')
 [ -n "$lines" ] || { echo "srcs: .#srcs is empty" >&2; exit 1; }
 
+# Optional positional args restrict the run to the named source(s); with none
+# we reconcile every source (the `make srcs` behaviour).  `make src-<name>`
+# passes a single name.  An unknown name aborts before anything is touched.
+if [ "$#" -gt 0 ]; then
+  known=$(printf '%s\n' "$lines" | cut -f1)
+  for want in "$@"; do
+    printf '%s\n' "$known" | grep -qx -- "$want" || {
+      echo "srcs: unknown source '$want'. Known:" $known >&2; exit 1; }
+  done
+  sel=""
+  while IFS= read -r line; do
+    name=${line%%$'\t'*}
+    for want in "$@"; do
+      [ "$name" = "$want" ] && { sel+="$line"$'\n'; break; }
+    done
+  done < <(printf '%s\n' "$lines")
+  lines=${sel%$'\n'}
+fi
+
 run() { if [ "${SRCS_DRY_RUN:-}" = "1" ]; then echo "  + $*"; else "$@"; fi; }
 
 # Normalise a git URL to host/owner/repo so ssh vs https and a trailing .git
