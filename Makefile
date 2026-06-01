@@ -56,16 +56,17 @@ ARCH := $(strip \
   x86_64))
 endif
 
-# Default MIG_TARGET / MIG binary name when invoked outside the dev shell
-# (the shell itself exports the right values). Strip any platform suffix
-# from ARCH (e.g. i686-xen -> i686) since MIG only cares about CPU ABI;
-# Xen and PC-AT share the same MIG binary.
+# Default MIG_TARGET when invoked outside the dev shell (the shell exports
+# it). Strip any platform suffix from ARCH (e.g. i686-xen -> i686) since MIG
+# only cares about CPU ABI; Xen and PC-AT share the same MIG binary.
 ifndef MIG_TARGET
 MIG_TARGET := $(firstword $(subst -, ,$(ARCH)))-gnu
 endif
-ifndef MIG
-MIG := $(MIG_TARGET)-mig
-endif
+# The mig binary's base name (always a bare name) — used to locate the in-tree
+# build output and for `configure --target`.  Distinct from MIG, which is the
+# effective mig PROGRAM (a path): the dev shell exports MIG pointing at the
+# nix-built working mig, and the in-tree opt-in (below) overrides it.
+MIG_NAME := $(MIG_TARGET)-mig
 
 # Default SCENARIO so `make run` works without an explicit override.
 # The inner flakes/run/dispatch.sh also defaults to boot, but the make-level
@@ -125,7 +126,18 @@ SYSROOT          := $(WORK)/sysroot/$(ARCH)
 MIG_SRC          := $(SRC)/mig
 MIG_BUILD        := $(WORK)/mig/$(ARCH)
 MIG_INSTALL_DIR  := $(MIG_BUILD)/install
-LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG)
+LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG_NAME)
+
+# mig is opt-in in-tree.  The dev shell always exports MIG (the nix-built
+# working mig), so mig is available with no `make mig`.  Populating the in-tree
+# source (`make src-mig`) flips MIG to the in-tree binary and turns `make mig`
+# into a real build; without it `make mig` is a no-op and mach/hurd use the
+# shell's MIG.  Keyed on src/mig/.git so it tracks exactly what `make src-mig`
+# / `make srcs` create.
+ifneq ($(wildcard $(MIG_SRC)/.git),)
+MIG_IN_TREE := 1
+MIG := $(LOCAL_MIG)
+endif
 
 # Hurd source clone (populated by `make srcs` from the `hurd-src` flake
 # input pin) + in-tree build dir.  See the `hurd` / `dist-hurd` targets.
@@ -358,6 +370,17 @@ src-%:
 pin-src-%:
 	@bash flakes/sources/pin.sh $*
 
+# ---- mig (no-op when not opted into in-tree; always-on, arch-independent) ----
+# Without an in-tree src/mig, mig is provided by the dev shell ($MIG) — so
+# `make mig` does nothing here (no dev-shell dispatch).  Run `make src-mig` to
+# populate src/mig; that flips MIG_IN_TREE on and the real in-tree mig build
+# (defined down in the dev-shell-dispatched rules) takes over.
+ifndef MIG_IN_TREE
+.PHONY: mig
+mig:
+	@echo "mig: provided by the dev shell; run 'make src-mig' to build in-tree."
+endif
+
 # ---- ABI gate deep checks (arch-specific) ----
 # The AUTOMATIC gate (Tier-1 + cheap/Hurd Tier-3 probes 00,10-19) already
 # runs inside every nix build whose working glibc diverges from the
@@ -418,7 +441,10 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # don't enter the dev shell — its nix build is arch-independent.  When pulled
 # in as a prereq of `run` (which DOES dispatch), it still runs inside the
 # dev shell as part of the inner-make recipe.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins src-% pin-src-% check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+# `mig` is a build goal ONLY when an in-tree src/mig opts in; without it `make
+# mig` is a no-op served by the shell's MIG, so it's filtered out (runs its own
+# top-level recipe, no dev-shell dispatch) — like srcs/clean.
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins src-% pin-src-% $(if $(MIG_IN_TREE),,mig) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND
@@ -443,7 +469,14 @@ _PREPARE_FILES   := $(GNUMACH_SRC)/configure
 # this).  dist-headers additionally copies them into $(DIST_HEADERS)/include
 # for packaging, but nothing depends on the dist copy's mtime.
 _HEADERS_FILES   := $(SYSROOT)/include
+# In-tree mig is a buildable input, so the built binary is a sentinel/prereq.
+# The dev-shell (nix) mig is a fixed external input — not a staleness sentinel
+# (else its missing-from-the-worktree path would mark mach/hurd forever stale).
+ifdef MIG_IN_TREE
 _MIG_FILES       := $(_HEADERS_FILES) $(LOCAL_MIG)
+else
+_MIG_FILES       := $(_HEADERS_FILES)
+endif
 _MACH_FILES      := $(_MIG_FILES) $(GNUMACH_KERNEL)
 _DIST_MACH_FILES := $(DIST_MACH)/boot/gnumach
 
@@ -781,15 +814,17 @@ dist-headers: $(SYSROOT)/include
 	chmod -R u+w $(DIST_HEADERS)/include
 
 # ---- mig ----
-# In-tree iterative MIG build.  autoreconf in src/mig (writes
-# gitignored files — see the submodule's .gitignore), configure +
-# make + make install into $(MIG_INSTALL_DIR).  The wrapper at
-# $(LOCAL_MIG) uses dirname-$0/../libexec at runtime, so its sibling
-# migcom resolves under $(MIG_INSTALL_DIR)/libexec/.  Re-running
-# `make mig` after editing src/mig is incremental (autoreconf -i
-# doesn't rewrite up-to-date outputs, and the build dir's
-# config.status survives between invocations).
+# mig is opt-in in-tree (see the MIG_IN_TREE block near LOCAL_MIG).  With
+# src/mig present, `make mig` builds it in-tree: autoreconf in src/mig (writes
+# gitignored files), configure + make + make install into $(MIG_INSTALL_DIR);
+# the $(LOCAL_MIG) wrapper uses dirname-$0/../libexec, so its sibling migcom
+# resolves under $(MIG_INSTALL_DIR)/libexec/.  Re-running after editing src/mig
+# is incremental (autoreconf -i doesn't rewrite up-to-date outputs, and the
+# build dir's config.status survives).  Without src/mig, mig is provided by the
+# dev shell's $MIG and `make mig` is a no-op (defined top-level, near srcs).
+ifdef MIG_IN_TREE
 mig: $(LOCAL_MIG)
+endif
 
 # $(call _tracked_files,<dir>) — every git-tracked file under <dir>,
 # as absolute paths.  Used by the mig + mach rules to list src as
@@ -808,6 +843,7 @@ MIG_SRC_FILES := $(call _tracked_files,$(MIG_SRC))
 # editing a tracked src/hurd file makes $(HURD_BUILD)/.built stale → inner make
 # re-runs (hurd's own dep tracking handles the .c→.o decisions).
 HURD_SRC_FILES := $(call _tracked_files,$(HURD_SRC))
+ifdef MIG_IN_TREE
 $(LOCAL_MIG): $(MIG_SRC)/configure $(SYSROOT)/include $(MIG_SRC_FILES)
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool — it runs on the build host and
@@ -827,25 +863,26 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(SYSROOT)/include $(MIG_SRC_FILES)
 
 $(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
 	cd $(MIG_SRC) && autoreconf -i
+endif
 
 # ---- mach ----
-# In-tree kernel build under $(GNUMACH_BUILD), using the in-tree MIG
-# from `make mig`.  USER_MIG/MIG point at $(LOCAL_MIG) explicitly so
-# gnumach's AC_CHECK_TOOL doesn't have to discover it via PATH.
-# Incremental compile — re-running `make mach` after editing
-# src/gnumach rebuilds only the changed translation units.
+# In-tree kernel build under $(GNUMACH_BUILD), using $(MIG) — the effective
+# mig: the dev-shell's nix mig, or the in-tree build when src/mig opts in.
+# USER_MIG/MIG point at it explicitly so gnumach's AC_CHECK_TOOL doesn't have
+# to discover it via PATH.  Incremental compile — re-running `make mach` after
+# editing src/gnumach rebuilds only the changed translation units.
 mach: $(GNUMACH_KERNEL)
 
-$(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(LOCAL_MIG)
+$(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG)
 	mkdir -p $(GNUMACH_BUILD)
 	cd $(GNUMACH_BUILD) && \
-	  USER_MIG=$(LOCAL_MIG) MIG=$(LOCAL_MIG) \
+	  USER_MIG=$(MIG) MIG=$(MIG) \
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST_MACH) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
 # Src prereqs via $(_tracked_files) — see its defining comment above.
 GNUMACH_SRC_FILES := $(call _tracked_files,$(GNUMACH_SRC))
-$(GNUMACH_KERNEL): $(LOCAL_MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
+$(GNUMACH_KERNEL): $(MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 	cd $(GNUMACH_BUILD) && $(MAKE)
 
 # ---- dist-mach ----
@@ -872,8 +909,8 @@ $(DIST_MACH)/boot/gnumach: $(GNUMACH_KERNEL)
 # — the pre-merge dual-toolchain era gave hurd its own `.#hurd-$(ARCH)` shell
 # + HURD_DEVELOP; the single merged toolchain made that a redundant, un-pinned
 # second realization).  The shell exports CC/binutils + HURD_CONFIGURE_FLAGS
-# (flakes/cross-toolchain/dev-shell.nix); the recipes add MIG=$(LOCAL_MIG)
-# (same in-tree mig as mach) + CFLAGS=-fcommon at configure time (hurd
+# (flakes/cross-toolchain/dev-shell.nix); the recipes add MIG=$(MIG)
+# (the same effective mig as mach) + CFLAGS=-fcommon at configure time (hurd
 # predates gcc's -fno-common default; scoped here so the kernel never sees it).
 .PHONY: hurd dist-hurd
 
@@ -887,8 +924,8 @@ $(DIST_MACH)/boot/gnumach: $(GNUMACH_KERNEL)
 # makes the inner make re-run when source actually changed.
 hurd: $(HURD_BUILD)/.built
 
-$(HURD_BUILD)/.built: $(LOCAL_MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
-	cd $(HURD_BUILD) && $(MAKE) MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG)
+$(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
+	cd $(HURD_BUILD) && $(MAKE) MIG=$(MIG) USER_MIG=$(MIG)
 	@touch $(HURD_BUILD)/.built
 
 # In-tree builds carry the plain upstream PACKAGE_VERSION (autoreconf reads
@@ -897,11 +934,11 @@ $(HURD_BUILD)/.built: $(LOCAL_MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 $(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
 	cd $(HURD_SRC) && autoreconf -i
 
-$(HURD_CONFIGURED): $(LOCAL_MIG) $(HURD_SRC)/configure
+$(HURD_CONFIGURED): $(MIG) $(HURD_SRC)/configure
 	mkdir -p $(HURD_BUILD)
 	cd $(HURD_BUILD) && \
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
-	    MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG) CFLAGS="-fcommon -g -O2" \
+	    MIG=$(MIG) USER_MIG=$(MIG) CFLAGS="-fcommon -g -O2" \
 	    --prefix=$(DIST_HURD)
 
 # Install the in-tree userland build into $(DIST_HURD) as a self-contained
@@ -920,7 +957,7 @@ dist-hurd: $(DIST_HURD)/hurd/ext2fs
 # only compares ext2fs's mtime against the build stamp to decide staleness.
 $(DIST_HURD)/hurd/ext2fs: $(HURD_BUILD)/.built
 	cd $(HURD_BUILD) && fakeroot $(MAKE) install prefix=$(DIST_HURD) \
-	  MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG)
+	  MIG=$(MIG) USER_MIG=$(MIG)
 
 # ---- check ----
 # Test suite shipped by upstream gnumach, surfaced as a make target:

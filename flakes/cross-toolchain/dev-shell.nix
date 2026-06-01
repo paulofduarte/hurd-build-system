@@ -11,9 +11,11 @@
 # Build TOOLS (autoreconf, bison/flex, perl, texinfo, …) are INFERRED from
 # this target's own derivations (gnumach + mig + gnumach-headers) — add a
 # tool to a package's nativeBuildInputs and the shell picks it up.  The
-# nix-built mig and the stage-1 cc are SUBTRACTED so entering the shell
-# never forces a nix build of mig (you iterate it in-tree via `make mig`)
-# and the libc-free stage-1 cc can't shadow the wrapped cc on PATH.
+# nix-built working mig IS added to the shell (and exported as $MIG / $USER_MIG)
+# so mig is always available without a `make mig`; running `make src-mig` to
+# populate src/mig opts into an in-tree mig that the Makefile builds and uses
+# instead.  The libc-free stage-1 cc is SUBTRACTED so its prefixed gcc can't
+# shadow the wrapped cc on PATH.
 #
 # The cross compiler + binutils are wired by ABSOLUTE path in the shellHook
 # (CC/CXX from the wrapped toolchain; LD/AR/NM/… from the unwrapped cross
@@ -54,10 +56,11 @@ in
 
       # Build-tool deps inferred from this target's own derivations rather
       # than re-listed.  Subtract the own packages AND the libc-free stage-1
-      # cc: the nix-built mig (a gnumach/glibc build input) must not be
-      # pulled in — you iterate mig in-tree, and depending on nix-mig would
-      # force building it just to ENTER the shell — and the stage-1 cc must
-      # not land on PATH where its prefixed gcc could shadow the wrapped cc.
+      # cc: mig is subtracted HERE so a mig pulled in via gnumach's build
+      # inputs doesn't sneak onto PATH through inference — the shell's mig is
+      # instead the `mig` arg, added explicitly + exported below.  The stage-1
+      # cc must not land on PATH where its prefixed gcc could shadow the
+      # wrapped cc.
       stage1 = crossPkgs.buildPackages.gccWithoutTargetLibc;
       ownDrvs = [ gnumach mig headers toolchain stage1 ];
       inferredBuildInputs = lib.subtractLists ownDrvs
@@ -77,7 +80,7 @@ in
       #              the chown/setuid so a non-root install completes.
       # gnumake + awk + coreutils come from stdenv.
       nativeBuildInputs =
-        [ toolchain binu ]
+        [ toolchain binu mig ]
         ++ inferredBuildInputs
         ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot ])
         # gnumach's x86 `make check` builds a multiboot ISO with
@@ -110,6 +113,12 @@ in
         export RANLIB=${binu}/bin/${tp}ranlib
         export STRIP=${binu}/bin/${tp}strip
         export OBJCOPY=${binu}/bin/${tp}objcopy
+
+        # The nix-built working mig — always available so mach/hurd build with
+        # no `make mig`.  The Makefile uses $MIG unless an in-tree src/mig opts
+        # in (`make src-mig`), in which case it builds + uses that instead.
+        export MIG=${mig}/bin/${tp}mig
+        export USER_MIG=${mig}/bin/${tp}mig
 
         # Empty so hurd's optional PKG_CHECK probes find nothing (matches
         # the nix build).  No global CFLAGS: the kernel takes autoconf's
