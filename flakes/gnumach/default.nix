@@ -23,14 +23,11 @@
 # `gnumach-<name>`.  The root flake merges what comes back into
 # `packages.<system>`.
 #
-# Per-target attrset fields (mirrors flake.nix):
-#   crossSystem : nixpkgs cross-system identifier — drives the cross
-#                 toolchain that compiles + links the kernel.
-#   migTarget   : MIG-flavor triple — used to compose the output pname
-#                 + look up the matching cross-MIG sibling derivation.
-#   platform    : "at" / "xen" / null — fed to gnumach's
-#                 --enable-platform= flag.  Null means the option is
-#                 omitted (aarch64 has no platform).
+# Per-target attrset fields (see target-archs.nix + flake.nix):
+#   crossTarget : nixpkgs cross-system config (`<cpu>-gnu`) — drives the
+#                 wrapped cross toolchain, the output pname, and the
+#                 matching cross-MIG sibling lookup.
+#   platform    : "at" / "xen" — fed to gnumach's --enable-platform= flag.
 #
 # Source comes from the pinned `gnumach-src` flake input (a github fork rev
 # locked in flake.lock; see flake.nix + flakes/sources), NOT the local
@@ -41,8 +38,8 @@
 # We look up "mig-<name>" for the matching target and add its derivation
 # to nativeBuildInputs; nixpkgs' cross-stdenv puts the wrapper's bin/
 # on PATH automatically.  gnumach's configure runs `AC_CHECK_TOOL([MIG],
-# [mig])` and `AC_CHECK_PROG([USER_MIG], [<migTarget>-mig])` — the mig
-# sub-flake ships both the primary `<migTarget>-mig` binary AND a
+# [mig])` and `AC_CHECK_PROG([USER_MIG], [<crossTarget>-mig])` — the mig
+# sub-flake ships both the primary `<crossTarget>-mig` binary AND a
 # `<crossPrefix>mig` symlink alias, so both checks self-discover via
 # PATH with no `MIG=` override needed here.
 #
@@ -52,7 +49,7 @@
 # qemu, neither of which the sandbox provides.  Until then, kernel
 # tests stay under the parent Makefile's `check-mach` target.
 
-{ nixpkgs, system, targets, mig, mkCrossPkgs, self, srcInput, forkUrl }:
+{ nixpkgs, system, targets, mig, toolchainFor, self, srcInput, forkUrl }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -71,12 +68,19 @@ let
 
   mkOne = name: target:
     let
-      crossMig = mig."mig-${name}";
-      crossPkgs = mkCrossPkgs system target;
-      cc = crossPkgs.stdenv.cc;
-      pname = "gnumach-${target.migTarget}";
+      crossMig  = mig."mig-${name}";
+      tp        = target.crossTarget;                 # e.g. i686-gnu
+      # The wrapped cross-cc — the SAME `toolchain-<arch>` the userland +
+      # dev shell use (the xen variants get their CPU sibling's).  The
+      # kernel builds freestanding (configure.ac forces -ffreestanding
+      # -nostdlib), so glibc-hurd is never linked — but using the wrapped
+      # cc keeps the kernel on the one toolchain.  Built with the native
+      # stdenv (like the Hurd userland): the `<cpu>-gnu` cross stdenv would
+      # pull nixpkgs' meta-gated glibc; cross tools come in by name below.
+      toolchain = toolchainFor target;
+      pname     = "gnumach-${tp}";
     in
-    crossPkgs.stdenv.mkDerivation ({
+    pkgs.stdenv.mkDerivation ({
       inherit pname;
 
       # Drives both the store path suffix and (via the sed below) the
@@ -89,32 +93,39 @@ let
       # `srcInput.shortRev`.
       src = srcInput;
 
-      # Native build tools (autoreconf + the MIG wrapper).  Cross-stdenv
-      # already supplies the target compiler + binutils that the kernel
-      # build needs for compile + link.
       # autoreconfHook supplies autoconf/automake/libtool/m4 + runs autoreconf.
       # texinfo: the kernel build runs makeinfo (mach.info).  perl: the MIG
       # wrapper shells out to perl when generating stubs.  awk comes from
-      # stdenv.  crossMig: the matching cross-MIG for this target.
+      # stdenv.  The wrapped cross cc (provides ${tp}-gcc + the cross
+      # binutils) + cross mig (provides ${tp}-mig) are found by configure's
+      # host-prefixed tool search; CC is pinned in preConfigure below.
+      # patchelf: the stdenv audit-tmpdir fixup runs `patchelf --print-rpath`
+      # on each output ELF to verify no $TMPDIR build-dir path leaked into the
+      # kernel's RPATH.  Observed on this host (aarch64-darwin) the default
+      # stdenv ships no patchelf, so the audit can't run — it logged "patchelf:
+      # command not found".  Add it so the audit works.  (For the freestanding
+      # kernel this finds no .dynamic section / no RPATH, so it's effectively
+      # a no-op, but it runs honestly rather than silently skipping.)
+      # dontPatchELF below disables patchelf's OTHER hook (--shrink-rpath),
+      # which its setup-hook would otherwise register here.
       nativeBuildInputs =
         [ pkgs.autoreconfHook ]
-        ++ (with pkgs; [ texinfo perl ])
-        ++ [ crossMig ];
+        ++ (with pkgs; [ texinfo perl patchelf ])
+        ++ [ toolchain crossMig ];
 
-      # gnu17 pin matches the dev shell.  The `-fdebug-prefix-map` entries
-      # rewrite the host-specific cross-toolchain /nix/store paths that leak
-      # into DWARF (header refs, comp dirs, file tables) to stable names, so
-      # the same source yields byte-identical `.debug_info` on every host.
-      # The map values are arbitrary — only their stability matters; `${cc}`
-      # etc. resolve at eval time, normalising each host's hash away.  Debug
-      # info is preserved (paths only), so dist/ stays usable for gdb.
+      # The `-fdebug-prefix-map` entries rewrite the host-specific
+      # cross-toolchain /nix/store paths that leak into DWARF (header refs,
+      # comp dirs, file tables) to stable names, so the same source yields
+      # byte-identical `.debug_info` on every host.  The map values are
+      # arbitrary — only their stability matters; `${toolchain}` etc.
+      # resolve at eval time, normalising each host's hash away.  Debug info
+      # is preserved (paths only), so dist/ stays usable for gdb.
       CFLAGS = lib.concatStringsSep " " [
-        "-std=gnu17"
         "-g"
         "-O2"
-        "-fdebug-prefix-map=${cc}=/cross-cc-wrapper"
-        "-fdebug-prefix-map=${cc.cc}=/cross-gcc"
-        "-fdebug-prefix-map=${cc.bintools}=/cross-binutils-wrapper"
+        "-fdebug-prefix-map=${toolchain}=/cross-cc-wrapper"
+        "-fdebug-prefix-map=${toolchain.cc}=/cross-gcc"
+        "-fdebug-prefix-map=${toolchain.bintools}=/cross-binutils-wrapper"
       ];
 
       # Splice the eval-time-composed version into version.m4 before the
@@ -128,21 +139,68 @@ let
         grep AC_PACKAGE_VERSION version.m4
       '';
 
-      # --host and --prefix are injected by the cross-stdenv's
-      # configurePhase (from $crossConfig and $prefix=$out).
+      # Native stdenv pins CC to the wrapped cross cc so configure's
+      # AC_PROG_CC + AC_CHECK_TOOL resolve the `<cpu>-gnu` tools (on PATH
+      # via `toolchain`) rather than the host gcc autoreconfHook adds.
+      # gnumach's configure.ac forces `-ffreestanding -nostdlib`, so this
+      # cc links the freestanding kernel with no libc.
+      preConfigure = ''
+        export CC=${tp}-gcc
+      '';
+
+      # Force the cross binutils into the recursive sub-makes.  configure's
+      # AC_CHECK_TOOL result doesn't always reach them, so on a non-Linux host
+      # the built-in / host tools get used instead:
+      #   AR/RANLIB/NM  host ar/ranlib can't index `<cpu>-gnu` ELF → empty
+      #                 archives.
+      #   LD            the kernel's relocatable link `$(LD) -u _start -r -o
+      #                 gnumach.o …` (Makefile.am) otherwise runs darwin's
+      #                 cctools ld on i686-gnu .a files → "ld: unknown
+      #                 architecture / building for macOS".
+      #   STRIP         used by Makerules.am; host strip can't read the ELF.
+      # Command-line make vars override the built-ins and propagate down —
+      # the same cross tools the dev shell exports (cross-toolchain/dev-shell.nix).
+      makeFlags = [
+        "AR=${tp}-ar" "RANLIB=${tp}-ranlib" "NM=${tp}-nm"
+        "LD=${tp}-ld" "STRIP=${tp}-strip"
+      ];
+
+      # --prefix=$out comes from the native stdenv's generic configurePhase;
+      # --host is ours (the kernel is cross-compiled).
       #
-      # --enable-dependency-tracking overrides the nix cross-stdenv
-      # default of --disable-dependency-tracking.  Without it,
-      # automake skips generating per-object .Po files that record
-      # `mach_port.o depends on mach_port.server.h` (etc.) — and the
-      # first build then compiles mach_port.c before MIG generates
-      # mach_port.server.h, failing on a missing include.  gnumach
-      # doesn't ship explicit BUILT_SOURCES, so dep tracking is the
-      # only mechanism teaching make about the .defs → .server.h →
-      # .o cascade.
+      # --enable-dependency-tracking: gnumach ships no explicit
+      # BUILT_SOURCES, so automake's per-object .Po files are the only
+      # mechanism teaching make the .defs → .server.h → .o cascade —
+      # compile mach_port.c only after MIG generates mach_port.server.h.
       configureFlags =
-        [ "--enable-dependency-tracking" ]
+        [ "--host=${tp}" "--enable-dependency-tracking" ]
         ++ lib.optional (target.platform != null) "--enable-platform=${target.platform}";
+
+      # gnumach's build is parallel-safe (unlike the Hurd userland, whose top
+      # Makefile races prog- vs lib-subdirs).  The MIG codegen ordering
+      # (.defs → .server.h → .o) is handled by --enable-dependency-tracking
+      # above, and the in-tree `make -j` build confirms it holds under
+      # parallelism.  nixpkgs defaults this to false; set it so the nix kernel
+      # build uses all cores like the in-tree one.
+      enableParallelBuilding = true;
+
+      # Disable the `--shrink-rpath` patchELF fixup hook.  Adding patchelf to
+      # nativeBuildInputs (above, for the audit) also registers patchelf's
+      # setup-hook, which would run `patchelf --shrink-rpath` on every output
+      # ELF in fixupPhase.  We don't want that mutating the cross kernel's
+      # RPATH — it's freestanding (-nostdlib) with no meaningful rpath anyway,
+      # so the pass is pointless and we keep it off for output stability.
+      # dontPatchELF guards ONLY this shrink hook; the audit-tmpdir check
+      # still runs.
+      dontPatchELF = true;
+
+      # Keep the kernel's `-g` DWARF (the build sets -g; on i386/x86_64
+      # $out/boot/gnumach IS the ELF).  Without this the stdenv fixup strip
+      # hook would discard it — we want dist/ usable for gdb / addr2line.
+      # gnumach's own build never strips by default (its `%.stripped` rule is
+      # a separate explicit target).  Stripping, if ever wanted for a release,
+      # is a dist-phase concern.
+      dontStrip = true;
 
       # `make install` produces $out/boot/gnumach plus the public
       # headers + .defs.  stdenv's default buildPhase ("make")
@@ -183,7 +241,7 @@ let
       passthru = { inherit target; };
 
       meta = with lib; {
-        description = "GNU Mach microkernel for ${target.migTarget}";
+        description = "GNU Mach microkernel for ${target.crossTarget}";
         platforms = platforms.all;
       };
     } // helpers.mkReproAttrs { inherit pname; version = fullVersion; });

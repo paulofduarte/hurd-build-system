@@ -15,8 +15,9 @@
 # those closures.  Reimplementing them from outside would copy hundreds
 # of lines that break on every nixpkgs bump.
 #
-# Only flakes/hurd-toolchain (and its downstream glibc-hurd) consume the
-# patched source; gnumach/mig/sidekick keep using vanilla nixpkgs.
+# flakes/cross-toolchain (mkCrossPkgs) consumes the patched source for
+# everything it cross-builds — the gnumach kernel, mig, glibc-hurd, and
+# the Hurd userland; sidekick keeps using vanilla nixpkgs.
 #
 # API:
 #   patchedNixpkgsSrc { system }   store path to a patched nixpkgs

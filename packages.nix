@@ -1,5 +1,5 @@
 # `packages.<system>` and `apps.<system>` outputs (kernel, headers, mig,
-# sidekick + the `nix run` apps).
+# glibc-hurd, the cross-toolchain, sidekick + the `nix run` apps).
 #
 # Kept out of flake.nix so adding a new sub-flake (e.g. hurd) touches only
 # this module — flake.nix and target-archs.nix stay untouched, so the
@@ -12,21 +12,17 @@
 #   nixpkgs, system        — to instantiate the package set;
 #   self                   — build-rev + .gitmodules for PACKAGE_VERSION;
 #   targets                — the per-target loop;
-#   mkCrossPkgs            — the one shared cross-pkgs construction (import
-#                            nixpkgs with cross + x86_64-darwin overlay + the
-#                            gas-determinism patch); without it standalone
-#                            `nix build .#mig-<arch>` / `.#gnumach-headers-…`
-#                            would miss the overlay and fail on x86_64-darwin;
-#   srcInput               — the gnumach-src / mig-src flake input (pinned
-#                            github fork rev; see flakes/sources).
+#   crossToolchain         — the merged `<cpu>-gnu` cross-toolchain
+#                            (mkCrossPkgs / mkAll / mkFinal / the ABI gate);
+#   srcInput               — the gnumach-src / mig-src / … flake inputs
+#                            (pinned github fork rev; see flakes/sources).
 
-{ nixpkgs, self, forAllSystems, targets, crossToolchain, hurdToolchain, gnumach-src, mig-src, hurd-src, glibc-src
+{ nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src, hurd-src, glibc-src
 , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src }:
 
 let
   inherit (nixpkgs) lib;
-  inherit (crossToolchain) mkCrossPkgs mkToolchain;
-  inherit (hurdToolchain) mkAll mkFinal mkAbiChecked mkAbiReport;
+  inherit (crossToolchain) mkCrossPkgs mkAll mkFinal mkAbiChecked mkAbiReport;
   # Fork-id metadata (owner/repo/ref) derived from the `*-src` inputs via
   # flake.lock — see flakes/sources.  Feeds the version string's fork field.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -34,15 +30,18 @@ let
   migInfo     = sourcesLib.info self "mig-src" mig-src;
   hurdInfo    = sourcesLib.info self "hurd-src" hurd-src;
   glibcInfo   = sourcesLib.info self "glibc-src" glibc-src;
+
+  # Userland targets (those that get a full toolchain): the non-xen ones,
+  # i686 + x86_64.  The xen variants are kernel-only.
+  hurdTargets = lib.filterAttrs (_: t: (t.platform or null) != "xen") targets;
+  # crossTarget (`<cpu>-gnu`) -> userland target name.  A xen variant shares
+  # its CPU sibling's crossTarget, so it maps onto that sibling's toolchain.
+  toolchainNameByCrossTarget = lib.listToAttrs
+    (lib.mapAttrsToList (n: t: lib.nameValuePair t.crossTarget n) hurdTargets);
 in
 {
   packages = forAllSystems (system:
     let
-      gnumach = import ./flakes/gnumach {
-        inherit nixpkgs system targets mig self mkCrossPkgs;
-        srcInput = gnumach-src;
-        forkUrl = gnumachInfo.forkUrl;
-      };
       gnumachHeaders = import ./flakes/gnumach-headers {
         inherit nixpkgs system targets mkCrossPkgs;
         srcInput = gnumach-src;
@@ -59,28 +58,19 @@ in
       };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 
-      # The cross-toolchain per target as a first-class output:
-      # `packages.<system>.toolchain-<arch>`.  The cache workflow builds these
-      # and the cache-hit planner probes their store paths — one reference
-      # point for "the toolchain" (defined in flakes/cross-toolchain).
-      toolchains = lib.mapAttrs'
-        (name: target: lib.nameValuePair "toolchain-${name}" (mkToolchain system target))
-        targets;
-
-      # Hurd cross-toolchain components: per-target
-      # `hurd-binutils-<arch>` + `hurd-gcc-stage1-<arch>`, filtered to
-      # targets with a `hurdCrossSystem` field (i686, x86_64 today —
-      # see target-archs.nix).  Uses the patched nixpkgs from
-      # flakes/lib-systems-hurd so the *-gnu triplet parses.
-      hurdToolchainPkgs = mkAll system targets;
+      # Pre-libc cross-toolchain stages: per-userland-target
+      # `cross-binutils-<arch>` + `cross-gcc-stage1-<arch>` (the libc-free
+      # cc that builds gnumach-headers / mig / glibc-hurd).  Defined in
+      # flakes/cross-toolchain/toolchain.nix.
+      toolchainStagePkgs = mkAll system targets;
 
       # glibc-hurd (WORKING): per-target Hurd C library from the working
       # glibc-src + the working headers/mig.  Feeds the wrapped cc's libc and
-      # the userland link.  Its own module (flakes/hurd-toolchain/glibc.nix)
+      # the userland link.  Its own module (flakes/cross-toolchain/glibc.nix)
       # so the Mach + Hurd headers + mig get cleanly threaded.
-      glibcHurd = import ./flakes/hurd-toolchain/glibc.nix {
+      glibcHurd = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
-        inherit (hurdToolchain) mkHurdCrossPkgs;
+        inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
         forkUrl  = glibcInfo.forkUrl;
       };
@@ -108,12 +98,12 @@ in
         srcInput = hurd-ref-src;
         forkUrl = hurdInfo.forkUrl;
       };
-      glibcRefHurd = import ./flakes/hurd-toolchain/glibc.nix {
+      glibcRefHurd = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
         mig = migRef;
         gnumachHeaders = gnumachHeadersRef;
         hurdHeaders = hurdHeadersRef;
-        inherit (hurdToolchain) mkHurdCrossPkgs;
+        inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-ref-src;
         forkUrl  = glibcInfo.forkUrl;
       };
@@ -123,8 +113,6 @@ in
         (n: v: lib.nameValuePair
           (lib.replaceStrings [ "glibc-hurd-" ] [ "glibc-ref-hurd-" ] n) v)
         glibcRefHurd;
-
-      hurdTargets = lib.filterAttrs (_: t: t ? hurdCrossSystem) targets;
 
       # The ABI gate dispatches its Linux-only analysers (abidiff/pahole)
       # into the Debian sidekick VM, so it runs on every host (no darwin
@@ -155,12 +143,49 @@ in
            else mkAbiChecked system target ({ working = w; reference = r; glibcSrc = glibc-src; } // sidekickArgs)))
         hurdTargets;
 
-      # Final cross-gcc + wrapped toolchain per target: gcc binds the
-      # reference glibc, the wrapped cc points at the ABI-gated working one.
+      # Final cross-gcc + wrapped toolchain per userland target: gcc binds
+      # the reference glibc, the wrapped cc points at the ABI-gated working
+      # one.  Outputs `cross-gcc-<arch>` + `toolchain-<arch>` (THE toolchain
+      # — what the dev shell, the gnumach kernel, the Hurd userland, and the
+      # cache workflow all use).
       hurdFinalPkgs = mkFinal system targets {
         reference = glibcRefHurd;
         working   = gatedGlibcHurd;
       };
+
+      # The wrapped cross-cc a given target's gnumach kernel builds with.
+      # Userland targets use their own `toolchain-<arch>`; the xen kernel
+      # variants reuse their CPU sibling's (same `<cpu>-gnu` ABI — the
+      # kernel links -nostdlib, so the working glibc-hurd sysroot is moot).
+      toolchainFor = target: hurdFinalPkgs."toolchain-${toolchainNameByCrossTarget.${target.crossTarget}}";
+
+      # CHECKED mig — the validated mig.  Built with the wrapped cc (which
+      # carries glibc-hurd's <string.h> etc.), so its `make check` can
+      # compile the generated stubs; byte-identical to the bootstrap `mig`
+      # (migcom is native-host-cc, cpu.h is -ffreestanding in both), so a
+      # green check proves the bootstrap mig that built glibc is sound.
+      # Sits downstream of glibc (via the wrapped cc) → built AFTER
+      # hurdFinalPkgs here, no cycle.  Outputs `mig-checked-<arch>` for the
+      # non-xen userland targets.
+      migChecked = import ./flakes/mig {
+        inherit nixpkgs system targets gnumachHeaders mkCrossPkgs;
+        srcInput = mig-src;
+        forkUrl = migInfo.forkUrl;
+        checkToolchains = hurdFinalPkgs;
+      };
+
+      # Consumer-facing mig: every target (incl. the xen kernel variants)
+      # mapped to the CHECKED mig of its crossTarget sibling, re-keyed to the
+      # plain `mig-<name>` the gnumach/hurd modules look up.  This routes
+      # glibc's DOWNSTREAM consumers (kernel + userland) through the validated
+      # mig — so `nix build .#gnumach-<arch>` / `.#hurd-<arch>` can't succeed
+      # unless the mig test suite passed.  The unchecked bootstrap `mig` stays
+      # only on the pre-glibc path (hurd-headers, glibc), where no libc exists
+      # yet to run the tests.
+      checkedMigFor = lib.listToAttrs (lib.mapAttrsToList (name: target:
+        lib.nameValuePair "mig-${name}"
+          migChecked."mig-checked-${toolchainNameByCrossTarget.${target.crossTarget}}")
+        targets);
 
       # `make check-glibc` / `check-glibc-full` back-ends: the explicit
       # report (`deep` = Tier-1/2 + headers; `full` adds the heavy probes).
@@ -177,10 +202,21 @@ in
           { name = "abi-check-full-${name}"; value = mk "full"; }
         ]) hurdTargets));
 
+      # GNU Mach kernel — built with the wrapped cross-cc (freestanding,
+      # -nostdlib).  `toolchainFor` resolves each target (incl. the xen
+      # variants) onto the right `toolchain-<arch>`.
+      gnumach = import ./flakes/gnumach {
+        inherit nixpkgs system targets self toolchainFor;
+        mig = checkedMigFor;   # downstream of glibc → the validated mig
+        srcInput = gnumach-src;
+        forkUrl = gnumachInfo.forkUrl;
+      };
+
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
       hurd = import ./flakes/hurd {
-        inherit nixpkgs system targets mig self;
+        inherit nixpkgs system targets self;
+        mig = checkedMigFor;   # downstream of glibc → the validated mig
         glibcHurd = gatedGlibcHurd;
         hurdToolchain = hurdFinalPkgs;
         srcInput = hurd-src;
@@ -193,11 +229,11 @@ in
     // hurdHeaders
     // hurd
     // sidekick
-    // toolchains
-    // hurdToolchainPkgs
+    // toolchainStagePkgs
     // glibcHurd
     // glibcRefHurdPkgs
     // hurdFinalPkgs
+    // migChecked
     // abiReportPkgs);
 
   apps = forAllSystems (system: import ./flakes/run {

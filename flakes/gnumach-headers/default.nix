@@ -15,15 +15,11 @@
 # `gnumach-headers-<name>`.  The root flake just merges what comes back
 # into `packages.<system>`.
 #
-# Per-target attrset fields (mirrors flake.nix):
-#   crossSystem : nixpkgs cross-system identifier ("i686-elf" etc.).
-#                 Drives the cross-toolchain selection.
-#   migTarget   : MIG-flavor triple ("i686-gnu" etc.).  Used to derive
-#                 pname so each target's headers live in a distinct
-#                 /nix/store path.
-#   platform    : "at" / "xen" / null — fed to gnumach's
-#                 --enable-platform= flag.  Null means the option is
-#                 omitted (aarch64 has no platform).
+# Per-target attrset fields (see target-archs.nix + flake.nix):
+#   crossTarget : nixpkgs cross-system config ("i686-gnu" etc.).  Drives
+#                 the cross-toolchain selection and the pname (so each
+#                 target's headers get a distinct /nix/store path).
+#   platform    : "at" / "xen" — fed to gnumach's --enable-platform= flag.
 #
 # Source comes from the pinned `gnumach-src` flake input (a github fork rev
 # locked in flake.lock; see flake.nix + flakes/sources), NOT the local
@@ -45,9 +41,17 @@ let
   mkOne = name: target:
     let
       crossPkgs = mkCrossPkgs system target;
+      # The libc-free stage-1 cc (gccWithoutTargetLibc): the `<cpu>-gnu`
+      # cross stdenv's own `.cc` would pull nixpkgs' meta-gated glibc, and
+      # the headers precede glibc-hurd in the bootstrap so no libc exists
+      # yet anyway.  install-data compiles nothing; configure's AC_PROG_CC
+      # link test passes because gnumach's configure.ac forces
+      # `-ffreestanding -nostdlib`, so no crt0/libc is needed.
+      cc = crossPkgs.buildPackages.gccWithoutTargetLibc;
+      tp = target.crossTarget;
     in
-    crossPkgs.stdenv.mkDerivation {
-      pname   = "gnumach-headers-${target.migTarget}";
+    pkgs.stdenv.mkDerivation {
+      pname   = "gnumach-headers-${tp}";
       version = "src";
 
       # The pinned `gnumach-src` input (a github fork rev locked in
@@ -55,27 +59,29 @@ let
       # built headers honest to flake.lock.
       src = srcInput;
 
-      # Native build tools for autoreconf + configure.  Cross-stdenv's cc
-      # already provides the target compiler that configure's checks need.
       # autoreconfHook supplies autoconf/automake/libtool/m4 and runs
       # autoreconf.  texinfo: `make install-data` builds doc/mach.info
-      # (makeinfo).  No bison/flex/perl — install-data compiles nothing and
+      # (makeinfo).  The stage-1 cc provides ${tp}-gcc for configure's
+      # checks.  No bison/flex/perl — install-data compiles nothing and
       # stubs MIG; awk comes from stdenv.
-      nativeBuildInputs = [ pkgs.autoreconfHook pkgs.texinfo ];
+      nativeBuildInputs = [ pkgs.autoreconfHook pkgs.texinfo cc ];
 
-      # GCC 15+ defaults to C23; matches the dev shell's pin.
-      CFLAGS = "-std=gnu17 -g -O2";
+      CFLAGS = "-g -O2";
 
-      # USER_MIG is read by gnumach's tests/configfrag.ac via AC_CHECK_PROG.
-      # install-data never invokes the binary, so a stub satisfies the check.
+      # Native stdenv: pin CC to the stage-1 cross cc (host gcc would fail
+      # the --host=<cpu>-gnu configure).  USER_MIG is read by gnumach's
+      # tests/configfrag.ac via AC_CHECK_PROG; install-data never invokes
+      # the binary, so a stub satisfies the check.
       preConfigure = ''
+        export CC=${tp}-gcc
         export USER_MIG=/bin/true
       '';
 
-      # --host and --prefix are injected by the cross-stdenv's configurePhase
-      # (from $crossConfig and $prefix).  Only the platform flag is ours.
+      # --prefix=$out comes from the native stdenv's configurePhase; --host
+      # is ours (these are cross headers).  Plus the platform flag.
       configureFlags =
-        lib.optional (target.platform != null) "--enable-platform=${target.platform}";
+        [ "--host=${tp}" ]
+        ++ lib.optional (target.platform != null) "--enable-platform=${target.platform}";
 
       # We only want the headers — skip the kernel build entirely.
       dontBuild = true;
@@ -87,11 +93,11 @@ let
       '';
 
       # Expose the target attrset so downstream derivations (mig) can read
-      # crossSystem/migTarget without re-deriving them.
+      # crossTarget without re-deriving it.
       passthru = { inherit target; };
 
       meta = with lib; {
-        description = "GNU Mach public headers for ${target.migTarget}";
+        description = "GNU Mach public headers for ${target.crossTarget}";
         platforms = platforms.all;
       };
     };

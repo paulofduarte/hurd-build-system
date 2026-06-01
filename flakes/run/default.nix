@@ -74,9 +74,9 @@ let
   apps' = lib.listToAttrs (map (a: lib.nameValuePair a (mkApp a)) archs);
 
   # `nix run .` picks the arch closest to the host CPU.  Hosts whose CPU
-  # doesn't match any of our supported arches fall through to aarch64
-  # (per crossToolchain.defaultTargetName), which won't accel on x86 hosts
-  # but will still boot under TCG.
-  defaultArch = crossToolchain.defaultTargetName system;
+  # doesn't match any of our supported arches fall through to x86_64
+  # (per crossToolchain.defaultTargetName), which won't accel on aarch64
+  # hosts but will still boot under TCG.
+  defaultArch = crossToolchain.defaultTargetName system targets;
 in
 apps' // { default = apps'.${defaultArch} or apps'.aarch64; }

@@ -21,13 +21,13 @@
 #   mkAbiReport  … { working, reference, level } the explicit `make
 #     check-glibc[-full]` report; same dispatch, emits a report at $out.
 
-{ nixpkgs, mkHurdCrossPkgs }:
+{ nixpkgs, mkCrossPkgs }:
 
 let
   lib = nixpkgs.lib;
 
   abiArchOf = target:
-    let cpu = lib.head (lib.splitString "-" target.migTarget);
+    let cpu = lib.head (lib.splitString "-" target.crossTarget);
     in if cpu == "i686" || cpu == "i386" then "i386" else cpu;
 
   # Env + inputs shared by both entry points.  No libabigail/pahole here —
@@ -37,10 +37,10 @@ let
   mkGateEnv = system: target: { working, reference, sidekick, glibcSrc ? null }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
-      crossPkgs = mkHurdCrossPkgs system target;
+      crossPkgs = mkCrossPkgs system target;
       binu      = crossPkgs.buildPackages.binutils-unwrapped;
       cc        = crossPkgs.buildPackages.gccWithoutTargetLibc;
-      tp        = target.migTarget;
+      tp        = target.crossTarget;
     in {
       inherit pkgs;
       nativeBuildInputs = with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu ];
@@ -69,9 +69,26 @@ let
     export SK_CTL="$TMPDIR/sk"; mkdir -p "$SK_CTL/q"
     cp ${sendScript} "$TMPDIR/sidekick-send"; chmod +x "$TMPDIR/sidekick-send"
     . ${dispatchLib}
-    # Generous keepalive: the build owns the VM's lifetime (we stop it
-    # explicitly below); the timer is just a backstop against a hung build.
-    sk_serve_start "$SK_CTL" 3600 || { echo "ABI gate: sidekick serve VM failed to start" >&2; exit 1; }
+    # Tear the sidekick VM down on ANY exit — pass, probe fail, or an error
+    # that trips the builder's `set -e` mid-run.  Without this, a non-clean
+    # exit skips the explicit sk_serve_stop below and the builder blocks
+    # until the VM's keepalive timer fires (the ~1-min idle hang before a
+    # gate failure surfaces); the trap makes teardown immediate and
+    # unconditional.  sk_serve_stop is idempotent (kill … || true), so the
+    # explicit call below is harmless.  Registered AFTER the dispatch lib is
+    # sourced so sk_serve_stop is defined; guarded so it no-ops before the
+    # VM starts.
+    _sk_started=0
+    trap '[ "$_sk_started" = 1 ] && sk_serve_stop "$SK_CTL" || true' EXIT
+    # Keepalive is only a backstop: the build owns the VM's lifetime and stops
+    # it via the EXIT trap above (and the explicit call below) the instant the
+    # runner returns.  60s comfortably covers the gap between dispatched
+    # abidiff/pahole calls while host-side probes run; if the build itself
+    # wedged for a full minute with no dispatch, letting the idle VM self-stop
+    # is the right backstop.  (Each sk_send raises it per the highest request,
+    # but the gate never needs more than the default.)
+    sk_serve_start "$SK_CTL" 60 || { echo "ABI gate: sidekick serve VM failed to start" >&2; exit 1; }
+    _sk_started=1
 
     # Transparent shims: the probes call `abidiff`/`pahole` normally; these
     # ship the call into the VM (store-path args resolve via its /nix/store
@@ -97,7 +114,7 @@ in
   # working glibc as a drop-in sysroot (symlink farm).
   mkAbiChecked = system: target: { working, reference, sidekick, dispatchLib, sendScript, glibcSrc ? null }:
     let g = mkGateEnv system target { inherit working reference sidekick glibcSrc; };
-    in g.pkgs.runCommand "glibc-hurd-${target.migTarget}-abi-checked"
+    in g.pkgs.runCommand "glibc-hurd-${target.crossTarget}-abi-checked"
       ({ inherit (g) nativeBuildInputs; } // g.env)
       ''
         ${sidekickRun { inherit dispatchLib sendScript; level = "full"; }}
@@ -111,7 +128,7 @@ in
   # dispatch; emits the report at $out, fails the derivation on a probe fail.
   mkAbiReport = system: target: { working, reference, sidekick, dispatchLib, sendScript, level ? "full", glibcSrc ? null }:
     let g = mkGateEnv system target { inherit working reference sidekick glibcSrc; };
-    in g.pkgs.runCommand "glibc-hurd-${target.migTarget}-abi-report-${level}"
+    in g.pkgs.runCommand "glibc-hurd-${target.crossTarget}-abi-report-${level}"
       ({ inherit (g) nativeBuildInputs; } // g.env)
       ''
         ${sidekickRun { inherit dispatchLib sendScript level; }}

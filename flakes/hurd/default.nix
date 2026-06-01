@@ -1,7 +1,7 @@
 # GNU Hurd userland — per-target derivations.
 #
-# Builds the core Hurd servers + libraries with the Hurd cross-toolchain
-# (flakes/hurd-toolchain): the wrapped cc, mig, and glibc-hurd as the
+# Builds the core Hurd servers + libraries with the cross-toolchain
+# (flakes/cross-toolchain): the wrapped cc, mig, and glibc-hurd as the
 # sysroot.  Output layout (hurd's `make install prefix=$out`):
 #
 #   $out/hurd/...        translators (ext2fs, isofs, pflocal, exec, …)
@@ -20,7 +20,7 @@
 # Source comes from the pinned `hurd-src` flake input (savannah master,
 # locked in flake.lock).
 #
-# Filtered to targets with a `hurdCrossSystem` field (i686, x86_64).
+# Filtered to the non-xen userland targets (i686, x86_64).
 
 { nixpkgs, system, targets, mig, hurdToolchain, glibcHurd, self, srcInput, forkUrl }:
 
@@ -29,19 +29,19 @@ let
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
   # Configure flags shared with the in-tree dev shell (Makefile `make hurd`).
-  hurdConfig = import ../hurd-toolchain/hurd-config.nix;
+  hurdConfig = import ../cross-toolchain/hurd-config.nix;
 
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
   fullVersion = helpers.composeVersion {
     inherit upstreamVersion srcInput self forkUrl;
   };
 
-  hurdTargets = lib.filterAttrs (name: target: target ? hurdCrossSystem) targets;
+  hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
 
   mkOne = name: target:
     let
-      tp        = target.migTarget;                       # e.g. i686-gnu
-      toolchain = hurdToolchain."hurd-toolchain-${name}"; # wrapped cross cc
+      tp        = target.crossTarget;                       # e.g. i686-gnu
+      toolchain = hurdToolchain."toolchain-${name}";      # wrapped cross cc
       crossMig  = mig."mig-${name}";
       pname     = "hurd-${tp}";
     in
@@ -55,9 +55,18 @@ let
       # (provides ${tp}-mig) are found by configure's host-prefixed tool
       # search.  pkg-config is present so the optional PKG_CHECK_MODULES
       # probes run and report "not found" rather than erroring.
+      # patchelf: the stdenv audit-tmpdir fixup runs `patchelf --print-rpath`
+      # on each output ELF to check no $TMPDIR build-dir path leaked into
+      # RPATH.  Observed on this host (aarch64-darwin) the default stdenv
+      # ships no patchelf, so the audit can't run — it logged "patchelf:
+      # command not found".  Add it so the audit works.  Unlike the
+      # freestanding kernel, the Hurd userland IS dynamically linked (servers
+      # /libs against glibc-hurd) with real RPATHs, so here the audit does
+      # genuine work.  dontPatchELF below disables patchelf's OTHER hook
+      # (--shrink-rpath), which its setup-hook would otherwise register.
       nativeBuildInputs =
         [ pkgs.autoreconfHook ]
-        ++ (with pkgs; [ texinfo perl pkg-config ])
+        ++ (with pkgs; [ texinfo perl pkg-config patchelf ])
         ++ [ toolchain crossMig ];
 
       # hurd predates gcc's -fno-common default (gcc 10+); -fcommon keeps
@@ -113,12 +122,33 @@ let
         runHook postInstall
       '';
 
-      # Serial build: hurd's top Makefile builds lib-subdirs and
-      # prog-subdirs without declaring the prog→lib dependency, so a
-      # parallel build races — prog-subdirs (exec, storeio, …) link
-      # before lib-subdirs (libports, libtrivfs, libshouldbeinlibc)
-      # finish, failing on undefined ports_*/trivfs_* symbols.
-      enableParallelBuilding = false;
+      # Parallel build — a calculated bet, not a guarantee.  hurd's top
+      # Makefile still does NOT declare any prog→lib ordering: each subdir is
+      # `$(prog-subdirs) $(lib-subdirs): FORCE` (verified in src/hurd HEAD,
+      # 1495073d), and `all:` just lists lib-subdirs then prog-subdirs flat —
+      # nothing stops a prog-subdir (exec/storeio) from reaching its link step
+      # before a lib-subdir (libports/libtrivfs/libshouldbeinlibc) it needs has
+      # built → undefined ports_*/trivfs_*.  So the failure is a timing/-j
+      # race, latent not structural: lib-subdirs are listed first so make
+      # tends to start them first and they usually finish in time, which is
+      # why moderate-`-j` builds (in-tree and nix) pass.  We enable it for the
+      # speedup; if a high-`-j` build ever fails on undefined ports_*/trivfs_*,
+      # that's this race — revert to false.
+      enableParallelBuilding = true;
+
+      # Disable the `--shrink-rpath` patchELF fixup hook on the cross userland
+      # ELFs.  The patchelf in nativeBuildInputs above (for the audit) also
+      # registers patchelf's setup-hook, which would otherwise run
+      # `patchelf --shrink-rpath` on every output and mutate the servers'/libs'
+      # RPATHs; we keep that off for output stability.  dontPatchELF guards
+      # ONLY the shrink hook — the audit-tmpdir check still runs.
+      dontPatchELF = true;
+
+      # Keep the userland's `-g` DWARF (CFLAGS is `-fcommon -g -O2`); the
+      # stdenv fixup strip hook would otherwise discard it.  hurd's own
+      # install (INSTALL_PROGRAM) carries no -s, so this is the only stripper.
+      # Want dist/ debuggable (gdb / addr2line on the servers + libs).
+      dontStrip = true;
 
       passthru = { inherit target; };
       meta = with lib; {

@@ -46,15 +46,14 @@ NIX_FLAKE := $(NIX) --extra-experimental-features 'nix-command flakes'
 ifndef ARCH
 _HOST_CPU := $(shell uname -m)
 # $(strip) is load-bearing: the indented `$(if …)` continuation lines leave
-# a leading space on the else-branch results (" x86_64" on x86_64 hosts,
-# "  i686" on i686), which would corrupt ARCH and every `.#$(ARCH)` flake
-# selector / path derived from it.  aarch64 takes the first branch, so the
-# bug only shows on x86/i686 hosts.
+# a leading space on the else-branch results, which would corrupt ARCH and
+# every `.#$(ARCH)` flake selector / path derived from it.
+# The supported targets are x86_64 + i686 (aarch64-gnu isn't upstream yet),
+# so an aarch64/arm64 host — and any unrecognised host — defaults to x86_64,
+# matching crossToolchain.defaultTargetName.
 ARCH := $(strip \
-  $(if $(filter arm64 aarch64,$(_HOST_CPU)),aarch64, \
-  $(if $(filter x86_64,$(_HOST_CPU)),x86_64, \
   $(if $(filter i386 i486 i586 i686,$(_HOST_CPU)),i686, \
-  aarch64))))
+  x86_64))
 endif
 
 # Default MIG_TARGET / MIG binary name when invoked outside the dev shell
@@ -374,58 +373,11 @@ check-glibc-full:
 rebaseline-ref:
 	$(NIX_FLAKE) flake update glibc-ref-src gnumach-ref-src hurd-ref-src mig-ref-src
 
-# ---- hurd / dist-hurd ----
-# `make hurd`      — in-tree incremental userland build under
-#                    work/hurd/$(ARCH).  Counterpart to `make mach`: edit
-#                    src/hurd, re-run, only changed objects recompile.
-# `make dist-hurd` — clean nix-built userland copied into dist/$(ARCH)/hurd.
-#
-# Unlike mach/mig, these are NOT dispatched through the kernel dev shell
-# (they're filtered out of _BUILD_GOALS): the Hurd userland needs the
-# `*-gnu` hosted toolchain, so each recipe enters the `.#hurd-$(ARCH)`
-# dev shell itself.  That shell exports CC/AR/RANLIB/MIG/CFLAGS and
-# HURD_CONFIGURE_FLAGS (see flakes/hurd-toolchain/dev-shell.nix), so the
-# in-tree build uses the exact toolchain + flags the nix build uses.
-#
-# Run a command inside this arch's Hurd dev shell.  Absolute flakeref so
-# it resolves regardless of the recipe's cwd.  The `#` is escaped (`\#`)
-# because an unescaped `#` starts a comment in a make variable assignment.
-HURD_DEVELOP := $(NIX_FLAKE) develop $(_WORKING_OVERRIDES) $(PROJ)\#hurd-$(ARCH) --command
-
-.PHONY: hurd dist-hurd
-
-# PHONY: always re-enter the build dir and run make (hurd's own Makefiles
-# do the incremental .c -> .o decisions).  config.status gates configure.
-hurd: $(HURD_CONFIGURED)
-	cd $(HURD_BUILD) && $(HURD_DEVELOP) make
-
-# In-tree builds carry the plain upstream PACKAGE_VERSION (autoreconf reads
-# src/hurd's committed configure.ac as-is).  The rich build-rev version is
-# only stamped on the nix-built, shippable artefacts (flakes/hurd) — like
-# Debian/Guix, which keep the snapshot in the package metadata, not the
-# in-tree binary.  A hacker who wants a custom version edits configure.ac.
-$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
-	cd $(HURD_SRC) && $(HURD_DEVELOP) autoreconf -i
-
-$(HURD_CONFIGURED): $(HURD_SRC)/configure
-	mkdir -p $(HURD_BUILD)
-	cd $(HURD_BUILD) && $(HURD_DEVELOP) sh -c \
-	  '$(HURD_SRC)/configure $$HURD_CONFIGURE_FLAGS --prefix=$(DIST_HURD)'
-
-# Clean nix-built userland, copied into $(DIST_HURD) as a self-contained
-# tree (hurd/ translators, lib/, libexec/, bin/, include/).  Counterpart
-# to `hurd`:  `make hurd` is the fast in-tree iteration; `make dist-hurd`
-# is the reproducible, cacheable artefact.
-dist-hurd: $(DIST_HURD)/.stamp
-
-$(DIST_HURD)/.stamp: flakes/hurd/default.nix flake.nix
-	@mkdir -p $(dir $(NIX_HURD_RESULT))
-	$(NIX_FLAKE) build $(_WORKING_OVERRIDES) .#hurd-$(ARCH) -o $(NIX_HURD_RESULT)
-	@rm -rf $(DIST_HURD)
-	@mkdir -p $(DIST_HURD)
-	cp -r $(NIX_HURD_RESULT)/. $(DIST_HURD)/
-	chmod -R u+w $(DIST_HURD)
-	@touch $(DIST_HURD)/.stamp
+# `hurd` / `dist-hurd` recipes live in the inner-make ("in the right shell")
+# branch below, alongside `mach` / `dist-mach` — see there.  They are
+# _BUILD_GOALS, so the outer make dispatches them through `nix develop -i
+# --profile … .#$(ARCH)` like mach; defining the recipe in the inner branch
+# (not here) avoids colliding with the `$(_BUILD_GOALS): _dispatch` stub.
 
 # ============================================================
 # Categorize goals & decide whether to dispatch through nix.
@@ -439,7 +391,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # don't enter the dev shell — its nix build is arch-independent.  When pulled
 # in as a prereq of `run` (which DOES dispatch), it still runs inside the
 # dev shell as part of the inner-make recipe.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins hurd dist-hurd check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick cache-push srcs pin-srcs show-srcs-pins check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND
@@ -673,14 +625,17 @@ else
 # ============================================================
 
 # Driven by environment variables that the Nix dev shell exports:
-#   ARCH, GNUMACH_HOST, MIG, CC, LD, AR, NM, RANLIB, STRIP, OBJCOPY,
-#   TARGET_CC, CFLAGS
+#   ARCH, GNUMACH_HOST, MIG_TARGET, CC, CXX, TARGET_CC,
+#   LD, AR, NM, RANLIB, STRIP, OBJCOPY
+# (No CFLAGS: post-merge the shell exports none — the kernel takes
+# autoconf's `-g -O2` default + gnumach's own `-ffreestanding -nostdlib`;
+# `make hurd` passes its `-fcommon …` at configure time in its own recipe.)
 
 # ---- Sanity: must be inside a target dev shell ----
-REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC CFLAGS
+REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC
 
 $(foreach v,$(REQUIRED_VARS), \
-  $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#aarch64' (or .#x86_64 / .#x86_64-xen / .#i686 / .#i686-xen))))
+  $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#x86_64' (or .#x86_64-xen / .#i686 / .#i686-xen))))
 
 .PHONY: all dist prepare dist-headers mig mach dist-mach \
         check check-mach run run-help
@@ -760,12 +715,12 @@ MIG_SRC_FILES := $(call _tracked_files,$(MIG_SRC))
 $(LOCAL_MIG): $(MIG_SRC)/configure $(DIST_INCLUDE) $(MIG_SRC_FILES)
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool — it runs on the build host and
-	@# emits portable .c/.h.  The dev-shell's $CC is the cross
-	@# compiler (cross-toolchain/default.nix shellHook pins it to the
-	@# kernel-side toolchain), which would fail configure's "can
-	@# create executables" test on the host.  Override to the native
-	@# gcc that the dev shell also provides via pkgs.gcc; keep
-	@# TARGET_CC (already exported by the dev shell) for cpu.symc.
+	@# emits portable .c/.h.  The dev-shell's $CC is the wrapped
+	@# `<cpu>-gnu` cross cc (cross-toolchain/dev-shell.nix), which would
+	@# fail configure's "can create executables" test on the host.
+	@# Override to the native gcc the dev shell also provides via
+	@# pkgs.gcc; keep TARGET_CC (exported by the dev shell, the stage-1
+	@# cross cc) for the cpu.symc compile.
 	cd $(MIG_BUILD) && [ -f config.status ] || \
 	  CC=gcc LD= AR= NM= RANLIB= STRIP= OBJCOPY= \
 	  $(MIG_SRC)/configure \
@@ -833,6 +788,54 @@ $(DIST_KERNEL): flakes/gnumach/default.nix flake.nix
 	cp -r $(NIX_MACH_RESULT)/share $(DIST)/share
 	chmod -R u+w $(DIST)/share
 	@find $(DIST)/share -exec touch {} +
+
+# ---- hurd / dist-hurd ----
+# `make hurd`      — in-tree incremental userland build under
+#                    work/hurd/$(ARCH).  Counterpart to `make mach`: edit
+#                    src/hurd, re-run, only changed objects recompile.
+# `make dist-hurd` — clean nix-built userland copied into dist/$(ARCH)/hurd.
+#
+# Aligned with mach: in-tree `make hurd` runs as plain `cd … && make/
+# configure` inside the dispatched per-arch dev shell (no inner `nix develop`
+# — the pre-merge dual-toolchain era gave hurd its own `.#hurd-$(ARCH)` shell
+# + HURD_DEVELOP; the single merged toolchain made that a redundant, un-pinned
+# second realization).  The shell exports CC/binutils + HURD_CONFIGURE_FLAGS
+# (flakes/cross-toolchain/dev-shell.nix); the recipes add MIG=$(LOCAL_MIG)
+# (same in-tree mig as mach) + CFLAGS=-fcommon at configure time (hurd
+# predates gcc's -fno-common default; scoped here so the kernel never sees it).
+.PHONY: hurd dist-hurd
+
+# PHONY: always re-enter the build dir and run make (hurd's own Makefiles
+# do the incremental .c -> .o decisions).  config.status gates configure.
+hurd: $(LOCAL_MIG) $(HURD_CONFIGURED)
+	cd $(HURD_BUILD) && $(MAKE) MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG)
+
+# In-tree builds carry the plain upstream PACKAGE_VERSION (autoreconf reads
+# src/hurd's committed configure.ac as-is).  The rich build-rev version is
+# stamped only on the nix-built shippable artefacts (flakes/hurd).
+$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
+	cd $(HURD_SRC) && autoreconf -i
+
+$(HURD_CONFIGURED): $(LOCAL_MIG) $(HURD_SRC)/configure
+	mkdir -p $(HURD_BUILD)
+	cd $(HURD_BUILD) && \
+	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
+	    MIG=$(LOCAL_MIG) USER_MIG=$(LOCAL_MIG) CFLAGS="-fcommon -g -O2" \
+	    --prefix=$(DIST_HURD)
+
+# Clean nix-built userland, copied into $(DIST_HURD) as a self-contained tree.
+# Counterpart to `hurd`: `make hurd` is fast in-tree iteration; `make
+# dist-hurd` is the reproducible, cacheable artefact (like dist-mach).
+dist-hurd: $(DIST_HURD)/.stamp
+
+$(DIST_HURD)/.stamp: flakes/hurd/default.nix flake.nix
+	@mkdir -p $(dir $(NIX_HURD_RESULT))
+	$(NIX_FLAKE) build $(_WORKING_OVERRIDES) .#hurd-$(ARCH) -o $(NIX_HURD_RESULT)
+	@rm -rf $(DIST_HURD)
+	@mkdir -p $(DIST_HURD)
+	cp -r $(NIX_HURD_RESULT)/. $(DIST_HURD)/
+	chmod -R u+w $(DIST_HURD)
+	@touch $(DIST_HURD)/.stamp
 
 # ---- check ----
 # Test suite shipped by upstream gnumach, surfaced as a make target:

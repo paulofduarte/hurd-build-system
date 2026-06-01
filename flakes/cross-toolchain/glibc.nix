@@ -30,7 +30,7 @@
 #                                        hurd-headers + gnumach-headers
 #
 # Toolchain inputs come from the existing flake outputs:
-#   stage-1 gcc + cross-binutils      flakes/hurd-toolchain
+#   stage-1 gcc + cross-binutils      flakes/cross-toolchain (mkCrossPkgs)
 #   gnumach-headers + hurd-headers    sibling flakes
 #   mig                               sibling flake
 #
@@ -39,7 +39,7 @@
 # `--with-headers=$sysroot/include` then sees both as if they came
 # from a unified GNU/Hurd installation.
 
-{ nixpkgs, system, targets, mkHurdCrossPkgs, mig, gnumachHeaders, hurdHeaders
+{ nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
 , srcInput, forkUrl }:
 
 let
@@ -61,12 +61,12 @@ let
     inherit upstreamVersion srcInput forkUrl;
   };
 
-  # Targets carrying hurdCrossSystem only.
-  hurdTargets = lib.filterAttrs (name: target: target ? hurdCrossSystem) targets;
+  # Userland targets only (the non-xen ones — i686, x86_64).
+  hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
 
   mkOne = name: target:
     let
-      crossPkgs       = mkHurdCrossPkgs system target;
+      crossPkgs       = mkCrossPkgs system target;
       # gccWithoutTargetLibc is a wrapper around the raw gcc; its
       # .cc attr is the raw cross-gcc derivation.  We reference both:
       # the wrapper for its bin/ (needed for absolute CC= paths) and
@@ -81,8 +81,8 @@ let
       crossMig        = mig."mig-${name}";
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
       hurd-headers    = hurdHeaders."hurd-headers-${name}";
-      pname           = "glibc-hurd-${target.migTarget}";
-      tp              = target.migTarget;
+      pname           = "glibc-hurd-${target.crossTarget}";
+      tp              = target.crossTarget;
     in
     # Use native (host) stdenv — glibc IS the cross libc, can't be
     # built by a cross-stdenv that requires libc to bootstrap.  Cross
@@ -100,9 +100,15 @@ let
 
       # glibc's build needs bison + perl + gawk + python + texinfo +
       # gettext at host side.  No autoreconf — glibc ships a working
-      # configure in its git tree.
+      # configure in its git tree.  patchelf: glibc's Makerules runs
+      # `patchelf --clear-execstack` on each installed .so at install time
+      # (and probes `patchelf --version` first) — without it on PATH the
+      # install logs "patchelf: command not found" for every library.  NOTE:
+      # glibc gates the actual clear-execstack on patchelf >= 0.18.0; nixpkgs
+      # ships 0.15.2, so this silences the probe but glibc still skips the
+      # scrub until patchelf is overridden to >= 0.18.0.
       nativeBuildInputs = with pkgs; [
-        bison perl gawk python3 texinfo gettext gnumake
+        bison perl gawk python3 texinfo gettext gnumake patchelf
       ];
 
       # buildInputs only carries derivations whose meta.platforms
@@ -197,6 +203,17 @@ let
       # toolchain component).  See TOOLCHAIN-LIBC-DECOUPLING.md / task #197.
       dontStrip = true;
 
+      # patchelf is in nativeBuildInputs for glibc's own Makerules
+      # `--clear-execstack` step — but pulling it in also registers patchelf's
+      # setup-hook, which adds a `patchelf --shrink-rpath` pass to fixupPhase.
+      # We don't want that mutating a cross i686-gnu libc's .so RPATHs (output
+      # stability), and observed it spams "shrinking …" / "wrong ELF type"
+      # (the latter is patchelf refusing the crt*.o relocatables; harmless,
+      # `|| true`d).  `dontPatchELF` guards ONLY that shrink hook — glibc's own
+      # patchelf call is unaffected — so this keeps the binary available while
+      # turning the shrink pass off.
+      dontPatchELF = true;
+
       # Smoke-validate the deliverable: libc.so.0.3 (Hurd SONAME,
       # NOT libc.so.6) and the dynamic linker per arch.  Fails the
       # build early if the install layout is wrong.
@@ -237,8 +254,8 @@ let
       '';
 
       # Documents what this is, but glibc-hurd doesn't have a
-      # meta.platforms restriction (consumers are themselves filtered
-      # via target.hurdCrossSystem).
+      # meta.platforms restriction (it's only built for the non-xen
+      # userland targets anyway).
       passthru = { inherit target; };
       meta = with lib; {
         description = "GNU C Library for ${tp} (Hurd port)";

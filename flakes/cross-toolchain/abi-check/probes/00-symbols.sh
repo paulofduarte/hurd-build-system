@@ -22,13 +22,21 @@ td="$PROBE_TMP/00-symbols"; mkdir -p "$td"
 # Mirrors abilist.awk's normalized output without needing glibc's source:
 # keep GLIBC_/HURD_/GCC_ version nodes, drop UND, strip the @@/@ marker
 # (probe 12 covers the default-vs-non-default distinction separately).
+#
+# GLIBC_PRIVATE is excluded: it is glibc's explicitly-internal version node
+# (intra-glibc linkage between libc.so / ld.so / libpthread), NOT public
+# ABI, and it churns freely between glibc versions.  Upstream's own abilist
+# checks drop it; counting its symbols as "removed" is a false positive
+# (e.g. __gai_sigqueue@GLIBC_PRIVATE across 2.43 ↔ master).
 symlist() {
   "$CROSS_OBJDUMP" -T "$1" 2>/dev/null | awk '
     $2 == "*UND*" { next }
     {
       for (i = 1; i <= NF; i++)
         if ($i ~ /^\(?(GLIBC_|HURD_|GCC_)/) {
-          v = $i; gsub(/[()]/, "", v); print v, $NF; break
+          v = $i; gsub(/[()]/, "", v);
+          if (v == "GLIBC_PRIVATE") break;
+          print v, $NF; break
         }
     }' | LC_ALL=C sort -u
 }
