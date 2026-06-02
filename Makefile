@@ -94,11 +94,13 @@ FLAKES        := $(PROJ)/flakes
 SIDEKICK      := $(PROJ)/.sidekick
 DIST_ROOT     := $(PROJ)/dist
 # DIST is the per-arch output tree; override to install elsewhere.
-# DIST_MACH / DIST_HURD each default to DIST (so with no override both dist-*
-# targets populate one tree, dist/$(ARCH)) but can be pointed at separate trees.
+# DIST_MACH / DIST_HURD / DIST_GLIBC each default to DIST (so with no override
+# all dist-* targets populate one tree, dist/$(ARCH)) but can be pointed at
+# separate trees independently.
 DIST          ?= $(DIST_ROOT)/$(ARCH)
 DIST_MACH     ?= $(DIST)
 DIST_HURD     ?= $(DIST)
+DIST_GLIBC    ?= $(DIST)
 
 # In-tree iterative build dirs.
 GNUMACH_SRC      := $(SRC)/gnumach
@@ -111,6 +113,12 @@ GNUMACH_CONFIGURED := $(GNUMACH_BUILD)/config.status
 # dir, which uses the real mig + --prefix=$(DIST_MACH).
 GNUMACH_HDR_BUILD := $(WORK)/gnumach-headers/$(ARCH)
 GNUMACH_HDR_CONFIGURED := $(GNUMACH_HDR_BUILD)/config.status
+# Stamp for the Mach-headers install, kept in the BUILD dir (not the sysroot).
+# Consumers (mig, glibc) depend on this stamp, NOT on $(SYSROOT)/include/mach:
+# glibc's own `make install` writes its mach/* wrapper headers into that shared
+# dir, bumping its mtime — which, if used as a prereq, would invalidate glibc's
+# config.status and loop a rebuild.  The stamp is touched only by mach-headers.
+MACH_HDR_STAMP := $(GNUMACH_HDR_BUILD)/.headers-installed
 
 # Build-only sysroot for the cross headers, populated per component (Mach now
 # via `mach-headers`; Hurd later, for an opt-in glibc-from-source build).  This
@@ -144,9 +152,52 @@ HURD_SRC         := $(SRC)/hurd
 HURD_BUILD       := $(WORK)/hurd/$(ARCH)
 HURD_CONFIGURED  := $(HURD_BUILD)/config.status
 
+# Headers-only build dir for hurd (sibling to GNUMACH_HDR_BUILD): `make
+# install-headers` populates $(SYSROOT)/include/hurd, the Hurd half of the
+# sysroot the in-tree glibc builds against.
+HURD_HDR_BUILD   := $(WORK)/hurd-headers/$(ARCH)
+HURD_HDR_CONFIGURED := $(HURD_HDR_BUILD)/config.status
+# Stamp for the Hurd-headers install (see MACH_HDR_STAMP for the why): glibc
+# installs its own hurd/* headers into $(SYSROOT)/include/hurd, so glibc depends
+# on this build-dir stamp instead of that shared, glibc-written directory.
+HURD_HDR_STAMP := $(HURD_HDR_BUILD)/.headers-installed
+
 # Working glibc clone (populated by `make srcs`, hackable like the kernel
 # sources — see flakes/sources toolchainOnly + TOOLCHAIN-LIBC-DECOUPLING.md).
 GLIBC_SRC        := $(SRC)/glibc
+# OVERRIDABLE (?=): glibc's build emits objects differing only in case
+# (e.g. pthread_atfork.os vs pthread_atfork.oS), which COLLIDE on a
+# case-insensitive filesystem — the default on macOS — silently corrupting
+# libc_nonshared.a (the symptom is "undefined reference to pthread_atfork" at
+# the librt link).  The nix store is a case-sensitive APFS volume for the same
+# reason.  On a case-insensitive host, point this at a case-sensitive volume:
+#   make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(ARCH)
+GLIBC_BUILD      ?= $(WORK)/glibc/$(ARCH)
+# glibc refuses an in-src build, so build out-of-tree under build/.  NOTE: no
+# trailing inline comment on these := lines — make keeps the whitespace before
+# a `#`, and an embedded space would split $(GLIBC_CONFIGURED) into two targets.
+GLIBC_BUILDDIR   := $(GLIBC_BUILD)/build
+GLIBC_CONFIGURED := $(GLIBC_BUILDDIR)/config.status
+# `make glibc` only BUILDS (compiles) glibc — this stamp is its sentinel.
+# Installs are DESTDIR-staged (glibc is configured --prefix=/, so its libc.so
+# comes out root-relative — a relocatable sysroot consumed via --sysroot):
+#   work-glibc  → $(SYSROOT)  (work/sysroot): the BUILD sysroot the in-tree hurd
+#                 build links against, beside the mach+hurd headers — mirrors how
+#                 mach-headers/hurd-headers populate $(SYSROOT).  Private.
+#   dist-glibc  → $(DIST_GLIBC): the shippable copy, distribution only.
+GLIBC_BUILT      := $(GLIBC_BUILDDIR)/.glibc-built
+
+# glibc is opt-in in-tree, like mig.  The toolchain (wrapped cc) always carries
+# a glibc sysroot, so glibc is available with no `make glibc`.  Populating
+# src/glibc (`make src-glibc`) flips GLIBC_IN_TREE on: `make glibc` becomes a
+# real raw build (mirroring flakes/cross-toolchain/glibc.nix) and the in-tree
+# hurd build links against it; without it `make glibc`/`dist-glibc` are no-ops
+# and the userland uses the toolchain's glibc.  Built verbatim — src/glibc must
+# carry any patches it needs (e.g. the rtld cross-from-darwin fix the nix build
+# applies to vanilla glibc).
+ifneq ($(wildcard $(GLIBC_SRC)/.git),)
+GLIBC_IN_TREE := 1
+endif
 
 # In-tree working-source overrides.  When a src/<name> clone exists, point
 # the matching WORKING flake input at it (bare local path → nix git-tree
@@ -192,13 +243,16 @@ SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
 help:
 	@echo "Targets (for ARCH=$(ARCH)):"
 	@echo "  all              build the kernel + Hurd userland in-tree (default; = mach + hurd)"
-	@echo "  mig              build MIG in-tree — opt-in for iterating on MIG (run 'make src-mig' first)"
-	@echo "                   (otherwise a no-op: MIG is always available without it)"
 	@echo "  mach             build gnumach kernel in-tree under ./work/gnumach/$(ARCH)/ (incremental — for kernel iteration)"
 	@echo "  dist-mach        install the in-tree kernel into ./dist/$(ARCH)/ (boot/gnumach + headers + docs)"
 	@echo "  dist             install kernel + Hurd userland into ./dist/$(ARCH)/ (= dist-mach + dist-hurd; mig is host-arch, not bundled)"
 	@echo "  hurd             build the Hurd userland in-tree under ./work/hurd/$(ARCH)/ (incremental; needs ARCH=i686|x86_64)"
 	@echo "  dist-hurd        install the in-tree Hurd userland into ./dist/$(ARCH)/ (under fakeroot)"
+	@echo "  mig              build MIG in-tree — opt-in for iterating on MIG (run 'make src-mig' first)"
+	@echo "                   (otherwise a no-op: MIG is always available without it)"
+	@echo "  glibc            build glibc in-tree — opt-in for hacking glibc (run 'make src-glibc' first;"
+	@echo "                   else a no-op).  The in-tree userland then links against it."
+	@echo "  dist-glibc       install the in-tree glibc into ./dist/$(ARCH)/ (opt-in; joins 'dist')"
 	@echo "  check            run the kernel test suite (== check-mach)"
 	@echo "  check-mach       run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
@@ -264,9 +318,12 @@ mrproper:
 	rm -rf $(SIDEKICK)
 	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-* $(FLAKES)/hurd/result-*
 	rm -rf $(DIST_ROOT)
-	git -C $(GNUMACH_SRC) clean -fdX
-	git -C $(MIG_SRC)     clean -fdX
-	git -C $(HURD_SRC)    clean -fdX
+	@# git clean each working src clone, guarded by `-d .git`: the opt-in clones
+	@# (src/mig, src/glibc) may not be present, and a bare `git -C` on a missing
+	@# dir would abort mrproper.
+	@for s in $(GNUMACH_SRC) $(MIG_SRC) $(HURD_SRC) $(GLIBC_SRC); do \
+	  if [ -d "$$s/.git" ]; then echo "  CLEAN  $$s"; git -C "$$s" clean -fdX; fi; \
+	done
 
 # ---- sidekick (always-on, arch-independent) ----
 # Builds the x86_64 Alpine helper VM the harness uses for operations
@@ -384,11 +441,18 @@ pin-src-%:
 
 # Goals that build from each in-tree source — used to auto-bootstrap an absent
 # clone (see the _dispatch gating below).  mach + the header/dist goals build
-# from src/gnumach; hurd + all/dist build from src/hurd.  (hurd itself does NOT
-# need src/gnumach: its Mach headers come from the toolchain sysroot, and mig
-# from the shell unless opted in.)
-_GNUMACH_GOALS := mach-headers mach dist-mach check check-mach all dist
-_HURD_GOALS    := hurd dist-hurd all dist
+# from src/gnumach; hurd + all/dist build from src/hurd.
+#
+# hurd/dist-hurd don't need src/gnumach in the BASE config (their Mach headers
+# come from the toolchain sysroot, mig from the shell).  But the opt-ins add a
+# transitive edge to src/gnumach, so they must bootstrap it too:
+#   GLIBC_IN_TREE → hurd → glibc → mach-headers → src/gnumach
+#   MIG_IN_TREE   → {hurd,hurd-headers,mig} → in-tree mig → mach-headers → src/gnumach
+# (mach/dist-mach/glibc/work-glibc/dist-glibc already list src/gnumach.)
+_GNUMACH_GOALS := mach-headers mach dist-mach check check-mach all dist glibc work-glibc dist-glibc \
+                  $(if $(GLIBC_IN_TREE),hurd dist-hurd) \
+                  $(if $(MIG_IN_TREE),mig hurd dist-hurd hurd-headers)
+_HURD_GOALS    := hurd dist-hurd all dist hurd-headers glibc work-glibc dist-glibc
 
 # ---- mig (no-op when not opted into in-tree; always-on, arch-independent) ----
 # Without an in-tree src/mig, mig is provided by the dev shell ($MIG) — so
@@ -399,6 +463,17 @@ ifndef MIG_IN_TREE
 .PHONY: mig
 mig:
 	@echo "mig: provided by the dev shell; run 'make src-mig' to build in-tree."
+endif
+
+# ---- glibc (no-op when not opted into in-tree; always-on, arch-independent) ----
+# Without an in-tree src/glibc, glibc comes from the toolchain (the wrapped cc's
+# baked-in sysroot) — so `make glibc`/`dist-glibc` do nothing here.  Run `make
+# src-glibc`; that flips GLIBC_IN_TREE on and the real raw in-tree build (defined
+# in the dev-shell-dispatched rules) takes over, and the userland links it.
+ifndef GLIBC_IN_TREE
+.PHONY: glibc work-glibc dist-glibc
+glibc work-glibc dist-glibc:
+	@echo "$@: opt-in — run 'make src-glibc' to build glibc in-tree."
 endif
 
 # ---- ABI gate deep checks (arch-specific) ----
@@ -464,7 +539,7 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # `mig` is a build goal ONLY when an in-tree src/mig opts in; without it `make
 # mig` is a no-op served by the shell's MIG, so it's filtered out (runs its own
 # top-level recipe, no dev-shell dispatch) — like srcs/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache srcs pin-srcs show-srcs-pins src-% pin-src-% $(if $(MIG_IN_TREE),,mig) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache srcs pin-srcs show-srcs-pins src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # A goal is "satisfied" when:
 #   - every required sentinel file exists (covers transitive deps), AND
@@ -484,10 +559,10 @@ _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache 
 # Goals with no entry here are conservatively always unsatisfied — dispatch
 # runs and gnumach's own make decides what to do.
 
-# The public Mach headers live in the build-only sysroot (the in-tree mig
-# depends on them).  Keyed on the mach/ subdir so a later hurd-headers target
-# can stage Hurd headers into the same sysroot without sharing this sentinel.
-_HEADERS_FILES   := $(SYSROOT)/include/mach
+# The Mach-headers install sentinel.  Keyed on the build-dir STAMP, not
+# $(SYSROOT)/include/mach: glibc's own install writes mach/* headers into that
+# shared dir, so its mtime isn't a reliable signal (see MACH_HDR_STAMP).
+_HEADERS_FILES   := $(MACH_HDR_STAMP)
 # In-tree mig is a buildable input, so the built binary is a sentinel/prereq.
 # The dev-shell (nix) mig is a fixed external input — not a staleness sentinel
 # (else its missing-from-the-worktree path would mark mach/hurd forever stale).
@@ -500,25 +575,70 @@ _MACH_FILES      := $(_MIG_FILES) $(GNUMACH_KERNEL)
 _DIST_MACH_FILES := $(DIST_MACH)/boot/gnumach
 
 # `mach-headers` installs the Mach public headers into the build-only sysroot
-# (what the in-tree mig consumes).
+# (what the in-tree mig consumes).  Watch the whole src tree (the install target
+# takes every tracked .h/.defs as a prereq) — a header edit anywhere re-installs.
 _SENTINEL.mach-headers := $(_HEADERS_FILES)
-_PRIMARY.mach-headers  := $(SYSROOT)/include/mach
-_WATCH.mach-headers    := $(GNUMACH_SRC)/include
+_PRIMARY.mach-headers  := $(MACH_HDR_STAMP)
+_WATCH.mach-headers    := $(GNUMACH_SRC)
 
+# `hurd-headers` installs the Hurd public headers into the build-only sysroot
+# (the Hurd half of the in-tree glibc's --with-headers sysroot).  Private; keyed
+# on the build-dir STAMP (not the shared include/hurd dir glibc writes into).
+_SENTINEL.hurd-headers := $(HURD_HDR_STAMP)
+_PRIMARY.hurd-headers  := $(HURD_HDR_STAMP)
+_WATCH.hurd-headers    := $(HURD_SRC)
+
+# mig compiles against the installed Mach headers (TARGET_CPPFLAGS=-I$(SYSROOT)/
+# include; $(LOCAL_MIG) prereq $(MACH_HDR_STAMP)), so watch src/gnumach too:
+# editing a Mach header re-installs it and rebuilds mig.
 _SENTINEL.mig          := $(_MIG_FILES)
 _PRIMARY.mig           := $(LOCAL_MIG)
-_WATCH.mig             := $(MIG_SRC) flakes/mig
+_WATCH.mig             := $(MIG_SRC) flakes/mig $(GNUMACH_SRC)
 
+# `glibc` — opt-in raw in-tree glibc build (GLIBC_IN_TREE).  `make glibc` only
+# compiles, so the sentinel is the build stamp (not an install).  Watch
+# src/glibc for source edits.
+_SENTINEL.glibc        := $(GLIBC_BUILT)
+_PRIMARY.glibc         := $(GLIBC_BUILT)
+# glibc consumes, besides src/glibc: the mig stubs ($(GLIBC_BUILT) prereq $(MIG),
+# mig opt-in) and the Mach+Hurd headers ($(GLIBC_CONFIGURED) prereqs the
+# $(MACH_HDR_STAMP)/$(HURD_HDR_STAMP) stamps).  Watch all their source trees so
+# editing the in-tree mig or any Mach/Hurd header re-dispatches glibc; the inner
+# prereq chain then rebuilds only what actually changed.
+_WATCH.glibc           := $(GLIBC_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC)) $(GNUMACH_SRC) $(HURD_SRC)
+
+# `work-glibc` (private) — install the built glibc into the build sysroot.
+# Same input trees as `glibc` (it just installs that build).
+_SENTINEL.work-glibc   := $(SYSROOT)/lib/libc.so.0.3
+_PRIMARY.work-glibc    := $(SYSROOT)/lib/libc.so.0.3
+_WATCH.work-glibc      := $(GLIBC_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC)) $(GNUMACH_SRC) $(HURD_SRC)
+
+# Watch src/gnumach for source edits and, when the mig opt-in is on, src/mig
+# too (symmetric with hurd watching src/glibc): editing the in-tree mig then
+# re-dispatches mach, whose prereq chain (kernel → $(LOCAL_MIG)) rebuilds mig
+# and recompiles the kernel against the regenerated RPC stubs.
 _SENTINEL.mach         := $(_MACH_FILES)
 _PRIMARY.mach          := $(GNUMACH_KERNEL)
-_WATCH.mach            := $(GNUMACH_SRC)
+_WATCH.mach            := $(GNUMACH_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC))
 
 # `hurd` — userland compile.  No single output binary, so the sentinel is a
-# build stamp; transitively requires mig + headers (via _MACH_FILES' deps,
-# reused here as the toolchain prereqs).  Watch src/hurd for source edits.
-_SENTINEL.hurd         := $(_MIG_FILES) $(HURD_BUILD)/.built
+# build stamp; transitively requires mig + headers (via _MIG_FILES) and, when
+# the glibc opt-in is on (GLIBC_IN_TREE), the in-tree glibc installed into the
+# build sysroot.  The sentinel set MUST mirror the $(HURD_BUILD)/.built prereq
+# line: otherwise, with a stale .built from a pre-opt-in build, hurd would
+# short-circuit and never build/link the in-tree glibc — the same way mach's
+# sentinel pulls in $(LOCAL_MIG) so an unbuilt in-tree mig forces a dispatch.
+# Watch src/hurd for source edits and, when the glibc opt-in is on, src/glibc
+# too: editing the in-tree glibc then re-dispatches hurd, whose prereq chain
+# (.built → libc.so.0.3 → $(GLIBC_BUILT)) rebuilds glibc and relinks the
+# userland against it.  src/mig is watched too (mig opt-in): hurd links the
+# mig-generated stubs ($(MIG) prereq), so a mig edit must re-dispatch hurd.
+# Under the glibc opt-in src/gnumach is also watched: a Mach-header edit rebuilds
+# the in-tree glibc (via mach-headers), which the userland then relinks against.
+# (src/hurd is already watched, covering the Hurd-header → glibc edge too.)
+_SENTINEL.hurd         := $(_MIG_FILES) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_BUILD)/.built
 _PRIMARY.hurd          := $(HURD_BUILD)/.built
-_WATCH.hurd            := $(HURD_SRC)
+_WATCH.hurd            := $(HURD_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC)) $(if $(GLIBC_IN_TREE),$(GLIBC_SRC) $(GNUMACH_SRC))
 
 # `all` = mach + hurd — a COMPOSITE goal: stale iff a component is stale
 # (see _stale's _COMPOSE branch).  We do NOT flatten the components'
@@ -528,24 +648,34 @@ _WATCH.hurd            := $(HURD_SRC)
 _COMPOSE.all           := mach hurd
 
 # `dist-mach` installs the in-tree kernel into the dist tree — same source
-# as `mach` (it no longer copies from the nix gnumach derivation).
+# as `mach` (it no longer copies from the nix gnumach derivation), so it watches
+# the same trees: src/gnumach + src/mig (mig opt-in) for the kernel's mig stubs.
 _SENTINEL.dist-mach    := $(_DIST_MACH_FILES)
 _PRIMARY.dist-mach     := $(DIST_MACH)/boot/gnumach
-_WATCH.dist-mach       := $(GNUMACH_SRC)
+_WATCH.dist-mach       := $(GNUMACH_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC))
 
 # `dist-hurd` — install the userland into the dist tree.  Sentinel is the
 # installed ext2fs translator (a real install result, mirroring dist-mach's
 # boot/gnumach); rebuilds when src/hurd changes (which also bumps .built).
+# Watches the same trees as `hurd` (it installs that build): src/mig (mig stubs)
+# and, under the glibc opt-in, src/glibc + src/gnumach (the in-tree glibc).
 _SENTINEL.dist-hurd    := $(DIST_HURD)/hurd/ext2fs
 _PRIMARY.dist-hurd     := $(DIST_HURD)/hurd/ext2fs
-_WATCH.dist-hurd       := $(HURD_SRC)
+_WATCH.dist-hurd       := $(HURD_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC)) $(if $(GLIBC_IN_TREE),$(GLIBC_SRC) $(GNUMACH_SRC))
+
+# `dist-glibc` — install the in-tree glibc into the dist tree (opt-in).  Same
+# input trees as `glibc` (it just installs that build).
+_SENTINEL.dist-glibc   := $(DIST_GLIBC)/lib/libc.so.0.3
+_PRIMARY.dist-glibc    := $(DIST_GLIBC)/lib/libc.so.0.3
+_WATCH.dist-glibc      := $(GLIBC_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC)) $(GNUMACH_SRC) $(HURD_SRC)
 
 # `dist` = dist-mach + dist-hurd — COMPOSITE (same rationale as `all`): stale
 # iff a component is stale, evaluated per component so the dist-mach primary is
 # only ever compared against src/gnumach, the dist-hurd primary only against
 # src/hurd.  (dist-mach's `make install` lays the Mach headers into $(DIST)
-# already, so there is no separate headers step.)
-_COMPOSE.dist          := dist-mach dist-hurd
+# already, so there is no separate headers step.)  With an in-tree glibc
+# (GLIBC_IN_TREE), dist-glibc joins so the hacked glibc ships too.
+_COMPOSE.dist          := dist-mach dist-hurd $(if $(GLIBC_IN_TREE),dist-glibc)
 
 # We rely on `git ls-files` to enumerate "real source" — anything else
 # (configure, Makefile.in, autom4te.cache/, INSTALL, doc/stamp-vti, ...) is
@@ -555,8 +685,8 @@ _COMPOSE.dist          := dist-mach dist-hurd
 # Resolve to the oldest existing PRIMARY sentinel for `goal` — the staleness
 # reference (an ABSOLUTE path; all _PRIMARY entries are rooted at $(CURDIR)).
 # Anything newer than this means real source moved after the goal completed.
-#   `-d` is load-bearing: a PRIMARY may be a DIRECTORY (e.g. mach-headers'
-#   $(SYSROOT)/include/mach).  Without -d, `ls -t <dir>` lists the dir's
+#   `-d` is load-bearing: a PRIMARY may be a DIRECTORY (e.g. a dist tree's
+#   install dir).  Without -d, `ls -t <dir>` lists the dir's
 #   CONTENTS as bare basenames — losing the path and yielding a name that
 #   _newer_tracked_one then resolves inside the (wrong) watch dir, where a
 #   missing file makes every `-nt` test true → permanent false-stale.  With
@@ -771,7 +901,7 @@ REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC
 $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#x86_64' (or .#x86_64-xen / .#i686 / .#i686-xen))))
 
-.PHONY: all dist mach-headers mig mach dist-mach \
+.PHONY: all dist mach-headers hurd-headers mig glibc work-glibc mach dist-mach dist-glibc \
         check check-mach run run-help
 
 # Explicit default — `help` (defined above) would otherwise win the
@@ -785,6 +915,28 @@ $(foreach v,$(REQUIRED_VARS), \
 all: mach hurd
 
 dist: dist-mach dist-hurd
+
+# $(call _tracked_files,<dir>) — every git-tracked file under <dir>, as
+# absolute paths.  Used by the mig/mach/glibc rules to list src as prereqs so
+# editing a tracked source triggers the in-tree rebuild (without it, the only
+# real prereqs are configure + headers, which don't move on src edits).  Relies
+# on `git ls-files` so generated files (configure, .deps/, autom4te.cache/, …)
+# never cause spurious rebuilds; once a rule fires, the inner build's automake
+# dep tracking handles the fine-grained .c→.o decisions.  Defined up here (ahead
+# of the header rules) so the header-source lists below can use it.
+_tracked_files = $(addprefix $(1)/,$(shell cd $(1) 2>/dev/null && git ls-files))
+
+# Public-header SOURCES — real prereqs of the header-install targets: every
+# tracked .h/.defs across the WHOLE kernel/userland tree.  We deliberately watch
+# the entire tree rather than mapping the specific public-header folders: it's
+# simpler and stays correct if the layout shifts between versions.  Editing any
+# header re-runs install-data / install-headers (cheap, idempotent) and bumps
+# the sysroot, so the in-tree mig + glibc reconfigure/rebuild against it; a .c
+# edit never trips this (only .h/.defs are listed).  A header that isn't
+# actually installed still triggers a (small, incremental) downstream rebuild —
+# the safe, conservative direction.
+_MACH_HDR_SRC := $(filter %.h %.defs,$(call _tracked_files,$(GNUMACH_SRC)))
+_HURD_HDR_SRC := $(filter %.h %.defs,$(call _tracked_files,$(HURD_SRC)))
 
 # In-tree builds carry the plain upstream PACKAGE_VERSION — autoreconf reads
 # src/gnumach's committed version.m4 / configure.ac as-is.  The rich build-rev
@@ -810,11 +962,12 @@ $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4
 # mig, so the stub satisfies configure's AC_CHECK_PROG).  Headers-only — the
 # kernel itself is never built here.
 #
-# Not in `make help`: it's an internal build step (mig depends on the
-# $(SYSROOT)/include/mach file directly, so it's built on demand), kept as a
-# target only for manual/debug use.  Keyed on the mach/ subdir so a later
-# hurd-headers target can stage Hurd headers into the same sysroot.
-mach-headers: $(SYSROOT)/include/mach
+# Not in `make help`: it's an internal build step (mig/glibc depend on the
+# $(MACH_HDR_STAMP) stamp, so it's built on demand), kept as a target only for
+# manual/debug use.  The stamp (not $(SYSROOT)/include/mach) is the sentinel:
+# glibc later installs its own mach/* headers into that shared dir, so the dir's
+# mtime is NOT a reliable "Mach headers installed" signal — see MACH_HDR_STAMP.
+mach-headers: $(MACH_HDR_STAMP)
 
 $(GNUMACH_HDR_CONFIGURED): $(GNUMACH_SRC)/configure
 	mkdir -p $(GNUMACH_HDR_BUILD)
@@ -823,14 +976,41 @@ $(GNUMACH_HDR_CONFIGURED): $(GNUMACH_SRC)/configure
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(SYSROOT) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
-# Src prereqs ($(GNUMACH_SRC_FILES)) are intentionally omitted here: that var
-# is defined further down (next to the kernel rule, after _tracked_files), so
-# referencing it at this point would expand empty.  Staleness across source
-# edits is handled for the dispatched path by _WATCH.mach-headers
-# ($(GNUMACH_SRC)/include); install-data is cheap + idempotent (merges).
-$(SYSROOT)/include/mach: $(GNUMACH_HDR_CONFIGURED)
+# $(_MACH_HDR_SRC) (every tracked .h/.defs in the tree) is a real prereq, so
+# editing any Mach header re-runs install-data and re-touches the stamp — which
+# the in-tree mig + glibc depend on.  install-data is cheap + idempotent
+# (merges); a .c edit never lands here (not a .h/.defs).
+$(MACH_HDR_STAMP): $(GNUMACH_HDR_CONFIGURED) $(_MACH_HDR_SRC)
 	cd $(GNUMACH_HDR_BUILD) && $(MAKE) install-data
-	@touch $(SYSROOT)/include/mach
+	@touch $(MACH_HDR_STAMP)
+
+# ---- hurd-headers (private: the Hurd half of the in-tree glibc's sysroot) ----
+# Install the Hurd public headers into the build-only sysroot via hurd's
+# `make install-headers` — a pure file-copy walk (src/hurd/Makefile), so no
+# cross compile happens; mig must be discoverable for configure's
+# AC_CHECK_TOOL but isn't invoked.  Sibling to mach-headers.  Not in `make help`
+# (internal — glibc depends on the $(HURD_HDR_STAMP) stamp, not the shared
+# $(SYSROOT)/include/hurd dir that glibc itself writes its hurd/* headers into).
+hurd-headers: $(HURD_HDR_STAMP)
+
+$(HURD_HDR_CONFIGURED): $(HURD_SRC)/configure $(MIG)
+	mkdir -p $(HURD_HDR_BUILD)
+	cd $(HURD_HDR_BUILD) && \
+	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
+	    MIG=$(MIG) USER_MIG=$(MIG) --prefix=$(SYSROOT)
+
+# $(_HURD_HDR_SRC) (every tracked .h/.defs) is a real prereq — editing any Hurd
+# header re-runs install-headers and re-touches the stamp, which the in-tree
+# glibc depends on.  A .c edit never lands here (not a .h/.defs).
+# no_deps=t is REQUIRED (matches flakes/hurd-headers): it gates off hurd's
+# dependency machinery (Makeconf: `ifneq ($(no_deps),t)`).  Without it,
+# install-headers runs `directory-depend` across every subdir — generating .d
+# files + mig stubs (looks like a full hurd build) — which RACES under `make -j`
+# and corrupts .d files (e.g. utils/msgids.d → "missing separator"), failing the
+# headers step before glibc ever configures.  With it, this is a pure header copy.
+$(HURD_HDR_STAMP): $(HURD_HDR_CONFIGURED) $(_HURD_HDR_SRC)
+	cd $(HURD_HDR_BUILD) && $(MAKE) install-headers prefix=$(SYSROOT) no_deps=t
+	@touch $(HURD_HDR_STAMP)
 
 # ---- mig ----
 # mig is opt-in in-tree (see the MIG_IN_TREE block near LOCAL_MIG).  With
@@ -845,25 +1025,13 @@ ifdef MIG_IN_TREE
 mig: $(LOCAL_MIG)
 endif
 
-# $(call _tracked_files,<dir>) — every git-tracked file under <dir>,
-# as absolute paths.  Used by the mig + mach rules to list src as
-# prereqs so editing src/foo.c triggers the in-tree rebuild.  Without
-# this, those rules' only "real" prereqs are configure + headers,
-# neither of which moves on src edits — `make mig`/`make mach` after
-# editing source would silently fall back to the stale build.  We
-# rely on `git ls-files` so generated files (configure, .deps/,
-# autom4te.cache/, ...) don't cause spurious rebuilds.  Once the
-# rule fires, the inner build's own automake dep tracking handles
-# the fine-grained .c→.o decisions.
-_tracked_files = $(addprefix $(1)/,$(shell cd $(1) 2>/dev/null && git ls-files))
-
 MIG_SRC_FILES := $(call _tracked_files,$(MIG_SRC))
 # Defined here (before the hurd recipe that uses it) so it expands non-empty:
 # editing a tracked src/hurd file makes $(HURD_BUILD)/.built stale → inner make
 # re-runs (hurd's own dep tracking handles the .c→.o decisions).
 HURD_SRC_FILES := $(call _tracked_files,$(HURD_SRC))
 ifdef MIG_IN_TREE
-$(LOCAL_MIG): $(MIG_SRC)/configure $(SYSROOT)/include/mach $(MIG_SRC_FILES)
+$(LOCAL_MIG): $(MIG_SRC)/configure $(MACH_HDR_STAMP) $(MIG_SRC_FILES)
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool — it runs on the build host and
 	@# emits portable .c/.h.  The dev-shell's $CC is the wrapped
@@ -882,6 +1050,125 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(SYSROOT)/include/mach $(MIG_SRC_FILES)
 
 $(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
 	cd $(MIG_SRC) && autoreconf -i
+endif
+
+# ---- glibc (opt-in raw in-tree build; mirrors flakes/cross-toolchain/glibc.nix) ----
+# With src/glibc present (GLIBC_IN_TREE), build glibc from source against the
+# combined Mach+Hurd sysroot.  Built with the LIBC-FREE stage-1 cc ($(GLIBC_CC),
+# exported by the dev shell) — the wrapped final cc has glibc baked in, which
+# would be circular.  Out-of-tree build dir (glibc refuses an in-src build).
+# postInstall mirrors glibc.nix: merge the sysroot's Mach+Hurd headers into the
+# install tree (so it's a complete GNU/Hurd sysroot) and augment libc.so's GROUP
+# with the Mach/Hurd RPC stub libs (else every userland link fails on undefined
+# __mach_port_*/__io_*/…).  Without src/glibc, `make glibc`/`dist-glibc` are
+# no-ops (defined top-level, near the mig no-op).  src/glibc is built verbatim:
+# it must carry any patches it needs (e.g. the rtld cross-from-darwin fix).
+ifdef GLIBC_IN_TREE
+GLIBC_SRC_FILES := $(call _tracked_files,$(GLIBC_SRC))
+
+glibc: $(GLIBC_BUILT)
+
+# Two env knobs, both mirroring what the nix glibc build gets implicitly:
+#   NIX_HARDENING_ENABLE=  glibc IS the fortify provider and can't be built with
+#     it; the dev shell's wrapper would otherwise re-inject -D_FORTIFY_SOURCE=3
+#     *after* glibc's own -U_FORTIFY_SOURCE, turning the fortify header's
+#     `syslog` into an always_inline that misc/syslog.c can't inline ("inlining
+#     failed in call to always_inline syslog").  Disable hardening.
+#   --prefix=/  so the installed libc.so GROUP is ROOT-RELATIVE (/lib/...),
+#     making the dist a relocatable sysroot (ld resolves /-paths under
+#     --sysroot).  Files are staged via DESTDIR at install time (dist-glibc).
+# Depend on the header STAMPS, not $(SYSROOT)/include/{mach,hurd}: glibc's own
+# `make install` writes mach/* + hurd/* headers into those shared dirs, bumping
+# their mtime — keying config.status on the dirs would make glibc invalidate its
+# own configure and loop a full rebuild on every subsequent make.  The stamps are
+# touched only by mach-headers/hurd-headers, so a real Mach/Hurd header edit
+# still re-triggers glibc, but glibc's own install does not.
+$(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(MACH_HDR_STAMP) $(HURD_HDR_STAMP)
+	mkdir -p $(GLIBC_BUILDDIR)
+	@# Preflight: glibc emits objects differing only in case (e.g.
+	@# pthread_atfork.os vs .oS).  A case-INSENSITIVE filesystem collides them,
+	@# silently corrupting libc_nonshared.a → "undefined reference to
+	@# pthread_atfork" at the librt link.  Fail fast with guidance instead.
+	@touch $(GLIBC_BUILDDIR)/.cstest; \
+	if [ -e $(GLIBC_BUILDDIR)/.CSTEST ]; then \
+	  rm -f $(GLIBC_BUILDDIR)/.cstest; \
+	  echo "ERROR: $(GLIBC_BUILD) is on a case-INSENSITIVE filesystem." >&2; \
+	  echo "  glibc's build needs case-sensitivity (pthread_atfork.os vs .oS collide)." >&2; \
+	  echo "  Point GLIBC_BUILD at a case-sensitive volume, e.g.:" >&2; \
+	  echo "    make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(ARCH)" >&2; \
+	  exit 1; \
+	fi; \
+	rm -f $(GLIBC_BUILDDIR)/.cstest
+	cd $(GLIBC_BUILDDIR) && \
+	  NIX_HARDENING_ENABLE= \
+	  CC="$(GLIBC_CC)" CXX="$(GLIBC_CXX)" BUILD_CC="$(BUILD_CC)" \
+	  AR="$(AR)" AS="$(AS)" LD="$(LD)" NM="$(NM)" OBJCOPY="$(OBJCOPY)" \
+	  OBJDUMP="$(OBJDUMP)" RANLIB="$(RANLIB)" READELF="$(READELF)" STRIP="$(STRIP)" \
+	  $(GLIBC_SRC)/configure \
+	    --build=$(BUILD_TRIPLE) \
+	    --host=$(GNUMACH_HOST) \
+	    --prefix=/ \
+	    --libdir=/lib \
+	    --with-headers=$(SYSROOT)/include \
+	    --with-binutils=$(BINUTILS_BIN) \
+	    --enable-add-ons=libpthread \
+	    --enable-obsolete-rpc \
+	    --disable-profile --disable-nscd --disable-werror --disable-multilib \
+	    libc_cv_ctors_header=yes \
+	    libc_cv_slibdir=/lib libc_cv_rtlddir=/lib
+	@# --prefix=/ leaves slibdir/rtlddir defaulting to $(exec_prefix)/lib = //lib
+	@# (DOUBLE slash, baked into PT_INTERP and the libc.so GROUP; a leading // is
+	@# POSIX implementation-defined).  Pin them to single-slash /lib via the
+	@# libc_cv_slibdir/libc_cv_rtlddir configure cache vars (AC_SUBST'd straight
+	@# into config.make — same mechanism as libc_cv_ctors_header) plus --libdir;
+	@# newer glibc derives the lib dirs from these, so this is more robust than a
+	@# build-dir configparms (which only overrides by include-order).
+
+# `make glibc` COMPILES only — no install (work-glibc/dist-glibc install).
+# Hardening off (read at runtime by the wrapper; see the configure rule).
+$(GLIBC_BUILT): $(MIG) $(GLIBC_CONFIGURED) $(GLIBC_SRC_FILES)
+	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE)
+	@touch $(GLIBC_BUILT)
+
+# ---- work-glibc (private: install glibc into the build sysroot) ----
+# Install the built glibc into $(SYSROOT) (work/sysroot) so the in-tree hurd
+# build links against it — the build counterpart to dist-glibc, beside the
+# mach+hurd headers that mach-headers/hurd-headers already put there.  Staged via
+# DESTDIR; --prefix=/ → root-relative libc.so, resolved via --sysroot=$(SYSROOT)
+# at the hurd link.  $(SYSROOT)/include already holds the Mach+Hurd headers, so
+# no merge is needed (glibc just adds its own).  Augment libc.so's GROUP with the
+# Hurd RPC stub libs (root-relative).  Not in `make help` (internal).
+work-glibc: $(SYSROOT)/lib/libc.so.0.3
+
+$(SYSROOT)/lib/libc.so.0.3: $(GLIBC_BUILT)
+	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE) install DESTDIR=$(SYSROOT)
+	chmod -R u+w $(SYSROOT)/lib
+	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(SYSROOT)/lib/libc.so
+	rm -f $(SYSROOT)/lib/libc.so.bak
+	@grep -q libmachuser $(SYSROOT)/lib/libc.so || { echo "ERROR: libc.so not augmented"; exit 1; }
+
+# ---- dist-glibc ----
+# Install the built glibc into the dist tree (opt-in; DIST_GLIBC defaults to
+# DIST, overridable for a separate sysroot).  Staged via DESTDIR — glibc REJECTS
+# `make install prefix=...` (Makerules: "Set DESTDIR instead"), and DESTDIR is
+# the right tool anyway.  Configured --prefix=/, so the installed libc.so is
+# already ROOT-RELATIVE (/lib/...) — a relocatable sysroot, consumed via
+# --sysroot=$(DIST_GLIBC) (the in-tree hurd build does this) or deployed to /.
+# Then merge the Mach+Hurd kernel headers (glibc install-headers omits them) and
+# augment libc.so's GROUP with the Hurd RPC stub libs (root-relative) — else
+# every userland link fails on undefined __mach_port_*/__io_*/….  This is the
+# ONLY place glibc is installed; `make hurd` (in-tree glibc) depends on it.
+dist-glibc: $(DIST_GLIBC)/lib/libc.so.0.3
+
+$(DIST_GLIBC)/lib/libc.so.0.3: $(GLIBC_BUILT)
+	chmod -R u+w $(DIST_GLIBC) 2>/dev/null || true
+	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE) install DESTDIR=$(DIST_GLIBC)
+	chmod -R u+w $(DIST_GLIBC)/include
+	cp -an $(SYSROOT)/include/. $(DIST_GLIBC)/include/ ; chmod -R u+w $(DIST_GLIBC)/include
+	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(DIST_GLIBC)/lib/libc.so
+	rm -f $(DIST_GLIBC)/lib/libc.so.bak
+	@ls $(DIST_GLIBC)/lib/libc.so.0.3 >/dev/null || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
+	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so not augmented"; exit 1; }
 endif
 
 # ---- mach ----
@@ -943,7 +1230,16 @@ $(DIST_MACH)/boot/gnumach: $(GNUMACH_KERNEL)
 # makes the inner make re-run when source actually changed.
 hurd: $(HURD_BUILD)/.built
 
-$(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
+# With an in-tree glibc (GLIBC_IN_TREE), the userland must link against it, not
+# the wrapped cc's baked-in toolchain glibc.  It links against the BUILD sysroot
+# $(SYSROOT) (work/sysroot) — where work-glibc installs glibc beside the
+# mach+hurd headers — NOT the dist tree (DIST_GLIBC is distribution-only).
+# Depend on the work-glibc output ($(SYSROOT)/lib/libc.so.0.3 → pulls work-glibc)
+# and pass --sysroot=$(SYSROOT); ld resolves the root-relative libc.so GROUP
+# under that sysroot.
+_HURD_SYSROOT := $(if $(GLIBC_IN_TREE),--sysroot=$(SYSROOT))
+
+$(HURD_BUILD)/.built: $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 	cd $(HURD_BUILD) && $(MAKE) MIG=$(MIG) USER_MIG=$(MIG)
 	@touch $(HURD_BUILD)/.built
 
@@ -953,11 +1249,13 @@ $(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 $(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
 	cd $(HURD_SRC) && autoreconf -i
 
-$(HURD_CONFIGURED): $(MIG) $(HURD_SRC)/configure
+$(HURD_CONFIGURED): $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_SRC)/configure
 	mkdir -p $(HURD_BUILD)
 	cd $(HURD_BUILD) && \
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
-	    MIG=$(MIG) USER_MIG=$(MIG) CFLAGS="-fcommon -g -O2" \
+	    MIG=$(MIG) USER_MIG=$(MIG) \
+	    CFLAGS="-fcommon -g -O2 $(_HURD_SYSROOT)" \
+	    $(if $(GLIBC_IN_TREE),LDFLAGS="$(_HURD_SYSROOT)") \
 	    --prefix=$(DIST_HURD)
 
 # Install the in-tree userland build into $(DIST_HURD) as a self-contained

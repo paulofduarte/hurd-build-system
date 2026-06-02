@@ -78,11 +78,16 @@ in
       #   fakeroot   `make dist-hurd` install: hurd's daemons/utils install
       #              some programs -o root -m 4755 (setuid); fakeroot fakes
       #              the chown/setuid so a non-root install completes.
+      #   python3/gettext/gawk/bison/perl/texinfo  glibc's host build tools, for
+      #              the opt-in raw in-tree `make glibc` (mirrors glibc.nix's
+      #              nativeBuildInputs).  Some overlap inferredBuildInputs; the
+      #              dedup handles it.
       # gnumake + awk + coreutils come from stdenv.
       nativeBuildInputs =
         [ toolchain binu mig ]
         ++ inferredBuildInputs
-        ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot ])
+        ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
+                         python3 gettext gawk bison perl texinfo ])
         # gnumach's x86 `make check` builds a multiboot ISO with
         # grub-mkrescue (needs xorriso + mtools) and the run scenarios
         # build/boot images; nixpkgs' grub2 is linux-only, so gate on
@@ -119,6 +124,21 @@ in
         # in (`make src-mig`), in which case it builds + uses that instead.
         export MIG=${mig}/bin/${tp}mig
         export USER_MIG=${mig}/bin/${tp}mig
+
+        # Build env for the opt-in raw in-tree `make glibc` (mirrors glibc.nix).
+        # glibc must be built with the LIBC-FREE stage-1 cc — the wrapped cc
+        # above has glibc baked in (circular).  Exported by absolute path so the
+        # stage-1 cc never shadows the wrapped cc on PATH.  The extra binutils
+        # tools (as/objdump/readelf) + native BUILD_CC + the build triple +
+        # binutils bin dir are what glibc's configure consumes.
+        export GLIBC_CC=${stage1}/bin/${tp}gcc
+        export GLIBC_CXX=${stage1}/bin/${tp}g++
+        export AS=${binu}/bin/${tp}as
+        export OBJDUMP=${binu}/bin/${tp}objdump
+        export READELF=${binu}/bin/${tp}readelf
+        export BUILD_CC=${pkgs.stdenv.cc}/bin/cc
+        export BINUTILS_BIN=${binu}/bin
+        export BUILD_TRIPLE=${pkgs.stdenv.hostPlatform.config}
 
         # Empty so hurd's optional PKG_CHECK probes find nothing (matches
         # the nix build).  No global CFLAGS: the kernel takes autoconf's
