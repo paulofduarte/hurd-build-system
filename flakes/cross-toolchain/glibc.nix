@@ -265,6 +265,14 @@ let
     } // lib.optionalAttrs deployPrefix {
       installFlags = [ "DESTDIR=${placeholder "out"}" ];
       dontMoveSbin = true;
+      # glibc's helper scripts (bin/{ldd,tzselect,xtrace,sotruss},
+      # bin/mtrace) ship the portable shebang from their *.in source
+      # (#!/bin/bash, #! /bin/sh) — glibc's ldd-rewrite sed never touches
+      # line 1.  nixpkgs' patchShebangs fixup is what rewrites them to a
+      # /nix/store bash, the lone store leak left in a deployed tree.  These
+      # scripts run on the TARGET, not the build host, so disable the rewrite
+      # and keep the /-rooted target shebang (fixed at build, no dist sed).
+      dontPatchShebangs = true;
     });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "glibc-hurd-${name}" (mkOne name target)) hurdTargets

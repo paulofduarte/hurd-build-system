@@ -22,7 +22,7 @@
 
 let
   inherit (nixpkgs) lib;
-  inherit (crossToolchain) mkCrossPkgs mkAll mkFinal mkAbiChecked mkAbiReport;
+  inherit (crossToolchain) mkCrossPkgs mkAll mkFinal mkAbiChecked mkAbiReport mkAbiReportHost;
   # Fork-id metadata (owner/repo/ref) derived from the `*-src` inputs via
   # flake.lock — see flakes/sources.  Feeds the version string's fork field.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -201,6 +201,11 @@ in
         in [
           { name = "abi-check-${name}";      value = mk "deep"; }
           { name = "abi-check-full-${name}"; value = mk "full"; }
+          # Host-side runner for the in-tree glibc (`make check-glibc[-full]`
+          # when GLIBC_IN_TREE): takes the in-tree sysroot as a runtime arg,
+          # compares it against the frozen reference `r` via the sidekick.
+          { name = "abi-report-host-${name}";
+            value = mkAbiReportHost system target ({ reference = r; } // sidekickArgs); }
         ]) hurdTargets));
 
       # GNU Mach kernel — built with the wrapped cross-cc (freestanding,

@@ -162,4 +162,49 @@ in
         mkdir -p "$out"; cp "$TMPDIR/abi-report.txt" "$out/abi-report-${level}.txt"
         [ "$_abi_rc" -eq 0 ] || { echo "ABI report FAILED (rc=$_abi_rc)"; exit "$_abi_rc"; }
       '';
+
+  # The HOST-SIDE report — `make check-glibc[-full]` for the IN-TREE glibc.
+  # Same sidekick dispatch + probes as mkAbiReport, but WORK is a RUNTIME arg
+  # (the in-tree build sysroot, e.g. work/sysroot/<arch> — a host path NOT in the
+  # nix store) instead of a baked store path; the reference + all tooling are
+  # baked.  Lets a hacker compare their in-tree glibc against the frozen
+  # reference without a nix rebuild.  Built as a plain script (writeShellScriptBin
+  # — no shellcheck/wrapper) that prepends its runtime deps to PATH and runs the
+  # same orchestration host-side.  The salted NIX_LDFLAGS_BEFORE --sysroot=$WORK
+  # lets the link probes resolve the in-tree /lib GROUP (cc is on PATH so its
+  # wrapper honours the salt).
+  mkAbiReportHost = system: target: { reference, sidekick, dispatchLib, sendScript }:
+    let
+      pkgs      = nixpkgs.legacyPackages.${system};
+      crossPkgs = mkCrossPkgs system target;
+      binu      = crossPkgs.buildPackages.binutils-unwrapped;
+      cc        = crossPkgs.buildPackages.gccWithoutTargetLibc;
+      tp        = target.crossTarget;
+    in pkgs.writeShellScriptBin "abi-report-host-${tp}" ''
+      # pipefail is load-bearing: sidekickRun's `runner.sh | tee` captures the
+      # runner's exit via the `if`, which without pipefail sees only tee's 0 and
+      # masks a probe FAIL (the nix gates get pipefail from the stdenv builder;
+      # this standalone script must set it itself).
+      set -uo pipefail
+      WORK_SRC="''${1:?usage: abi-report-host-${tp} <in-tree-sysroot-dir> [deep|full]}"
+      ABI_LEVEL="''${2:-deep}"
+      [ -e "$WORK_SRC/lib/libc.so.0.3" ] || { echo "abi-report-host: $WORK_SRC/lib/libc.so.0.3 not found — run 'make work-glibc' first" >&2; exit 1; }
+      export PATH="${lib.makeBinPath (with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu cc binu ])}:$PATH"
+      # Own scratch dir — the inherited TMPDIR may be a sandbox dir we can't write.
+      TMPDIR="$(mktemp -d /tmp/abi-report-host.XXXXXX)"; export TMPDIR
+      trap 'rm -rf "$TMPDIR"' EXIT
+      # Stage the in-tree sysroot into /nix/store so the sidekick VM — which only
+      # 9p-mounts /nix/store — can read it for the abidiff/pahole probes that run
+      # INSIDE the VM (a host path outside /nix/store is invisible there).  This
+      # copies the exact in-tree bytes (NOT a rebuild) into the store.
+      WORK="$(nix-store --add "$WORK_SRC")"
+      export REF="${reference}" WORK ABI_LEVEL TP="${tp}" ARCH="${abiArchOf target}"
+      export CROSS_CC="${cc}/bin/${tp}-gcc" CROSS_OBJDUMP="${binu}/bin/${tp}-objdump"
+      export CROSS_READELF="${binu}/bin/${tp}-readelf" CROSS_NM="${binu}/bin/${tp}-nm"
+      export "NIX_LDFLAGS_BEFORE_${cc.suffixSalt}"="--sysroot=$WORK"
+      export ABILIST="" ABIGNORE="${./abi-check/libc.abignore}" ABI_DIR="${./abi-check}"
+      export SIDEKICK_KERNEL="${sidekick}/vmlinuz" SIDEKICK_INITRD="${sidekick}/initramfs.cpio.gz"
+      ${sidekickRun { inherit dispatchLib sendScript; level = "$ABI_LEVEL"; }}
+      exit "$_abi_rc"
+    '';
 }
