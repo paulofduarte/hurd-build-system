@@ -914,7 +914,11 @@ $(foreach v,$(REQUIRED_VARS), \
 # `dist-hurd` here).
 all: mach hurd
 
-dist: dist-mach dist-hurd
+# Lockstep with _COMPOSE.dist (above): both must list the glibc step or the
+# staleness gate dispatches dist-glibc while the recipe never builds it (silent
+# mis-ship).  Opt-in ships dist-glibc; the non-opt-in dist-glibc-nix is added
+# by its own goal (see below).
+dist: dist-mach dist-hurd $(if $(GLIBC_IN_TREE),dist-glibc)
 
 # $(call _tracked_files,<dir>) — every git-tracked file under <dir>, as
 # absolute paths.  Used by the mig/mach/glibc rules to list src as prereqs so
@@ -1109,6 +1113,8 @@ $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(MACH_HDR_STAMP) $(HURD_HDR_STAMP)
 	    --host=$(GNUMACH_HOST) \
 	    --prefix=/ \
 	    --libdir=/lib \
+	    --sysconfdir=/etc \
+	    --datarootdir=/share \
 	    --with-headers=$(SYSROOT)/include \
 	    --with-binutils=$(BINUTILS_BIN) \
 	    --enable-add-ons=libpthread \
@@ -1123,6 +1129,11 @@ $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(MACH_HDR_STAMP) $(HURD_HDR_STAMP)
 	@# into config.make — same mechanism as libc_cv_ctors_header) plus --libdir;
 	@# newer glibc derives the lib dirs from these, so this is more robust than a
 	@# build-dir configparms (which only overrides by include-order).
+	@# --sysconfdir=/etc, --datarootdir=/share: without them --prefix=/ bakes
+	@# //etc/{ld.so.cache,localtime} and //share/{locale,zoneinfo} (datarootdir,
+	@# NOT datadir, drives localedir).  complocaledir needs no flag — it falls
+	@# back to $(libdir)/locale = /lib/locale (libdir-derived).  These mirror the
+	@# nix glibc.nix deployable set so in-tree and nix glibc bake identical paths.
 
 # `make glibc` COMPILES only — no install (work-glibc/dist-glibc install).
 # Hardening off (read at runtime by the wrapper; see the configure rule).

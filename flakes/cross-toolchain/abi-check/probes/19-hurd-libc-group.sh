@@ -29,10 +29,35 @@ fi
 # never executed, only linked.
 if [ -n "${CROSS_CC:-}" ] && [ -x "$CROSS_CC" ]; then
   td="$PROBE_TMP/19"; mkdir -p "$td"
-  echo 'int main(void){ return 0; }' > "$td/t.c"
+  # Strengthened (2026): an empty main() never references the Mach/Hurd RPC
+  # stubs, so the old link "passed" even when --sysroot was dropped and the
+  # GROUP didn't resolve.  Instead reference REAL exported symbols from the
+  # GROUP's stub libs, forcing the linker to bind each — a lost/empty GROUP
+  # member then becomes an undefined-reference link error.  Symbols are
+  # EXTRACTED from the actual libmachuser/libhurduser (never hardcoded, so we
+  # can't reference a name that doesn't exist).  --sysroot reaches ld via the
+  # gate env's NIX_LDFLAGS_BEFORE (the CLI one below is stripped in-sandbox).
+  stubs="$(ls "$WORK"/lib/libmachuser.so* "$WORK"/lib/libhurduser.so* 2>/dev/null)"
+  syms="$("$CROSS_READELF" -W --dyn-syms $stubs 2>/dev/null \
+            | awk '$4=="FUNC" && $7!="UND" && $8 ~ /^__(mach|io|file|proc|hurd)_/ {
+                     n=$8; sub(/@.*/,"",n);
+                     if (n ~ /^[A-Za-z_][A-Za-z0-9_]*$/) print n }' \
+            | LC_ALL=C sort -u | head -12)"
+  if [ -z "$syms" ]; then
+    echo "SKIP 19-hurd-libc-group (link) — no RPC symbols extracted from stub libs; textual GROUP check passed"
+    exit 0
+  fi
+  {
+    printf 'extern int %s(void);\n' $syms
+    echo 'void *const __probe19_refs[] = {'
+    printf '  (void *)&%s,\n' $syms
+    echo '};'
+    echo 'int main(void){ return 0; }'
+  } > "$td/t.c"
   if err="$("$CROSS_CC" --sysroot="$WORK" -nostartfiles -Wl,--no-undefined \
               "$td/t.c" -lc -o "$td/t" 2>&1)"; then
-    echo "PASS 19-hurd-libc-group — GROUP has libmachuser+libhurduser and --no-undefined link resolves"
+    n="$(printf '%s\n' $syms | wc -l | tr -d ' ')"
+    echo "PASS 19-hurd-libc-group — GROUP resolves all $n referenced Mach/Hurd RPC stubs via libmachuser+libhurduser"
   else
     # A missing crt/_start at link time is unrelated to the GROUP; only
     # fail on genuinely unresolved Mach/Hurd references.

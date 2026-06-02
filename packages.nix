@@ -73,6 +73,7 @@ in
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
         forkUrl  = glibcInfo.forkUrl;
+        deployPrefix = true;
       };
 
       # Reference chain (Part 2): the frozen release-tag toolchain inputs that

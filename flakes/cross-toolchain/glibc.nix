@@ -40,7 +40,7 @@
 # from a unified GNU/Hurd installation.
 
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
-, srcInput, forkUrl }:
+, srcInput, forkUrl, deployPrefix ? false }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -88,7 +88,7 @@ let
     # built by a cross-stdenv that requires libc to bootstrap.  Cross
     # tools come via explicit env vars in preConfigure (matches what
     # cross-hurd's bootstrap-funcs.sh does).
-    pkgs.stdenv.mkDerivation {
+    pkgs.stdenv.mkDerivation ({
       inherit pname;
       version = fullVersion;
       src = srcInput;
@@ -175,7 +175,7 @@ let
         $src/configure \
           --build=${pkgs.stdenv.hostPlatform.config} \
           --host=${tp} \
-          --prefix=$out \
+          --prefix=${if deployPrefix then "/" else "$out"} \
           --with-headers=$TMPDIR/sysroot/include \
           --with-binutils=${crossBinuRaw}/bin \
           --enable-add-ons=libpthread \
@@ -184,7 +184,7 @@ let
           --disable-nscd \
           --disable-werror \
           --disable-multilib \
-          libc_cv_ctors_header=yes
+          libc_cv_ctors_header=yes${lib.optionalString deployPrefix " --libdir=/lib --sysconfdir=/etc --datarootdir=/share --localstatedir=/var --sbindir=/sbin --bindir=/bin --libexecdir=/libexec --includedir=/include libc_cv_slibdir=/lib libc_cv_rtlddir=/lib libc_cv_complocaledir=/lib/locale libc_cv_sysconfdir=/etc libc_cv_localstatedir=/var libc_cv_rootsbindir=/sbin"}
 
         runHook postConfigure
       '';
@@ -244,7 +244,7 @@ let
         # (Same step as Guix's augment-libc.so.)  Restrict the sed to
         # the GROUP line so OUTPUT_FORMAT(...) — which also ends in ')'
         # — is untouched.
-        sed -i "/^GROUP/ s|)\$| $out/lib/libmachuser.so $out/lib/libhurduser.so )|" \
+        sed -i "/^GROUP/ s|)\$|${if deployPrefix then " /lib/libmachuser.so /lib/libhurduser.so " else " $out/lib/libmachuser.so $out/lib/libhurduser.so "})|" \
           $out/lib/libc.so
 
         ls $out/lib/libc.so.0.3               || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
@@ -262,6 +262,9 @@ let
         platforms = platforms.all;
         license = licenses.lgpl21Plus;
       };
-    };
+    } // lib.optionalAttrs deployPrefix {
+      installFlags = [ "DESTDIR=${placeholder "out"}" ];
+      dontMoveSbin = true;
+    });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "glibc-hurd-${name}" (mkOne name target)) hurdTargets

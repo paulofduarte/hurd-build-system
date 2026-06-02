@@ -43,7 +43,12 @@ let
       tp        = target.crossTarget;
     in {
       inherit pkgs;
-      nativeBuildInputs = with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu ];
+      # `cc` (the cross cc-wrapper) is in nativeBuildInputs — not just referenced
+      # by path via CROSS_CC — so its setup hook runs and activates the salted
+      # wrapper env (role/suffixSalt).  Without the hook, the NIX_LDFLAGS_BEFORE_
+      # <salt> we set below for the deployable-glibc --sysroot is NOT honored by
+      # the ld-wrapper (the probe links can't resolve the /lib GROUP in-sandbox).
+      nativeBuildInputs = (with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu ]) ++ [ cc ];
       env = {
         REF             = reference;
         WORK            = working;
@@ -53,6 +58,15 @@ let
         CROSS_OBJDUMP   = "${binu}/bin/${tp}-objdump";
         CROSS_READELF   = "${binu}/bin/${tp}-readelf";
         CROSS_NM        = "${binu}/bin/${tp}-nm";
+        # The deployable working glibc has a /lib-rooted libc.so GROUP, so probes
+        # that link `-lc` (16, 19) need --sysroot for ld to resolve /lib/... under
+        # $WORK.  A command-line --sysroot is STRIPPED by the ld-wrapper under
+        # NIX_ENFORCE_PURITY (the gate links in a sandbox); injecting via the
+        # SALTED NIX_LDFLAGS_BEFORE survives — the ld-wrapper applies it after its
+        # strip loop, and only filterRpathFlags (rpath-only) touches it.  Salt =
+        # the cc/bintools wrapper's suffixSalt (e.g. x86_64_gnu).  Harmless on a
+        # $out-prefix reference glibc (absolute GROUP needs no sysroot).
+        "NIX_LDFLAGS_BEFORE_${cc.suffixSalt}" = "--sysroot=${working}";
         ABILIST         = "";
         ABIGNORE        = "${./abi-check/libc.abignore}";
         ABI_DIR         = "${./abi-check}";
@@ -122,6 +136,19 @@ in
         # Gate passed — re-export the real working glibc as the gated sysroot.
         mkdir -p "$out"
         cp -as "${working}"/. "$out"/
+        # The toolchain --sysroots into this farm.  GNU ld only sysroot-prefixes
+        # a libc.so GROUP's absolute members (/lib/libc.so.0.3, /lib/libhurduser.so…)
+        # when the GROUP *script itself* resolves to a path INSIDE the sysroot.
+        # cp -as leaves lib/libc.so a symlink to the raw glibc (outside this
+        # farm), so ld sees the script outside, declines to prefix, and the
+        # deployable /lib members go unresolved.  Materialize the GROUP scripts
+        # as real files in the farm (members stay symlinks — ld follows them on
+        # open); a few hundred bytes each, far cheaper than dereferencing the farm.
+        chmod u+w "$out/lib"   # cp -as cloned the source's read-only store perms
+        for so in "$out"/lib/*.so; do
+          [ -L "$so" ] && grep -q '^GROUP' "$so" 2>/dev/null || continue
+          tgt="$(readlink -f "$so")"; rm -f "$so"; cp "$tgt" "$so"; chmod u+w "$so"
+        done
       '';
 
   # The explicit deep/full report (`make check-glibc[-full]`).  Same sidekick

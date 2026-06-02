@@ -88,6 +88,14 @@ let
       bintools = bp.wrapBintoolsWith {
         bintools = bp.binutils-unwrapped;
         libc     = working;
+        # Mechanism #2 (load-bearing, in-sandbox-validated): inject --sysroot
+        # via libc-ldflags-before -> NIX_LDFLAGS_BEFORE, applied by the ld-
+        # wrapper AFTER its purity strip of command-line --sysroot, so the
+        # working glibc's /lib-rooted libc.so GROUP resolves at link in nix
+        # build sandboxes (where a CLI --sysroot is dropped).
+        extraBuildCommands = ''
+          echo "--sysroot=${working}" >> $out/nix-support/libc-ldflags-before
+        '';
       };
     };
 in
