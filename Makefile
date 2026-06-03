@@ -376,29 +376,46 @@ $(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flak
 $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
 # ---- push-cache (always-on, arch-independent) ----
-# Push the current ARCH's dev-shell closure to the project's cachix cache.
-# We push the closure of the dev shell's `inputDerivation` — its output's
-# references ARE all the shell's build inputs (the cross-toolchain etc.).
-# A dev shell's own `.outPath` is never realised, so walking *that* closure
-# pushes nothing; the inputDerivation is the buildable stand-in.  Single-
-# target by design (pushes $(ARCH); use ARCH=… for others) to avoid building
-# a cross-arch toolchain you didn't ask for.  Requires `cachix authtoken
-# <token>` once per host (push authenticated, pull anonymous).  Runs at top
-# level — no dev-shell dispatch.
+# Push the FULL BUILD CLOSURE of the current ARCH's toolchain + dev shell to the
+# project's cachix cache — every intermediate derivation output, not just runtime
+# references.  Two roots, walked with `nix-store --requisites --include-outputs`
+# (build graph + each dep's output), then the .drv files filtered out:
+#   toolchain-<arch>                          the wrapped cross-cc.  Its build
+#       graph already contains the whole 3-stage bootstrap chain — stage-1 cc,
+#       bootstrap glibc, stage-2 cc, the reference glibc + headers/mig, the final
+#       gcc and the working glibc — so this one root caches every bootstrap piece
+#       without enumerating them.  A fresh machine (or a `glibc-ref-src` bump)
+#       then PULLS the heavy seed compilers instead of rebuilding them.
+#   devShells.<sys>.<arch>.inputDerivation    the host build tools the shell adds
+#       (its output references ARE the shell's build inputs; the shell's own
+#       outPath is never realised, so the inputDerivation is the buildable stand-in).
+# `cachix push` skips paths already on the cache, so re-pushes are cheap and the
+# nixpkgs build deps swept in by --include-outputs cost little.  This mirrors what
+# a fresh CI build pushes (cachix-action posts every built path), keeping local +
+# CI caches consistent.  Single-target by design (pushes $(ARCH); use ARCH=… for
+# others).  Requires `cachix authtoken <token>` once per host (push authenticated,
+# pull anonymous).  Runs at top level — no dev-shell dispatch.
 _CACHE_NAME := hurd-build-system
+# xen kernel variants reuse their CPU sibling's wrapped toolchain (there is no
+# `toolchain-<cpu>-xen` output), so strip the suffix for the toolchain root.
+_TC_ARCH := $(patsubst %-xen,%,$(ARCH))
 
 .PHONY: push-cache
 push-cache:
 	@command -v cachix >/dev/null 2>&1 || \
 	  { echo "push-cache: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
-	echo "==> Pushing dev-shell closure for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
-	echo "  realising closure"; \
-	out=$$($(NIX) --accept-flake-config build --no-link --print-out-paths \
-	  ".#devShells.$$system.$(ARCH).inputDerivation" 2>/dev/null) || \
+	roots=".#toolchain-$(_TC_ARCH) .#devShells.$$system.$(ARCH).inputDerivation"; \
+	echo "==> Pushing build closure of toolchain + dev shell for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
+	echo "  realising $$roots"; \
+	$(NIX) --accept-flake-config build --no-link $$roots 2>/dev/null || \
 	  { echo "    build failed (is ARCH=$(ARCH) a valid flake output?)" >&2; exit 1; }; \
+	echo "  collecting build closure"; \
+	drvs=$$($(NIX) --accept-flake-config path-info --derivation $$roots) || \
+	  { echo "    could not resolve derivations" >&2; exit 1; }; \
 	echo "  pushing"; \
-	$(NIX) --accept-flake-config path-info --recursive "$$out" \
+	nix-store --query --requisites --include-outputs $$drvs \
+	  | grep -v '\.drv$$' \
 	  | cachix push $(_CACHE_NAME)
 	@echo "==> push-cache done"
 
