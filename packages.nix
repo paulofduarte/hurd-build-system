@@ -76,11 +76,9 @@ in
       #   bootstrap glibc → stage-2 gcc → ref glibc → final gcc → work glibc.
       # ──────────────────────────────────────────────────────────────────────
 
-      # Reference toolchain inputs (Part 2): frozen release-tag headers/mig that
-      # the reference AND bootstrap glibcs consume.  Distinct, stable pins — a
-      # `glibc-ref-src` bump does NOT touch these, so the stage-2 gcc (built
-      # against the bootstrap glibc, which uses these) stays cached across ref
-      # bumps.  See TOOLCHAIN-LIBC-DECOUPLING.md.
+      # Reference toolchain inputs (Part 2): frozen release-tag headers/mig the
+      # REFERENCE glibc consumes.  Distinct, stable pins — a `glibc-ref-src` bump
+      # does NOT touch these.  See TOOLCHAIN-LIBC-DECOUPLING.md.
       gnumachHeadersRef = import ./flakes/gnumach-headers {
         inherit nixpkgs system targets mkCrossPkgs;
         srcInput = gnumach-ref-src;
@@ -98,15 +96,40 @@ in
         forkUrl = hurdInfo.forkUrl;
       };
 
+      # Bootstrap toolchain inputs: the headers/mig the THROWAWAY bootstrap glibc
+      # consumes, on the `*-bootstrap-src` seeds — pinned independently of both
+      # the reference and the working trees.  Keeping the bootstrap chain on its
+      # own pins is what lets the cached stage-2 gcc (built against the bootstrap
+      # glibc, which uses these) survive a `*-ref-src` rebaseline untouched: a ref
+      # bump moves the reference glibc + final gcc, never the seed.  (The seeds
+      # are pinned equal to the reference today, so these resolve to the same
+      # store paths until the bootstrap seed is deliberately refreshed.)
+      gnumachHeadersBootstrap = import ./flakes/gnumach-headers {
+        inherit nixpkgs system targets mkCrossPkgs;
+        srcInput = gnumach-bootstrap-src;
+      };
+      migBootstrap = import ./flakes/mig {
+        inherit nixpkgs system targets mkCrossPkgs;
+        gnumachHeaders = gnumachHeadersBootstrap;
+        srcInput = mig-bootstrap-src;
+        forkUrl = migInfo.forkUrl;
+      };
+      hurdHeadersBootstrap = import ./flakes/hurd-headers {
+        inherit nixpkgs system targets;
+        mig = migBootstrap;
+        srcInput = hurd-bootstrap-src;
+        forkUrl = hurdInfo.forkUrl;
+      };
+
       # Bootstrap glibc — THROWAWAY seed built by the nolibc stage-1 cc (the
       # default buildCC) from the independently-pinned `glibc-bootstrap-src`,
-      # against the reference headers/mig.  Its only purpose is to give the
+      # against the bootstrap headers/mig above.  Its only purpose is to give the
       # stage-2 gcc a target libc; never shipped, never cached.
       bootstrapGlibc = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
-        mig = migRef;
-        gnumachHeaders = gnumachHeadersRef;
-        hurdHeaders = hurdHeadersRef;
+        mig = migBootstrap;
+        gnumachHeaders = gnumachHeadersBootstrap;
+        hurdHeaders = hurdHeadersBootstrap;
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-bootstrap-src;
         forkUrl  = glibcInfo.forkUrl;
