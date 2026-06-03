@@ -31,4 +31,7 @@
 .DS_Store
 *.swp
 *~
+
+# `nix build` gc-root symlinks at the repo root (result, result-man, result-lib…)
 /result
+/result-*
