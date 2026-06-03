@@ -107,6 +107,12 @@ in
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-ref-src;
         forkUrl  = glibcInfo.forkUrl;
+        # Reference glibc is also --prefix=/ so the gcc runtime libs it links
+        # (libgcc_s/libstdc++) carry /lib-rooted paths, not /nix/store.  This
+        # makes gcc build libgcc_s/libstdc++ against a /lib GROUP `libc.so`; the
+        # resulting link wall is handled in toolchain.nix (mechanism #2:
+        # --sysroot=${ref} via NIX_LDFLAGS_BEFORE).
+        deployPrefix = true;
       };
       # Expose the reference glibc as `glibc-ref-hurd-<arch>` (the working one
       # is `glibc-hurd-<arch>`) — for the ABI gate + `nix build` debugging.

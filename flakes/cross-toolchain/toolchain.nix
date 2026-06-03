@@ -54,12 +54,19 @@ let
   # *-ref-src bump), NOT when you hack the working glibc / headers / mig.
   finalGcc = system: target: refGlibc:
     let
-      gcc = (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc.cc.override {
+      bp  = (mkCrossPkgs system target).buildPackages;
+      gcc = bp.gccWithoutTargetLibc.cc.override {
         withoutTargetLibc = false;
         langCC            = true;
         libcCross         = refGlibc;
         enableShared      = true;
       };
+      # The per-target salt the cross bintools-wrapper suffixes its env vars
+      # with (e.g. NIX_LDFLAGS_BEFORE_x86_64_gnu).  Derived from the target
+      # config — `bp.stdenv` is the native build platform (salt
+      # `_arm64_apple_darwin`), NOT the cross-targeting ld gcc's libgcc link
+      # runs through, so its salt would be wrong.
+      salt = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
     in
     # The Hurd userland links only libgcc(_s) + libstdc++; the OpenMP runtime
     # is unused.  gcc 15's libgomp also fails to build against the Hurd glibc
@@ -67,10 +74,34 @@ let
     # it would only break the toolchain for a lib we never link.  nixpkgs only
     # passes --disable-libgomp on the withoutTargetLibc (stage-1) path; our
     # with-target-libc final gcc re-enables it, so append the flag back here.
-    # The builder computes configureFlags internally (no override arg), hence
-    # overrideAttrs rather than a builder parameter.
+    #
+    # gcc builds libgcc_s/libstdc++ by linking `-lc` against the --prefix=/
+    # reference glibc, whose libc.so is a GNU ld GROUP script with absolute
+    # /lib members (GROUP ( /lib/libc.so.0.3 … )).  ld resolves those only with
+    # an effective `--sysroot=${ref}`, but the nix ld-wrapper strips a
+    # command-line `--sysroot` under sandbox purity — so gcc's own
+    # `--with-sysroot`/SYSROOT_SPEC never reaches the raw ld.  This is the same
+    # wall Phase 1 hit for the userland link; the same fix applies — mechanism
+    # #2: feed the wrapper `--sysroot=${ref}` via NIX_LDFLAGS_BEFORE_<salt>,
+    # which add-flags.sh keeps and the wrapper applies to the raw ld AFTER the
+    # strip.  (The wrapper gcc's build links through is the cross-stdenv's, not
+    # an instance we can wrap; the env var is the channel that reaches it.)
+    #
+    # patchelf: building libgcc_s/libstdc++ runs `patchelf --clear-execstack` on
+    # each installed .so (the same glibc Makerules path), so without patchelf on
+    # PATH the build logs "patchelf: command not found" per library.  Adding it
+    # also registers patchelf's setup-hook (a `patchelf --shrink-rpath` fixup
+    # pass) — which we don't want mutating the cross libs' RPATHs — so
+    # dontPatchELF turns ONLY that shrink hook off, leaving the clear-execstack
+    # call intact.  (Same pairing as glibc.nix.)  Unguarded — fine if it rebuilds.
     gcc.overrideAttrs (old: {
-      configureFlags = (old.configureFlags or []) ++ [ "--disable-libgomp" ];
+      configureFlags    = (old.configureFlags or []) ++ [ "--disable-libgomp" ];
+      nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ bp.patchelf ];
+      dontPatchELF      = true;
+      env               = old.env // {
+        "NIX_LDFLAGS_BEFORE${salt}" =
+          (old.env."NIX_LDFLAGS_BEFORE${salt}" or "") + " --sysroot=${refGlibc}";
+      };
     });
 
   # The wrapped cross-cc.  `cc` is the reference-built gcc; the cc-wrapper and
