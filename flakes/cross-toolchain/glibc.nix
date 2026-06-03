@@ -247,6 +247,13 @@ let
         sed -i "/^GROUP/ s|)\$|${if deployPrefix then " /lib/libmachuser.so /lib/libhurduser.so " else " $out/lib/libmachuser.so $out/lib/libhurduser.so "})|" \
           $out/lib/libc.so
 
+        # i386: gcc's vanilla interpreter is /lib/ld.so (config/i386/gnu.h
+        # GNU_USER_DYNAMIC_LINKER) but glibc names the loader ld.so.1, and
+        # upstream installs no /lib/ld.so.  Add the bridge symlink — the same
+        # packaging step Debian/Gentoo glibc do.  Self-gated on ld.so.1, so it's
+        # a no-op on x86_64 (loader is ld-x86-64.so.1, which gcc emits directly).
+        [ -e $out/lib/ld.so.1 ] && ln -sf ld.so.1 $out/lib/ld.so || true
+
         ls $out/lib/libc.so.0.3               || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
         ls $out/include/stdio.h               || { echo "ERROR: stdio.h missing"; exit 1; }
         ls $out/include/mach/machine/fp_reg.h || { echo "ERROR: mach kernel headers not merged"; exit 1; }

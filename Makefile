@@ -352,7 +352,7 @@ mrproper:
 # scenarios).  Output is identical x86_64 Alpine on every build host
 # (no cross-compilation — we fetch prebuilt Alpine APKs), so the
 # initramfs is byte-identical on darwin / linux / arm64 / x86_64.
-# See flakes/sidekick/{default.nix,packages.nix,init.sh}.
+# See flakes/sidekick/{default.nix,packages.nix,debian-packages.nix,dispatcher.sh}.
 #
 # Stamp-file pattern: one recipe produces both SIDEKICK_KERNEL and
 # SIDEKICK_INITRD.  Make 3.81 lacks grouped targets (`&:`, Make 4.3+), so
@@ -361,9 +361,9 @@ mrproper:
 .PHONY: sidekick
 sidekick: $(SIDEKICK_STAMP)
 
-$(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flakes/sidekick/init.sh
+$(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flakes/sidekick/debian-packages.nix flakes/sidekick/dispatcher.sh
 	@mkdir -p $(dir $(SIDEKICK_KERNEL))
-	@echo "  SIDEKICK  building helper VM (x86_64 Alpine + grub-mkrescue + busybox)…"
+	@echo "  SIDEKICK  building helper VM (Debian userland + Alpine linux-virt kernel, generic dispatcher)…"
 	$(NIX_FLAKE) build .#sidekick \
 	  -o $(SIDEKICK)/result
 	cp -f $(SIDEKICK)/result/vmlinuz             $(SIDEKICK_KERNEL)
@@ -1208,6 +1208,9 @@ $(SYSROOT)/lib/libc.so.0.3: $(GLIBC_BUILT)
 	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(SYSROOT)/lib/libc.so
 	rm -f $(SYSROOT)/lib/libc.so.bak
 	@grep -q libmachuser $(SYSROOT)/lib/libc.so || { echo "ERROR: libc.so not augmented"; exit 1; }
+	@# i386: in-tree binaries request the /lib/ld.so interpreter; glibc names the
+	@# loader ld.so.1 — ship the compat alias (no-op on x86_64: ld-x86-64.so.1).
+	@[ -e $(SYSROOT)/lib/ld.so.1 ] && ln -sf ld.so.1 $(SYSROOT)/lib/ld.so || true
 
 # ---- dist-glibc-tree (in-tree half of the public dist-glibc) ----
 # Install the built glibc into the dist tree (opt-in; DIST_GLIBC defaults to
@@ -1229,6 +1232,8 @@ $(DIST_GLIBC)/lib/libc.so.0.3: $(GLIBC_BUILT)
 	cp -an $(SYSROOT)/include/. $(DIST_GLIBC)/include/ ; chmod -R u+w $(DIST_GLIBC)/include
 	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(DIST_GLIBC)/lib/libc.so
 	rm -f $(DIST_GLIBC)/lib/libc.so.bak
+	@# i386 /lib/ld.so interpreter compat alias (see work-glibc).
+	@[ -e $(DIST_GLIBC)/lib/ld.so.1 ] && ln -sf ld.so.1 $(DIST_GLIBC)/lib/ld.so || true
 	@ls $(DIST_GLIBC)/lib/libc.so.0.3 >/dev/null || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so not augmented"; exit 1; }
 endif
@@ -1404,15 +1409,18 @@ $(HURD_CONFIGURED): $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(H
 	    MIG=$(MIG) USER_MIG=$(MIG) \
 	    CFLAGS="-fcommon -g -O2 $(_HURD_SYSROOT)" \
 	    $(if $(GLIBC_IN_TREE),LDFLAGS="$(_HURD_SYSROOT)") \
-	    --prefix=$(DIST_HURD)
+	    --prefix=/ --libexecdir=/libexec --bindir=/bin --sbindir=/sbin \
+	    --sysconfdir=/etc --localstatedir=/var --libdir=/lib --includedir=/include
 
 # Install the in-tree userland build into $(DIST_HURD) as a self-contained
 # tree.  Counterpart to `hurd`: `make hurd` is fast in-tree iteration; `make
 # dist-hurd` produces the installable artefact (like dist-mach).
 dist-hurd: $(DIST_HURD)/hurd/ext2fs
 
-# Install the in-tree userland build into $(DIST_HURD) (hurd configured
-# --prefix=$(DIST_HURD)).  Under fakeroot: hurd's daemons/ + utils/ install
+# Install the in-tree userland build into $(DIST_HURD).  Configured --prefix=/
+# (root-relative baked paths — LIBEXECDIR=/libexec etc. so a deployed tree finds
+# its own console-run/servers), staged via DESTDIR.  Under fakeroot: hurd's
+# daemons/ + utils/ install
 # some programs `-o root -m 4755` (setuid), which a non-root install can't do
 # — fakeroot fakes the chown/setuid so the install completes without touching
 # real privilege (the bits are cosmetic for a dev dist tree).  Same MIG as the
@@ -1421,7 +1429,7 @@ dist-hurd: $(DIST_HURD)/hurd/ext2fs
 # results (no completion stamp).  `make install` rebuilds the whole tree; make
 # only compares ext2fs's mtime against the build stamp to decide staleness.
 $(DIST_HURD)/hurd/ext2fs: $(HURD_BUILD)/.built
-	cd $(HURD_BUILD) && fakeroot $(MAKE) install prefix=$(DIST_HURD) \
+	cd $(HURD_BUILD) && fakeroot $(MAKE) install DESTDIR=$(DIST_HURD) \
 	  MIG=$(MIG) USER_MIG=$(MIG)
 
 # ---- check ----
