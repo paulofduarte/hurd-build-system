@@ -160,6 +160,16 @@ HURD_SRC         := $(SRC)/hurd
 HURD_BUILD       := $(WORK)/hurd/$(ARCH)
 HURD_CONFIGURED  := $(HURD_BUILD)/config.status
 
+# Rewrite the absolute build-time source dir out of assert()/__FILE__ strings so
+# the in-tree-built kernel + userland don't bake the host path into shipped
+# .rodata.  ONLY the in-tree builds need this: they configure OUT of tree (in
+# $(*_BUILD)) with an absolute $(srcdir), so every __FILE__ is absolute; the nix
+# builds compile in-source (relative __FILE__) and are already clean — hence no
+# toolchain rebuild and no change to glibc/gcc (also already clean).
+# -fmacro-prefix-map (not -ffile-) touches only __FILE__/.rodata, leaving DWARF
+# paths intact for offline debugging.  $(1) = the build's absolute source dir.
+_macro_prefix_map = -fmacro-prefix-map=$(1)/=
+
 # Headers-only build dir for hurd (sibling to GNUMACH_HDR_BUILD): `make
 # install-headers` populates $(SYSROOT)/include/hurd, the Hurd half of the
 # sysroot the in-tree glibc builds against.
@@ -1352,6 +1362,7 @@ $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG)
 	mkdir -p $(GNUMACH_BUILD)
 	cd $(GNUMACH_BUILD) && \
 	  USER_MIG=$(MIG) MIG=$(MIG) \
+	  CFLAGS="-g -O2 $(call _macro_prefix_map,$(GNUMACH_SRC))" \
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST_MACH) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
@@ -1423,7 +1434,7 @@ $(HURD_CONFIGURED): $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(H
 	cd $(HURD_BUILD) && \
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
 	    MIG=$(MIG) USER_MIG=$(MIG) \
-	    CFLAGS="-fcommon -g -O2 $(_HURD_SYSROOT)" \
+	    CFLAGS="-fcommon -g -O2 $(_HURD_SYSROOT) $(call _macro_prefix_map,$(HURD_SRC))" \
 	    $(if $(GLIBC_IN_TREE),LDFLAGS="$(_HURD_SYSROOT)") \
 	    --prefix=/ --libexecdir=/libexec --bindir=/bin --sbindir=/sbin \
 	    --sysconfdir=/etc --localstatedir=/var --libdir=/lib --includedir=/include
