@@ -1292,8 +1292,10 @@ $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.ni
 # shipped: the bare `.so` dev/link symlinks, the full-version duplicate, the
 # libstdc++*-gdb.py pretty-printer, the situational libs
 # (libatomic/libitm/libquadmath/libssp, which a C Hurd userland doesn't use; add
-# via a DT_NEEDED scan if a future binary needs one).  Each real .so is
-# RUNPATH-scrubbed (the build bakes a RUNPATH -> the reference glibc store).
+# via a DT_NEEDED scan if a future binary needs one).  The libs ship
+# RUNPATH=/lib straight from the gcc build (mkGcc bakes `-rpath /lib` and drops
+# the store rpath — toolchain.nix), so no rpath scrub is needed; a plain
+# copy-by-SONAME (cp -L of libgcc_s.so.1 + libstdc++.so.6) suffices — no patchelf.
 # glibc dlopen()s libgcc_s for backtrace()/Hurd assert_backtrace (a DT_NEEDED
 # scan misses it), so it MUST be present.  The runtime dir is found by `find`ing
 # libgcc_s.so.1 (no hard-coded target tuple); store-path-stamped under work/ so
@@ -1312,13 +1314,10 @@ $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
 	  rtdir=$$(dirname $$(find $$gcclib -name libgcc_s.so.1 | head -1)); \
 	  echo "  copying gcc base runtime (libgcc_s, libstdc++) from $$rtdir -> $(DIST)/lib"; \
 	  chmod -R u+w $(DIST)/lib 2>/dev/null || true; \
-	  reals=$$(for so in $$rtdir/libgcc_s.so.* $$rtdir/libstdc++.so.*; do \
-	    case "$$so" in *.py) continue;; esac; \
-	    if [ -f "$$so" ] && [ ! -L "$$so" ]; then echo "$$so"; fi; done); \
-	  $(NIX_FLAKE) shell nixpkgs#patchelf -c sh -c \
-	    'set -e; d=$$1; shift; for r in "$$@"; do n=$$(patchelf --print-soname "$$r"); \
-	       cp "$$r" "$$d/$$n"; chmod u+w "$$d/$$n"; patchelf --remove-rpath "$$d/$$n"; done' \
-	    sh $(DIST)/lib $$reals; \
+	  for soname in libgcc_s.so.1 libstdc++.so.6; do \
+	    cp -L "$$rtdir/$$soname" "$(DIST)/lib/$$soname"; \
+	    chmod u+w "$(DIST)/lib/$$soname"; \
+	  done; \
 	  printf '%s' "$$gcclib" > $(DIST_LIBGCC_STAMP); \
 	fi
 	@ls $(DIST)/lib/libgcc_s.so.1  >/dev/null || { echo "ERROR: libgcc_s.so.1 missing";  exit 1; }

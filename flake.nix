@@ -107,10 +107,26 @@
       ref   = "refs/tags/glibc-2.43";
       flake = false;
     };
+
+    # Bootstrap-seed glibc for the 3-stage bootstrap (Phase 2): the nolibc
+    # stage-1 gcc builds this THROWAWAY glibc, which produces the complete
+    # stage-2 gcc that then builds the real reference glibc.  Pinned to a STABLE
+    # tag, deliberately independent of glibc-ref-src, so the cached stage-2 gcc
+    # survives a reference bump (a ref-src bump must NOT invalidate the seed).
+    # Not a reference version — advance only to refresh the bootstrap itself.
+    # Seeded equal to the reference today; the cache win materialises once the
+    # reference tag advances past this seed.
+    glibc-bootstrap-src = {
+      type  = "git";
+      url   = "https://sourceware.org/git/glibc.git";
+      ref   = "refs/tags/glibc-2.43";
+      flake = false;
+    };
   };
 
   outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src
-                   , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src, ... }:
+                   , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src
+                   , glibc-bootstrap-src, ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` — independent of host.
@@ -148,7 +164,8 @@
       pkgOutputs = import ./packages.nix {
         inherit nixpkgs self forAllSystems targets crossToolchain
                 gnumach-src mig-src hurd-src glibc-src
-                gnumach-ref-src mig-ref-src hurd-ref-src glibc-ref-src;
+                gnumach-ref-src mig-ref-src hurd-ref-src glibc-ref-src
+                glibc-bootstrap-src;
       };
     in
     {

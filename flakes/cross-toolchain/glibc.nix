@@ -40,7 +40,14 @@
 # from a unified GNU/Hurd installation.
 
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
-, srcInput, forkUrl, deployPrefix ? false }:
+, srcInput, forkUrl, deployPrefix ? false
+  # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc
+  # is referenced by absolute path for CC=/CXX=, so pass a derivation whose
+  # bin/<tp>-gcc + bin/<tp>-g++ exist).  Default = the libc-free stage-1 nolibc
+  # cc (gccWithoutTargetLibc), used for the bootstrap glibc.  The reference and
+  # working glibcs override this with the complete stage-2 / final gcc (Phase-2
+  # 3-stage bootstrap — see PHASE-2-3STAGE-BOOTSTRAP.md).
+, buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc) }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -76,13 +83,16 @@ let
       # carries `libc_bin = glibc-i686-gnu-2.40-224` and trips
       # nixpkgs' `meta.platforms = lib.platforms.linux` gate on the
       # Hurd target.  Using paths only sidesteps the meta probe.
-      crossCC         = crossPkgs.buildPackages.gccWithoutTargetLibc;
+      crossCC         = buildCC name target;
       crossBinuRaw    = crossPkgs.buildPackages.binutils-unwrapped;
       crossMig        = mig."mig-${name}";
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
       hurd-headers    = hurdHeaders."hurd-headers-${name}";
       pname           = "glibc-hurd-${target.crossTarget}";
       tp              = target.crossTarget;
+      # The cross bintools-wrapper's per-target env salt (e.g. `_x86_64_gnu`),
+      # used to address NIX_DONT_SET_RPATH below.
+      salt            = lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
     in
     # Use native (host) stdenv — glibc IS the cross libc, can't be
     # built by a cross-stdenv that requires libc to bootstrap.  Cross
@@ -157,6 +167,16 @@ let
         export RANLIB=${crossBinuRaw}/bin/${tp}-ranlib
         export READELF=${crossBinuRaw}/bin/${tp}-readelf
         export STRIP=${crossBinuRaw}/bin/${tp}-strip
+
+        # Disable the bintools-wrapper's auto-RUNPATH.  With a complete WRAPPED
+        # buildCC (the ref/work glibcs' stage-2/final gcc), it would bake a
+        # /nix/store rpath to that cc's libc into glibc's own libs (libpthread /
+        # libmachuser / libhurduser) — a deployability leak the ABI gate's
+        # deployable-prefix probe rejects.  glibc's slibdir=/lib layout + SONAME
+        # NEEDED resolve via the target /lib, so no rpath is needed.  Applied
+        # uniformly across every glibc build (a no-op for the nolibc bootstrap
+        # cc, which has no libc to rpath) — keeps the glibc base consistent.
+        export NIX_DONT_SET_RPATH_${salt}=1
 
         # Out-of-tree build dir.  glibc's configure aborts hard if
         # invoked from $srcdir.

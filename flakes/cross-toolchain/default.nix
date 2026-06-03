@@ -10,10 +10,10 @@
 #                     `<cpu>-gnu` nixpkgs (lib/systems extension from
 #                     flakes/lib-systems-hurd) with `crossSystem` set, + the
 #                     gas-determinism chunksize overlay.
-#   toolchain.nix   — `mkAll` (cross-binutils + stage-1 cc per target),
-#                     `mkFinal` (final cross-gcc + the wrapped `toolchain-<arch>`
-#                     cc, given the reference/working glibc-hurd), and the
-#                     `finalGcc` / `wrappedToolchain` / `hurdTargets` helpers.
+#   toolchain.nix   — `mkAll` (cross-binutils + stage-1 cc per target), and the
+#                     `mkGcc` (a complete cross-gcc vs a given target libc) /
+#                     `wrappedToolchain` / `hurdTargets` helpers.  The 3-stage
+#                     gcc/glibc chain is orchestrated in packages.nix.
 #   glibc.nix       — `glibc-hurd-<arch>` (imported directly by packages.nix).
 #   abi-check.nix   — `mkAbiChecked` (in-build ABI gate) + `mkAbiReport`
 #                     (`make check-glibc[-full]` back-end).

@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "glibc-bootstrap-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1769201640,
+        "narHash": "sha256-D9OhzlcKnEItGfEVqQVx4v54vS9ZKoWMNz4Rt2VRik0=",
+        "ref": "refs/tags/glibc-2.43",
+        "rev": "f762ccf84f122d1354f103a151cba8bde797d521",
+        "revCount": 43327,
+        "type": "git",
+        "url": "https://sourceware.org/git/glibc.git"
+      },
+      "original": {
+        "ref": "refs/tags/glibc-2.43",
+        "type": "git",
+        "url": "https://sourceware.org/git/glibc.git"
+      }
+    },
     "glibc-ref-src": {
       "flake": false,
       "locked": {
@@ -157,6 +174,7 @@
     },
     "root": {
       "inputs": {
+        "glibc-bootstrap-src": "glibc-bootstrap-src",
         "glibc-ref-src": "glibc-ref-src",
         "glibc-src": "glibc-src",
         "gnumach-ref-src": "gnumach-ref-src",

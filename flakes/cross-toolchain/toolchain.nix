@@ -42,23 +42,26 @@ let
   hurdTargets = targets:
     lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
 
-  # The final cross-gcc: nixpkgs' own gcc builder with the target libc
-  # present (withoutTargetLibc=false) so it builds libgcc_s + libstdc++,
-  # C++ enabled, shared libs on.  Reusing the stage-1 cc's `.override`
-  # keeps every nixpkgs gcc patch/phase; only the libc-facing knobs flip.
+  # A complete cross-gcc: nixpkgs' own gcc builder with the target libc present
+  # (withoutTargetLibc=false) so it builds libgcc_s + libstdc++, C++ enabled,
+  # shared libs on.  Reusing the stage-1 cc's `.override` keeps every nixpkgs
+  # gcc patch/phase; only the libc-facing knobs flip.
   #
-  # libcCross is the REFERENCE glibc (Part 2 of the libc decoupling):
-  # libgcc_s / libstdc++ are built against it once and stay valid against the
-  # ABI-compatible working glibc (the POSIX wall — they don't encode the Mach
-  # RPC ABI).  So gcc rebuilds only when the reference changes (a deliberate
-  # *-ref-src bump), NOT when you hack the working glibc / headers / mig.
-  finalGcc = system: target: refGlibc:
+  # `targetLibc` is the glibc libgcc_s / libstdc++ link against.  The 3-stage
+  # bootstrap (PHASE-2-3STAGE-BOOTSTRAP.md) calls this twice:
+  #   stage-2 gcc — targetLibc = the (throwaway) bootstrap glibc; the complete
+  #                 seed compiler that then builds the reference glibc.
+  #   final  gcc — targetLibc = the REFERENCE glibc; the userland cc, whose
+  #                 libgcc_s/libstdc++ are the ABI-stable runtime (POSIX wall,
+  #                 valid against the working glibc).  Rebuilds only on a
+  #                 deliberate ref bump, never on a working-glibc hack.
+  mkGcc = system: target: targetLibc:
     let
       bp  = (mkCrossPkgs system target).buildPackages;
       gcc = bp.gccWithoutTargetLibc.cc.override {
         withoutTargetLibc = false;
         langCC            = true;
-        libcCross         = refGlibc;
+        libcCross         = targetLibc;
         enableShared      = true;
       };
       # The per-target salt the cross bintools-wrapper suffixes its env vars
@@ -99,8 +102,22 @@ let
       nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ bp.patchelf ];
       dontPatchELF      = true;
       env               = old.env // {
+        # mechanism #2: `--sysroot` so the --prefix=/ targetLibc's /lib GROUP
+        # resolves at the libgcc_s/libstdc++ link.  `-rpath /lib` bakes the
+        # DEPLOYABLE RUNPATH (the target's own libc dir) instead of nixpkgs'
+        # default `${targetLibc}/lib` (a /nix/store leak) — so the shipped
+        # libgcc_s/libstdc++ need no dist `patchelf --remove-rpath`.  Both ride
+        # NIX_LDFLAGS_BEFORE so they survive the ld-wrapper's purity strip (a
+        # command-line `-rpath /lib` would be dropped as impure).
         "NIX_LDFLAGS_BEFORE${salt}" =
-          (old.env."NIX_LDFLAGS_BEFORE${salt}" or "") + " --sysroot=${refGlibc}";
+          (old.env."NIX_LDFLAGS_BEFORE${salt}" or "") + " --sysroot=${targetLibc} -rpath /lib";
+        # Stop the wrapper auto-deriving -rpath from the -L dirs, and drop
+        # nixpkgs' explicit store -rpath (keep -L + -rpath-link for build-time
+        # resolution) — else `${targetLibc}/lib` would be baked alongside /lib.
+        "NIX_DONT_SET_RPATH${salt}" = "1";
+        EXTRA_LDFLAGS_FOR_TARGET = lib.replaceStrings
+          [ " -Wl,-rpath,${targetLibc}/lib" ] [ "" ]
+          (old.env.EXTRA_LDFLAGS_FOR_TARGET or "");
       };
     });
 
@@ -111,10 +128,10 @@ let
   # working glibc doesn't rebuild gcc.  (Using the glibc-wrapped binutils
   # rather than the default cross binutils wrapper avoids dragging in nixpkgs'
   # own glibc, whose meta.platforms gate refuses the Hurd target at eval time.)
-  wrappedToolchain = system: target: { reference, working }:
+  wrappedToolchain = system: target: { cc, working }:
     let bp = (mkCrossPkgs system target).buildPackages; in
     bp.wrapCCWith {
-      cc       = finalGcc system target reference;
+      inherit cc;
       libc     = working;
       bintools = bp.wrapBintoolsWith {
         bintools = bp.binutils-unwrapped;
@@ -132,11 +149,13 @@ let
 in
 
 {
-  inherit finalGcc wrappedToolchain hurdTargets;
+  inherit mkGcc wrappedToolchain hurdTargets;
 
   # Pre-libc components merged into packages.<system>: two outputs per
-  # hurd target (binutils + gcc-stage1).  glibc-hurd and the final gcc /
-  # wrapped toolchain are merged separately from packages.nix.
+  # hurd target (binutils + gcc-stage1).  The 3-stage gcc/glibc chain
+  # (bootstrap glibc -> stage-2 gcc -> ref glibc -> final gcc -> work glibc ->
+  # wrapped toolchain) is orchestrated in packages.nix, since it interleaves
+  # glibc.nix calls (which thread mig/headers) with `mkGcc`.
   mkAll = system: targets:
     let
       hts = hurdTargets targets;
@@ -144,26 +163,6 @@ in
         { name = "cross-binutils-${name}";   value = (mkCrossPkgs system target).buildPackages.binutils-unwrapped; }
         { name = "cross-gcc-stage1-${name}"; value = (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc; }
       ]) hts);
-    in
-    lib.listToAttrs pairs;
-
-  # Post-libc components merged into packages.<system>: the final gcc +
-  # the wrapped toolchain per hurd target.  `provider` is
-  # { reference; working; }, each the attrset glibc.nix returns (keys
-  # `glibc-hurd-<name>`): gcc's libcCross binds the reference glibc, the
-  # wrapped cc points at the working one.  Threaded in from packages.nix
-  # once both glibcs are built.
-  mkFinal = system: targets: { reference, working }:
-    let
-      hts = hurdTargets targets;
-      pairs = lib.concatLists (lib.mapAttrsToList (name: target:
-        let
-          refG  = reference."glibc-hurd-${name}";
-          workG = working."glibc-hurd-${name}";
-        in [
-          { name = "cross-gcc-${name}"; value = finalGcc system target refG; }
-          { name = "toolchain-${name}"; value = wrappedToolchain system target { reference = refG; working = workG; }; }
-        ]) hts);
     in
     lib.listToAttrs pairs;
 }
