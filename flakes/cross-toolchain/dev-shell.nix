@@ -34,12 +34,16 @@ let
 in
 
 {
-  # mkDevShell : system -> name -> target -> { toolchain, gnumach, mig,
+  # mkDevShell : system -> name -> target -> { toolchain, glibcCC, gnumach, mig,
   #              headers } -> shell.  `toolchain` is the wrapped cc
   #              (toolchain-<arch>, or the CPU sibling's for a xen variant);
-  #              gnumach/mig/headers are this target's derivations, used for
-  #              build-tool inference (and mig/headers/gnumach for subtraction).
-  mkDevShell = system: name: target: { toolchain, gnumach, mig, headers }:
+  #              `glibcCC` is the COMPLETE final gcc wrapped against the
+  #              REFERENCE glibc (the cc the nix working glibc is built with) —
+  #              what the opt-in in-tree `make glibc` uses, so in-tree-work and
+  #              nix-work glibc are built by the same compiler.  gnumach/mig/
+  #              headers are this target's derivations, used for build-tool
+  #              inference (and mig/headers/gnumach for subtraction).
+  mkDevShell = system: name: target: { toolchain, glibcCC, gnumach, mig, headers }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
       crossPkgs = mkCrossPkgs system target;
@@ -59,8 +63,10 @@ in
       # cc: mig is subtracted HERE so a mig pulled in via gnumach's build
       # inputs doesn't sneak onto PATH through inference — the shell's mig is
       # instead the `mig` arg, added explicitly + exported below.  The stage-1
-      # cc must not land on PATH where its prefixed gcc could shadow the
-      # wrapped cc.
+      # cc is pulled in via gnumach-headers' nativeBuildInputs (it builds the
+      # headers); it's no longer used as a build cc here (in-tree `make glibc`
+      # now uses `glibcCC`), but its prefixed gcc must still not land on PATH
+      # where it could shadow the wrapped cc — so keep subtracting it.
       stage1 = crossPkgs.buildPackages.gccWithoutTargetLibc;
       ownDrvs = [ gnumach mig headers toolchain stage1 ];
       inferredBuildInputs = lib.subtractLists ownDrvs
@@ -126,13 +132,16 @@ in
         export USER_MIG=${mig}/bin/${tp}mig
 
         # Build env for the opt-in raw in-tree `make glibc` (mirrors glibc.nix).
-        # glibc must be built with the LIBC-FREE stage-1 cc — the wrapped cc
-        # above has glibc baked in (circular).  Exported by absolute path so the
-        # stage-1 cc never shadows the wrapped cc on PATH.  The extra binutils
-        # tools (as/objdump/readelf) + native BUILD_CC + the build triple +
-        # binutils bin dir are what glibc's configure consumes.
-        export GLIBC_CC=${stage1}/bin/${tp}gcc
-        export GLIBC_CXX=${stage1}/bin/${tp}g++
+        # GLIBC_CC is the COMPLETE final gcc wrapped against the REFERENCE glibc
+        # — the SAME cc the nix working glibc is built with, so in-tree-work and
+        # nix-work glibc are byte-comparable.  NOT the nolibc stage-1 cc (it's a
+        # bootstrap-only seed) and NOT the wrapped `toolchain` cc above (which
+        # embeds the WORKING glibc → circular).  The ref wrapper supplies
+        # crt/libc + mechanism-#2 --sysroot for glibc's configure link-tests.
+        # The extra binutils tools (as/objdump/readelf) + native BUILD_CC + the
+        # build triple + binutils bin dir are what glibc's configure consumes.
+        export GLIBC_CC=${glibcCC}/bin/${tp}gcc
+        export GLIBC_CXX=${glibcCC}/bin/${tp}g++
         export AS=${binu}/bin/${tp}as
         export OBJDUMP=${binu}/bin/${tp}objdump
         export READELF=${binu}/bin/${tp}readelf

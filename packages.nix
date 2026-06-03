@@ -19,7 +19,8 @@
 #                            (pinned github fork rev; see flakes/sources).
 
 { nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src, hurd-src, glibc-src
-, gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src, glibc-bootstrap-src }:
+, gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src
+, glibc-bootstrap-src, gnumach-bootstrap-src, mig-bootstrap-src, hurd-bootstrap-src }:
 
 let
   inherit (nixpkgs) lib;
@@ -115,6 +116,9 @@ in
       # Stage-2 gcc — the COMPLETE seed compiler (libgcc_s/libstdc++ vs the
       # bootstrap glibc).  Cached/pinned; rebuilds only on a bootstrap-pin or
       # nixpkgs-gcc change, NOT on a `glibc-ref-src` bump.  Builds the ref glibc.
+      # Not a standalone output: `make push-cache` walks the toolchain's full
+      # build closure, so this (and every other bootstrap intermediate) is cached
+      # by store path without a dedicated `cross-gcc-stage2-<arch>` attribute.
       stage2GccByName = lib.mapAttrs (name: target:
         mkGcc system target (bootstrapGlibc."glibc-hurd-${name}")) hurdTargets;
 
