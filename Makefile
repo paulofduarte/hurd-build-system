@@ -1292,9 +1292,9 @@ dist-glibc-nix: $(DIST_GLIBC_NIX_STAMP)
 
 $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix
 	@mkdir -p $(DIST_GLIBC)/lib $(dir $(DIST_GLIBC_NIX_STAMP))
-	@echo "  DIST-GLIBC-NIX  resolving nix glibc-hurd-$(ARCH)…"
+	@echo "  DIST-GLIBC-NIX  resolving nix glibc-hurd-$(_TC_ARCH)…"
 	@set -e; \
-	glibc=$$($(NIX_FLAKE) build $(_WORKING_OVERRIDES) $(PROJ)\#glibc-hurd-$(ARCH) --no-link --print-out-paths); \
+	glibc=$$($(NIX_FLAKE) build $(_WORKING_OVERRIDES) $(PROJ)\#glibc-hurd-$(_TC_ARCH) --no-link --print-out-paths); \
 	if [ "$$(cat $(DIST_GLIBC_NIX_STAMP) 2>/dev/null)" = "$$glibc" ] && [ -e $(DIST_GLIBC)/lib/libc.so.0.3 ]; then \
 	  echo "  unchanged ($$(basename $$glibc)) — skip copy"; \
 	else \
@@ -1326,15 +1326,18 @@ $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.ni
 # glibc dlopen()s libgcc_s for backtrace()/Hurd assert_backtrace (a DT_NEEDED
 # scan misses it), so it MUST be present.  The runtime dir is found by `find`ing
 # libgcc_s.so.1 (no hard-coded target tuple); store-path-stamped under work/ so
-# an unchanged gcc skips the copy.
+# an unchanged gcc skips the copy.  Resolved via $(_TC_ARCH) (the xen suffix
+# stripped): a xen variant has no `cross-gcc-<arch>-xen` output — it reuses its
+# CPU sibling's final gcc (same `<cpu>-gnu` ABI), so its libgcc runtime is the
+# sibling's, same as the wrapped toolchain (push-cache uses the same strip).
 .PHONY: dist-libgcc
 dist-libgcc: $(DIST_LIBGCC_STAMP)
 
 $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
 	@mkdir -p $(DIST)/lib $(dir $(DIST_LIBGCC_STAMP))
-	@echo "  DIST-LIBGCC  resolving nix cross-gcc-$(ARCH) runtime…"
+	@echo "  DIST-LIBGCC  resolving nix cross-gcc-$(_TC_ARCH) runtime…"
 	@set -e; \
-	gcclib=$$($(NIX_FLAKE) build $(PROJ)\#cross-gcc-$(ARCH)^lib --no-link --print-out-paths); \
+	gcclib=$$($(NIX_FLAKE) build $(PROJ)\#cross-gcc-$(_TC_ARCH)^lib --no-link --print-out-paths); \
 	if [ "$$(cat $(DIST_LIBGCC_STAMP) 2>/dev/null)" = "$$gcclib" ] && [ -e $(DIST)/lib/libgcc_s.so.1 ]; then \
 	  echo "  unchanged ($$(basename $$gcclib)) — skip copy"; \
 	else \
