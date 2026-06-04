@@ -35,8 +35,9 @@ if [ -n "${CROSS_CC:-}" ] && [ -x "$CROSS_CC" ]; then
   # GROUP's stub libs, forcing the linker to bind each — a lost/empty GROUP
   # member then becomes an undefined-reference link error.  Symbols are
   # EXTRACTED from the actual libmachuser/libhurduser (never hardcoded, so we
-  # can't reference a name that doesn't exist).  --sysroot reaches ld via the
-  # gate env's NIX_LDFLAGS_BEFORE (the CLI one below is stripped in-sandbox).
+  # can't reference a name that doesn't exist).  The link resolves the /lib GROUP
+  # via -L"$WORK_LINK/lib" (store-absolute members) — no --sysroot, which the
+  # ld-wrapper strips under purity in a Linux sandbox.
   stubs="$(ls "$WORK"/lib/libmachuser.so* "$WORK"/lib/libhurduser.so* 2>/dev/null)"
   syms="$("$CROSS_READELF" -W --dyn-syms $stubs 2>/dev/null \
             | awk '$4=="FUNC" && $7!="UND" && $8 ~ /^__(mach|io|file|proc|hurd)_/ {
@@ -54,7 +55,7 @@ if [ -n "${CROSS_CC:-}" ] && [ -x "$CROSS_CC" ]; then
     echo '};'
     echo 'int main(void){ return 0; }'
   } > "$td/t.c"
-  if err="$("$CROSS_CC" --sysroot="$WORK" -nostartfiles -Wl,--no-undefined \
+  if err="$("$CROSS_CC" -L"${WORK_LINK:-$WORK}/lib" -L"$WORK/lib" -nostartfiles -Wl,--no-undefined \
               "$td/t.c" -lc -o "$td/t" 2>&1)"; then
     n="$(printf '%s\n' $syms | wc -l | tr -d ' ')"
     echo "PASS 19-hurd-libc-group — GROUP resolves all $n referenced Mach/Hurd RPC stubs via libmachuser+libhurduser"

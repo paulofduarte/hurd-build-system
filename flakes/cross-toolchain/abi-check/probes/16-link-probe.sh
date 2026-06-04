@@ -30,11 +30,13 @@ n="$(wc -l < "$td/names" | tr -d ' ')"
 } > "$td/probe.c"
 
 # Link -shared against the WORKING libc only.  -nostdlib so we depend on
-# nothing but what we explicitly point at; the libc.so GROUP script pulls
-# libmachuser/libhurduser, so add -L for those too (same dir).
+# nothing but what we explicitly point at.  -L"$WORK_LINK/lib" FIRST: it holds a
+# probe-only libc.so whose GROUP members are STORE-ABSOLUTE, so ld resolves the
+# deployable /lib GROUP with NO --sysroot (the wrapper strips --sysroot in-sandbox).
+# -L"$WORK/lib" stays as fallback ($out-prefix glibc) + the rpath-link source.
 if err="$("$CROSS_CC" -shared -nostdlib -fPIC \
             -nostdinc -isystem "$WORK/include" \
-            -L"$WORK/lib" -Wl,-rpath-link,"$WORK/lib" \
+            -L"${WORK_LINK:-$WORK}/lib" -L"$WORK/lib" -Wl,-rpath-link,"$WORK/lib" \
             "$td/probe.c" -lc -o "$td/probe.so" 2>&1)"; then
   echo "PASS 16-link-probe — all $n reference symbols resolve against the working libc"
 else

@@ -43,11 +43,11 @@ let
       tp        = target.crossTarget;
     in {
       inherit pkgs;
-      # `cc` (the cross cc-wrapper) is in nativeBuildInputs — not just referenced
-      # by path via CROSS_CC — so its setup hook runs and activates the salted
-      # wrapper env (role/suffixSalt).  Without the hook, the NIX_LDFLAGS_BEFORE_
-      # <salt> we set below for the deployable-glibc --sysroot is NOT honored by
-      # the ld-wrapper (the probe links can't resolve the /lib GROUP in-sandbox).
+      # `cc` is reached by absolute path via CROSS_CC; kept here as a build input
+      # too.  (It once activated the salted wrapper env for a --sysroot inject, but
+      # the link probes no longer use --sysroot — they resolve the deployable /lib
+      # GROUP via sidekickRun's WORK_LINK store-absolute libc.so, since a --sysroot
+      # is stripped by the ld-wrapper under purity in a Linux sandbox.)
       nativeBuildInputs = (with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu ]) ++ [ cc ];
       env = {
         REF             = reference;
@@ -58,15 +58,6 @@ let
         CROSS_OBJDUMP   = "${binu}/bin/${tp}-objdump";
         CROSS_READELF   = "${binu}/bin/${tp}-readelf";
         CROSS_NM        = "${binu}/bin/${tp}-nm";
-        # The deployable working glibc has a /lib-rooted libc.so GROUP, so probes
-        # that link `-lc` (16, 19) need --sysroot for ld to resolve /lib/... under
-        # $WORK.  A command-line --sysroot is STRIPPED by the ld-wrapper under
-        # NIX_ENFORCE_PURITY (the gate links in a sandbox); injecting via the
-        # SALTED NIX_LDFLAGS_BEFORE survives — the ld-wrapper applies it after its
-        # strip loop, and only filterRpathFlags (rpath-only) touches it.  Salt =
-        # the cc/bintools wrapper's suffixSalt (e.g. x86_64_gnu).  Harmless on a
-        # $out-prefix reference glibc (absolute GROUP needs no sysroot).
-        "NIX_LDFLAGS_BEFORE_${cc.suffixSalt}" = "--sysroot=${working}";
         ABILIST         = "";
         ABIGNORE        = "${./abi-check/libc.abignore}";
         ABI_DIR         = "${./abi-check}";
@@ -106,14 +97,33 @@ let
 
     # Transparent shims: the probes call `abidiff`/`pahole` normally; these
     # ship the call into the VM (store-path args resolve via its /nix/store
-    # 9p mount).  SK_CTL is inherited from the env above.
+    # 9p mount).  SK_CTL is inherited from the env above.  Invoke sidekick-send
+    # through `bash` explicitly (it is on PATH via nativeBuildInputs) rather than
+    # letting its `#!/usr/bin/env bash` shebang resolve: a real (Linux) nix
+    # sandbox provides only /bin/sh=busybox — no /usr/bin/env — so an exec of the
+    # script direct would fail "not found" on the missing interpreter (darwin's
+    # sandbox=false hides this, resolving env from the host FS).
     mkdir -p "$TMPDIR/bin"
     for t in abidiff pahole; do
-      printf '#!/bin/sh\nexec %s %s "$@"\n' "$TMPDIR/sidekick-send" "$t" > "$TMPDIR/bin/$t"
+      printf '#!/bin/sh\nexec bash %s %s "$@"\n' "$TMPDIR/sidekick-send" "$t" > "$TMPDIR/bin/$t"
       chmod +x "$TMPDIR/bin/$t"
     done
     export PATH="$TMPDIR/bin:$PATH"
     export PROBES_DIR="$ABI_DIR/probes" ABI_LEVEL="${level}"
+
+    # Store-absolute GROUP for the LINK probes (16/19).  The deployable working
+    # glibc's libc.so GROUP lists /lib/... members ld resolves only via --sysroot
+    # — which the nix ld-wrapper strips under purity, so the gate's cc-driven probe
+    # link works on darwin but NOT in a Linux sandbox.  Materialize a probe-only
+    # libc.so whose members are STORE-ABSOLUTE ($WORK/lib/...): ld opens them
+    # directly, no --sysroot, host-uniform.  The analysis probes (25 etc.) keep
+    # reading the real /lib-rooted $WORK/lib/libc.so.  Only libc.so needs
+    # rewriting; its members are now absolute store paths, so nothing else is farmed.
+    export WORK_LINK="$TMPDIR/linkroot"
+    mkdir -p "$WORK_LINK/lib"
+    if [ -f "$WORK/lib/libc.so" ] && grep -q '^GROUP' "$WORK/lib/libc.so" 2>/dev/null; then
+      sed "s@ /lib/@ $WORK/lib/@g" "$WORK/lib/libc.so" > "$WORK_LINK/lib/libc.so"
+    fi
 
     if bash "$ABI_DIR/runner.sh" 2>&1 | tee "$TMPDIR/abi-report.txt"; then _abi_rc=0; else _abi_rc=''${PIPESTATUS[0]}; fi
     sk_serve_stop "$SK_CTL"
@@ -133,21 +143,25 @@ in
       ''
         ${sidekickRun { inherit dispatchLib sendScript; level = "full"; }}
         [ "$_abi_rc" -eq 0 ] || { echo "ABI gate FAILED (rc=$_abi_rc)"; exit "$_abi_rc"; }
-        # Gate passed — re-export the real working glibc as the gated sysroot.
+        # Gate passed — re-export the real working glibc as the gated sysroot the
+        # wrapped toolchain links the userland against.  The deployable working
+        # glibc's libc.so GROUP lists /lib/... members ld resolves only via
+        # --sysroot — which the nix ld-wrapper strips under purity, so the
+        # wrapped-cc userland link FAILS in a Linux sandbox (works on darwin only).
+        # Fix: materialize each GROUP script as a real file in the farm with
+        # STORE-ABSOLUTE members ($out/lib/..., which are cp -as symlinks ld follows
+        # on open), so the link resolves with NO --sysroot at all — host-uniform.
+        # This is the CROSS-LINK sysroot only: the SHIPPED glibc (glibc-hurd-<arch>
+        # = the raw glibcHurd) keeps its /lib GROUP, and the userland binaries
+        # record NEEDED sonames (libc.so.0.3 …), not these GROUP paths — so the
+        # store paths never reach a shipped artifact.
         mkdir -p "$out"
         cp -as "${working}"/. "$out"/
-        # The toolchain --sysroots into this farm.  GNU ld only sysroot-prefixes
-        # a libc.so GROUP's absolute members (/lib/libc.so.0.3, /lib/libhurduser.so…)
-        # when the GROUP *script itself* resolves to a path INSIDE the sysroot.
-        # cp -as leaves lib/libc.so a symlink to the raw glibc (outside this
-        # farm), so ld sees the script outside, declines to prefix, and the
-        # deployable /lib members go unresolved.  Materialize the GROUP scripts
-        # as real files in the farm (members stay symlinks — ld follows them on
-        # open); a few hundred bytes each, far cheaper than dereferencing the farm.
         chmod u+w "$out/lib"   # cp -as cloned the source's read-only store perms
         for so in "$out"/lib/*.so; do
           [ -L "$so" ] && grep -q '^GROUP' "$so" 2>/dev/null || continue
-          tgt="$(readlink -f "$so")"; rm -f "$so"; cp "$tgt" "$so"; chmod u+w "$so"
+          tgt="$(readlink -f "$so")"; rm -f "$so"
+          sed "s@ /lib/@ $out/lib/@g" "$tgt" > "$so"; chmod u+w "$so"
         done
       '';
 
@@ -170,9 +184,9 @@ in
   # baked.  Lets a hacker compare their in-tree glibc against the frozen
   # reference without a nix rebuild.  Built as a plain script (writeShellScriptBin
   # — no shellcheck/wrapper) that prepends its runtime deps to PATH and runs the
-  # same orchestration host-side.  The salted NIX_LDFLAGS_BEFORE --sysroot=$WORK
-  # lets the link probes resolve the in-tree /lib GROUP (cc is on PATH so its
-  # wrapper honours the salt).
+  # same orchestration host-side.  The link probes resolve the in-tree /lib GROUP
+  # via sidekickRun's WORK_LINK (a probe-only libc.so with store-absolute members),
+  # so no --sysroot is needed (it's stripped by the ld-wrapper under purity).
   mkAbiReportHost = system: target: { reference, sidekick, dispatchLib, sendScript }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
@@ -201,7 +215,6 @@ in
       export REF="${reference}" WORK ABI_LEVEL TP="${tp}" ARCH="${abiArchOf target}"
       export CROSS_CC="${cc}/bin/${tp}-gcc" CROSS_OBJDUMP="${binu}/bin/${tp}-objdump"
       export CROSS_READELF="${binu}/bin/${tp}-readelf" CROSS_NM="${binu}/bin/${tp}-nm"
-      export "NIX_LDFLAGS_BEFORE_${cc.suffixSalt}"="--sysroot=$WORK"
       export ABILIST="" ABIGNORE="${./abi-check/libc.abignore}" ABI_DIR="${./abi-check}"
       export SIDEKICK_KERNEL="${sidekick}/vmlinuz" SIDEKICK_INITRD="${sidekick}/initramfs.cpio.gz"
       ${sidekickRun { inherit dispatchLib sendScript; level = "$ABI_LEVEL"; }}
