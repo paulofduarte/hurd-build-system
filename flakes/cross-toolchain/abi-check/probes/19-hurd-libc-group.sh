@@ -36,8 +36,8 @@ if [ -n "${CROSS_CC:-}" ] && [ -x "$CROSS_CC" ]; then
   # member then becomes an undefined-reference link error.  Symbols are
   # EXTRACTED from the actual libmachuser/libhurduser (never hardcoded, so we
   # can't reference a name that doesn't exist).  The link resolves the /lib GROUP
-  # via -L"$WORK_LINK/lib" (store-absolute members) — no --sysroot, which the
-  # ld-wrapper strips under purity in a Linux sandbox.
+  # via -L"$WORK_LINK/lib" (bare-name members found on -L"$WORK/lib") — no --sysroot,
+  # which the ld-wrapper strips under purity in a Linux sandbox.
   stubs="$(ls "$WORK"/lib/libmachuser.so* "$WORK"/lib/libhurduser.so* 2>/dev/null)"
   syms="$("$CROSS_READELF" -W --dyn-syms $stubs 2>/dev/null \
             | awk '$4=="FUNC" && $7!="UND" && $8 ~ /^__(mach|io|file|proc|hurd)_/ {

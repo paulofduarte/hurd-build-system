@@ -31,9 +31,10 @@ n="$(wc -l < "$td/names" | tr -d ' ')"
 
 # Link -shared against the WORKING libc only.  -nostdlib so we depend on
 # nothing but what we explicitly point at.  -L"$WORK_LINK/lib" FIRST: it holds a
-# probe-only libc.so whose GROUP members are STORE-ABSOLUTE, so ld resolves the
-# deployable /lib GROUP with NO --sysroot (the wrapper strips --sysroot in-sandbox).
-# -L"$WORK/lib" stays as fallback ($out-prefix glibc) + the rpath-link source.
+# probe-only libc.so whose GROUP members are BARE NAMES, resolved via the -L search
+# path below, so ld resolves the deployable /lib GROUP with NO --sysroot (the
+# wrapper strips --sysroot in-sandbox).  -L"$WORK/lib" supplies those named members
+# (and is the $out-prefix-glibc fallback + the rpath-link source).
 if err="$("$CROSS_CC" -shared -nostdlib -fPIC \
             -nostdinc -isystem "$WORK/include" \
             -L"${WORK_LINK:-$WORK}/lib" -L"$WORK/lib" -Wl,-rpath-link,"$WORK/lib" \

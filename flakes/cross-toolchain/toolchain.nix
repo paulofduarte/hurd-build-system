@@ -139,22 +139,28 @@ let
       bintools = bp.wrapBintoolsWith {
         bintools = bp.binutils-unwrapped;
         libc     = working;
-        # Mechanism #2 (load-bearing, in-sandbox-validated): inject --sysroot
-        # via libc-ldflags-before -> NIX_LDFLAGS_BEFORE, applied by the ld-
-        # wrapper AFTER its purity strip of command-line --sysroot, so the
-        # working glibc's /lib-rooted libc.so GROUP resolves at link in nix
-        # build sandboxes (where a CLI --sysroot is dropped).
+        # No --sysroot.  The deployable glibc's libc.so is a GROUP ld-script, and
+        # how its members resolve at link is decided by which `working` we wrap:
+        #  - The gated re-export farm (abi-check.nix mkAbiChecked) the userland
+        #    toolchain links against rewrites the GROUP to BARE NAMES (libc.so.0.3,
+        #    libmachuser.so, …).  ld resolves them via the -L"${working}/lib" the
+        #    wrapper already adds — no --sysroot, never doubled, host-uniform.
+        #  - A RAW deployable glibc used as a glibc buildCC's prior libc keeps its
+        #    /lib GROUP; ld would want --sysroot to find the members, but the
+        #    nix ld-wrapper strips a CLI --sysroot under purity, so it never reached
+        #    ld in a Linux sandbox regardless — and the glibc build's own configure
+        #    link tests don't bind the prior libc's full GROUP, so they pass without
+        #    it (proven by every host's toolchain building when --sysroot was baked
+        #    unconditionally yet stripped on Linux).  So baking it bought nothing, and
+        #    on darwin (where it was honoured) it doubled an already-absolute GROUP
+        #    member ("cannot find … inside …") — the wall the prior store-absolute
+        #    farm hit.  Dropped entirely here; bare names need no sysroot at all.
         #
-        # Self-suppress the ld-wrapper's auto-RUNPATH: anything linked through
-        # this wrapper (the glibc it builds as buildCC, the userland servers)
-        # would otherwise bake a /nix/store rpath to `working`/lib.  The
-        # ld-wrapper sources add-local-ldflags-before.sh at runtime BEFORE its
-        # rpath pass, so exporting NIX_DONT_SET_RPATH there disables it for
-        # every link — glibc's slibdir=/lib + SONAME NEEDED resolve via the
-        # target /lib.  Keeps the rpath-cleanliness in the wrapper (DRY) instead
-        # of a per-build export in glibc.nix.
+        # NIX_DONT_SET_RPATH: stop the ld-wrapper auto-baking a /nix/store rpath to
+        # working/lib on anything linked through this wrapper; glibc's slibdir=/lib +
+        # SONAME NEEDED resolve via the target /lib.  (DRY: in the wrapper, not a
+        # per-build export in glibc.nix.)
         extraBuildCommands = ''
-          echo "--sysroot=${working}" >> $out/nix-support/libc-ldflags-before
           echo "export NIX_DONT_SET_RPATH${salt}=1" >> $out/nix-support/add-local-ldflags-before.sh
         '';
       };

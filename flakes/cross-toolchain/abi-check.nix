@@ -46,8 +46,9 @@ let
       # `cc` is reached by absolute path via CROSS_CC; kept here as a build input
       # too.  (It once activated the salted wrapper env for a --sysroot inject, but
       # the link probes no longer use --sysroot — they resolve the deployable /lib
-      # GROUP via sidekickRun's WORK_LINK store-absolute libc.so, since a --sysroot
-      # is stripped by the ld-wrapper under purity in a Linux sandbox.)
+      # GROUP via sidekickRun's WORK_LINK bare-name libc.so (members found on the -L
+      # path), since a --sysroot is stripped by the ld-wrapper under purity in a
+      # Linux sandbox.)
       nativeBuildInputs = (with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu ]) ++ [ cc ];
       env = {
         REF             = reference;
@@ -111,18 +112,19 @@ let
     export PATH="$TMPDIR/bin:$PATH"
     export PROBES_DIR="$ABI_DIR/probes" ABI_LEVEL="${level}"
 
-    # Store-absolute GROUP for the LINK probes (16/19).  The deployable working
+    # Bare-name GROUP for the LINK probes (16/19).  The deployable working
     # glibc's libc.so GROUP lists /lib/... members ld resolves only via --sysroot
     # — which the nix ld-wrapper strips under purity, so the gate's cc-driven probe
     # link works on darwin but NOT in a Linux sandbox.  Materialize a probe-only
-    # libc.so whose members are STORE-ABSOLUTE ($WORK/lib/...): ld opens them
-    # directly, no --sysroot, host-uniform.  The analysis probes (25 etc.) keep
-    # reading the real /lib-rooted $WORK/lib/libc.so.  Only libc.so needs
-    # rewriting; its members are now absolute store paths, so nothing else is farmed.
+    # libc.so whose members are BARE NAMES (libc.so.0.3, libmachuser.so, …): ld
+    # resolves them via the -L search path (-L"$WORK/lib"), so the link needs no
+    # --sysroot and is --sysroot-indifferent — host-uniform, never doubled.  The
+    # analysis probes (25 etc.) keep reading the real /lib-rooted $WORK/lib/libc.so.
+    # Only libc.so is rewritten; the named members live in $WORK/lib already.
     export WORK_LINK="$TMPDIR/linkroot"
     mkdir -p "$WORK_LINK/lib"
     if [ -f "$WORK/lib/libc.so" ] && grep -q '^GROUP' "$WORK/lib/libc.so" 2>/dev/null; then
-      sed "s@ /lib/@ $WORK/lib/@g" "$WORK/lib/libc.so" > "$WORK_LINK/lib/libc.so"
+      sed 's@ /lib/@ @g' "$WORK/lib/libc.so" > "$WORK_LINK/lib/libc.so"
     fi
 
     if bash "$ABI_DIR/runner.sh" 2>&1 | tee "$TMPDIR/abi-report.txt"; then _abi_rc=0; else _abi_rc=''${PIPESTATUS[0]}; fi
@@ -148,20 +150,22 @@ in
         # glibc's libc.so GROUP lists /lib/... members ld resolves only via
         # --sysroot — which the nix ld-wrapper strips under purity, so the
         # wrapped-cc userland link FAILS in a Linux sandbox (works on darwin only).
-        # Fix: materialize each GROUP script as a real file in the farm with
-        # STORE-ABSOLUTE members ($out/lib/..., which are cp -as symlinks ld follows
-        # on open), so the link resolves with NO --sysroot at all — host-uniform.
-        # This is the CROSS-LINK sysroot only: the SHIPPED glibc (glibc-hurd-<arch>
-        # = the raw glibcHurd) keeps its /lib GROUP, and the userland binaries
-        # record NEEDED sonames (libc.so.0.3 …), not these GROUP paths — so the
-        # store paths never reach a shipped artifact.
+        # Fix (b-split, bare edition): materialize each GROUP script as a real file
+        # in the farm with BARE-NAME members (libc.so.0.3, libmachuser.so, …); ld
+        # resolves them via the wrapper's -L"$out/lib" search path, so the link
+        # needs NO --sysroot — host-uniform and never doubled (a bare name has no
+        # path to prepend a sysroot to).  This is the CROSS-LINK sysroot only: the
+        # SHIPPED glibc (glibc-hurd-<arch> = the raw glibcHurd) keeps its absolute
+        # /lib GROUP (standard, link-time-secure native form), and userland binaries
+        # record NEEDED sonames (libc.so.0.3 …), not these GROUP paths — so neither
+        # the bare names nor any store path reach a shipped artifact.
         mkdir -p "$out"
         cp -as "${working}"/. "$out"/
         chmod u+w "$out/lib"   # cp -as cloned the source's read-only store perms
         for so in "$out"/lib/*.so; do
           [ -L "$so" ] && grep -q '^GROUP' "$so" 2>/dev/null || continue
           tgt="$(readlink -f "$so")"; rm -f "$so"
-          sed "s@ /lib/@ $out/lib/@g" "$tgt" > "$so"; chmod u+w "$so"
+          sed 's@ /lib/@ @g' "$tgt" > "$so"; chmod u+w "$so"
         done
       '';
 
@@ -185,8 +189,8 @@ in
   # reference without a nix rebuild.  Built as a plain script (writeShellScriptBin
   # — no shellcheck/wrapper) that prepends its runtime deps to PATH and runs the
   # same orchestration host-side.  The link probes resolve the in-tree /lib GROUP
-  # via sidekickRun's WORK_LINK (a probe-only libc.so with store-absolute members),
-  # so no --sysroot is needed (it's stripped by the ld-wrapper under purity).
+  # via sidekickRun's WORK_LINK (a probe-only libc.so with bare-name members found
+  # on the -L path), so no --sysroot is needed (it's stripped under purity).
   mkAbiReportHost = system: target: { reference, sidekick, dispatchLib, sendScript }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
