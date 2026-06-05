@@ -110,7 +110,21 @@ DIST_GLIBC_NIX_STAMP := $(WORK)/dist-glibc-nix/$(ARCH).stamp
 # per-ARCH scheme); the gcc runtime is independent of the glibc choice.
 DIST_LIBGCC_STAMP    := $(WORK)/dist-libgcc/$(ARCH).stamp
 
-# In-tree iterative build dirs.
+# A xen variant shares its CPU sibling's `<cpu>-gnu` ABI: it has no separate
+# nix toolchain (`toolchain-<cpu>-xen`) and its entire USERLAND (glibc, the hurd
+# servers/libs, mig, the public mach/hurd headers) is byte-identical to the
+# non-xen sibling's — "xen" only selects the gnumach KERNEL's platform, and the
+# kernel links -ffreestanding -nostdlib and never reads the userland sysroot.
+# So strip the suffix and key the userland build/sysroot dirs by $(_TC_ARCH):
+# i686 and i686-xen then build the userland ONCE (shared work dirs), and only
+# the per-$(ARCH) kernel (GNUMACH_BUILD) + the per-$(ARCH) dist trees differ.
+# This matches the nix side (glibc-hurd/hurd/mig are keyed per crossTarget) and
+# avoids both a redundant userland rebuild on a variant switch and the spurious
+# per-ARCH build-dir paths that otherwise leak into the userland's DWARF.
+_TC_ARCH := $(patsubst %-xen,%,$(ARCH))
+
+# In-tree iterative build dirs.  KERNEL dirs are per-$(ARCH) (platform-specific);
+# USERLAND dirs are per-$(_TC_ARCH) (shared across a CPU's xen/non-xen variants).
 GNUMACH_SRC      := $(SRC)/gnumach
 GNUMACH_BUILD    := $(WORK)/gnumach/$(ARCH)
 GNUMACH_KERNEL   := $(GNUMACH_BUILD)/gnumach
@@ -119,7 +133,7 @@ GNUMACH_CONFIGURED := $(GNUMACH_BUILD)/config.status
 # USER_MIG so it can run BEFORE mig exists (mig needs the Mach headers), and
 # installs into the build-only SYSROOT below — distinct from the kernel build
 # dir, which uses the real mig + --prefix=$(DIST_MACH).
-GNUMACH_HDR_BUILD := $(WORK)/gnumach-headers/$(ARCH)
+GNUMACH_HDR_BUILD := $(WORK)/gnumach-headers/$(_TC_ARCH)
 GNUMACH_HDR_CONFIGURED := $(GNUMACH_HDR_BUILD)/config.status
 # Stamp for the Mach-headers install, kept in the BUILD dir (not the sysroot).
 # Consumers (mig, glibc) depend on this stamp, NOT on $(SYSROOT)/include/mach:
@@ -136,10 +150,10 @@ MACH_HDR_STAMP := $(GNUMACH_HDR_BUILD)/.headers-installed
 # include dir, hurd's install would bump its mtime and make mig perpetually
 # stale (a reconfigure/rebuild feedback loop).  Headers reach $(DIST) via the
 # dist-* targets' own `make install`, not from here.
-SYSROOT          := $(WORK)/sysroot/$(ARCH)
+SYSROOT          := $(WORK)/sysroot/$(_TC_ARCH)
 
 MIG_SRC          := $(SRC)/mig
-MIG_BUILD        := $(WORK)/mig/$(ARCH)
+MIG_BUILD        := $(WORK)/mig/$(_TC_ARCH)
 MIG_INSTALL_DIR  := $(MIG_BUILD)/install
 LOCAL_MIG        := $(MIG_INSTALL_DIR)/bin/$(MIG_NAME)
 
@@ -157,7 +171,7 @@ endif
 # Hurd source clone (populated by `make srcs` from the `hurd-src` flake
 # input pin) + in-tree build dir.  See the `hurd` / `dist-hurd` targets.
 HURD_SRC         := $(SRC)/hurd
-HURD_BUILD       := $(WORK)/hurd/$(ARCH)
+HURD_BUILD       := $(WORK)/hurd/$(_TC_ARCH)
 HURD_CONFIGURED  := $(HURD_BUILD)/config.status
 
 # Rewrite the absolute build-time source dir out of assert()/__FILE__ strings so
@@ -173,7 +187,7 @@ _macro_prefix_map = -fmacro-prefix-map=$(1)/=
 # Headers-only build dir for hurd (sibling to GNUMACH_HDR_BUILD): `make
 # install-headers` populates $(SYSROOT)/include/hurd, the Hurd half of the
 # sysroot the in-tree glibc builds against.
-HURD_HDR_BUILD   := $(WORK)/hurd-headers/$(ARCH)
+HURD_HDR_BUILD   := $(WORK)/hurd-headers/$(_TC_ARCH)
 HURD_HDR_CONFIGURED := $(HURD_HDR_BUILD)/config.status
 # Stamp for the Hurd-headers install (see MACH_HDR_STAMP for the why): glibc
 # installs its own hurd/* headers into $(SYSROOT)/include/hurd, so glibc depends
@@ -189,8 +203,8 @@ GLIBC_SRC        := $(SRC)/glibc
 # libc_nonshared.a (the symptom is "undefined reference to pthread_atfork" at
 # the librt link).  The nix store is a case-sensitive APFS volume for the same
 # reason.  On a case-insensitive host, point this at a case-sensitive volume:
-#   make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(ARCH)
-GLIBC_BUILD      ?= $(WORK)/glibc/$(ARCH)
+#   make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(_TC_ARCH)
+GLIBC_BUILD      ?= $(WORK)/glibc/$(_TC_ARCH)
 # glibc refuses an in-src build, so build out-of-tree under build/.  NOTE: no
 # trailing inline comment on these := lines — make keeps the whitespace before
 # a `#`, and an embedded space would split $(GLIBC_CONFIGURED) into two targets.
@@ -264,7 +278,7 @@ help:
 	@echo "  mach             build gnumach kernel in-tree under ./work/gnumach/$(ARCH)/ (incremental — for kernel iteration)"
 	@echo "  dist-mach        install the in-tree kernel into ./dist/$(ARCH)/ (boot/gnumach + headers + docs)"
 	@echo "  dist             install kernel + Hurd userland + glibc into ./dist/$(ARCH)/ (= dist-mach + dist-hurd + a glibc step; mig is host-arch, not bundled)"
-	@echo "  hurd             build the Hurd userland in-tree under ./work/hurd/$(ARCH)/ (incremental; needs ARCH=i686|x86_64)"
+	@echo "  hurd             build the Hurd userland in-tree under ./work/hurd/$(_TC_ARCH)/ (incremental; needs ARCH=i686|x86_64)"
 	@echo "  dist-hurd        install the in-tree Hurd userland into ./dist/$(ARCH)/ (under fakeroot)"
 	@echo "  mig              build MIG in-tree — opt-in for iterating on MIG (run 'make src-mig' first)"
 	@echo "                   (otherwise a no-op: MIG is always available without it)"
@@ -406,9 +420,6 @@ $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 # others).  Requires `cachix authtoken <token>` once per host (push authenticated,
 # pull anonymous).  Runs at top level — no dev-shell dispatch.
 _CACHE_NAME := hurd-build-system
-# xen kernel variants reuse their CPU sibling's wrapped toolchain (there is no
-# `toolchain-<cpu>-xen` output), so strip the suffix for the toolchain root.
-_TC_ARCH := $(patsubst %-xen,%,$(ARCH))
 
 .PHONY: push-cache
 push-cache:
@@ -553,10 +564,10 @@ check-glibc check-glibc-full:
 else
 check-glibc:
 	+$(MAKE) --no-print-directory work-glibc ARCH=$(ARCH)
-	$(NIX_FLAKE) run $(PROJ)\#abi-report-host-$(ARCH) -- $(SYSROOT) deep
+	$(NIX_FLAKE) run $(PROJ)\#abi-report-host-$(_TC_ARCH) -- $(SYSROOT) deep
 check-glibc-full:
 	+$(MAKE) --no-print-directory work-glibc ARCH=$(ARCH)
-	$(NIX_FLAKE) run $(PROJ)\#abi-report-host-$(ARCH) -- $(SYSROOT) full
+	$(NIX_FLAKE) run $(PROJ)\#abi-report-host-$(_TC_ARCH) -- $(SYSROOT) full
 endif
 
 # ---- rebaseline-ref (always-on, arch-independent) ----
@@ -1086,12 +1097,16 @@ $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4
 # mtime is NOT a reliable "Mach headers installed" signal — see MACH_HDR_STAMP.
 mach-headers: $(MACH_HDR_STAMP)
 
+# No --enable-platform here (unlike the kernel build): this sysroot is shared
+# across a CPU's xen/non-xen variants ($(_TC_ARCH)), and the installed PUBLIC
+# Mach headers are byte-identical regardless of platform (the flag selects
+# kernel-internal/device code, not the userland RPC ABI).  Omitting it keeps the
+# shared headers deterministic no matter which variant's dev shell builds first.
 $(GNUMACH_HDR_CONFIGURED): $(GNUMACH_SRC)/configure
 	mkdir -p $(GNUMACH_HDR_BUILD)
 	cd $(GNUMACH_HDR_BUILD) && \
 	  USER_MIG=/bin/true \
-	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(SYSROOT) \
-	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
+	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(SYSROOT)
 
 # $(_MACH_HDR_SRC) (every tracked .h/.defs in the tree) is a real prereq, so
 # editing any Mach header re-runs install-data and re-touches the stamp — which
@@ -1212,7 +1227,7 @@ $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(MACH_HDR_STAMP) $(HURD_HDR_STAMP)
 	  echo "ERROR: $(GLIBC_BUILD) is on a case-INSENSITIVE filesystem." >&2; \
 	  echo "  glibc's build needs case-sensitivity (pthread_atfork.os vs .oS collide)." >&2; \
 	  echo "  Point GLIBC_BUILD at a case-sensitive volume, e.g.:" >&2; \
-	  echo "    make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(ARCH)" >&2; \
+	  echo "    make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(_TC_ARCH)" >&2; \
 	  exit 1; \
 	fi; \
 	rm -f $(GLIBC_BUILDDIR)/.cstest
@@ -1424,7 +1439,7 @@ $(DIST_MACH)/boot/gnumach: $(GNUMACH_KERNEL)
 
 # ---- hurd / dist-hurd ----
 # `make hurd`      — in-tree incremental userland build under
-#                    work/hurd/$(ARCH).  Counterpart to `make mach`: edit
+#                    work/hurd/$(_TC_ARCH).  Counterpart to `make mach`: edit
 #                    src/hurd, re-run, only changed objects recompile.
 # `make dist-hurd` — `make install` that in-tree build into dist/$(ARCH).
 #
@@ -1438,7 +1453,7 @@ $(DIST_MACH)/boot/gnumach: $(GNUMACH_KERNEL)
 # predates gcc's -fno-common default; scoped here so the kernel never sees it).
 .PHONY: hurd dist-hurd
 
-# `make hurd` builds the userland under work/hurd/$(ARCH).  Unlike mach (whose
+# `make hurd` builds the userland under work/hurd/$(_TC_ARCH).  Unlike mach (whose
 # kernel is a single file sentinel, $(GNUMACH_KERNEL)), hurd produces many
 # outputs and no single binary, so we use a build stamp ($(HURD_BUILD)/.built)
 # as its sentinel — touched after a successful compile.  Combined with the
