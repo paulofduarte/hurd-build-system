@@ -918,6 +918,24 @@ _RUN_PASSTHROUGH := \
   RUN_REFRESH=$(RUN_REFRESH) \
   RUN_ARGS=$(subst $(_SP),\$(_SP),$(RUN_ARGS))
 
+# Output / build-location overrides.  Same problem as above: the inner make runs
+# under `nix develop -i` (clean env) with MAKEOVERRIDES dropped, so a
+# `make dist DIST=/foo` or `make glibc GLIBC_BUILD=/bar` would silently revert to
+# the inner default.  Forward the RESOLVED values (plain paths, no embedded
+# spaces, so none of the MAKEOVERRIDES escaping hazards apply).  When the user
+# didn't override, these equal the inner `?=` defaults ($(DIST_ROOT)/$(ARCH) etc.,
+# computed identically from the same $(PROJ)+$(ARCH) on both sides), so forwarding
+# is a no-op — and when they did, the override now survives the dispatch.  The
+# whole DIST family is listed so an individual DIST_MACH/HURD/GLIBC override also
+# carries through, not just a top-level DIST.
+_DIST_PASSTHROUGH := \
+  DIST_ROOT=$(DIST_ROOT) \
+  DIST=$(DIST) \
+  DIST_MACH=$(DIST_MACH) \
+  DIST_HURD=$(DIST_HURD) \
+  DIST_GLIBC=$(DIST_GLIBC) \
+  GLIBC_BUILD=$(GLIBC_BUILD)
+
 # We intentionally do NOT forward $(MAKEOVERRIDES) here.  Two
 # reasons: (1) every user-facing knob we have today is already in
 # _RUN_PASSTHROUGH, and (2) MAKEOVERRIDES escapes embedded spaces
@@ -933,7 +951,7 @@ _dispatch:
 	@mkdir -p $(dir $(_FLAKE_PROFILE))
 	+@$(NIX_FLAKE) develop -i --profile "$(_FLAKE_PROFILE)" .#$(ARCH) \
 	  --command make --no-print-directory _MAKE_INNER=1 $(_PARENT_FLAGS) \
-	    $(_RUN_PASSTHROUGH) $(_BUILD_GOALS)
+	    $(_RUN_PASSTHROUGH) $(_DIST_PASSTHROUGH) $(_BUILD_GOALS)
 
 $(_BUILD_GOALS): _dispatch
 	@:
@@ -997,6 +1015,23 @@ all: mach hurd
 # runtime, always from nix) — keep in sync or the staleness gate and the recipe
 # disagree (silent mis-ship).
 dist: dist-mach dist-hurd dist-glibc dist-libgcc
+
+# Serialize dist's four components under `make -j` — they contend on two shared
+# resources and otherwise corrupt each other:
+#   - the glibc build dir: work-glibc (pulled in by dist-hurd, install ->
+#     $(SYSROOT)) and dist-glibc-tree (install -> $(DIST_GLIBC)) both run
+#     `make install` in the SAME $(GLIBC_BUILDDIR); glibc regenerates
+#     intermediates (build/mach/stubs, stubsT) IN the build dir, so two
+#     concurrent installs race -> "mach/stubs Error 1".
+#   - the dist tree: dist-glibc(-nix)'s `chmod -R u+w $(DIST)` walks the whole
+#     tree while dist-mach/dist-hurd/dist-libgcc are writing into it.
+# `.NOTPARALLEL: dist` serializes ONLY dist's immediate prerequisites; each
+# component still builds internally with -j, and the individual `dist-*` targets
+# are unaffected (full parallelism when built on their own).  This is why
+# `make dist` failed under -j while each `dist-*` run alone succeeded.  Needs
+# GNU make 4.4 (the dispatched inner make); the outer make never parses this
+# rule (it lives in the inner-only build-rules branch).
+.NOTPARALLEL: dist
 
 # $(call _tracked_files,<dir>) — every git-tracked file under <dir>, as
 # absolute paths.  Used by the mig/mach/glibc rules to list src as prereqs so
