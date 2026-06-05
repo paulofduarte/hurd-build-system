@@ -1455,7 +1455,19 @@ hurd: $(HURD_BUILD)/.built
 # Depend on the work-glibc output ($(SYSROOT)/lib/libc.so.0.3 → pulls work-glibc)
 # and pass --sysroot=$(SYSROOT); ld resolves the root-relative libc.so GROUP
 # under that sysroot.
+#
+# The explicit -L$(SYSROOT)/lib is load-bearing for the STATIC bootstrap servers
+# (ext2fs.static etc.).  Their `-static -lc` pulls glibc's static archives
+# (libc.a ldscript -> libcrt/libmachuser/libhurduser .a), and the wrapped cc's
+# baked `-L<nix-glibc-farm>/lib` otherwise wins over --sysroot — so the link
+# would embed the NIX glibc's objects, not the in-tree ones.  That both diverges
+# the .static binaries cross-host (nix glibc carries per-host sandbox build paths
+# in its DWARF) and silently bypasses a hacked src/glibc for exactly the servers
+# that boot the system.  A command-line -L precedes the wrapper's baked -L, so
+# this makes the in-tree archives win.  (The dynamic servers only record the
+# libc.so.0.3 soname, embedding no glibc objects, so they were already fine.)
 _HURD_SYSROOT := $(if $(GLIBC_IN_TREE),--sysroot=$(SYSROOT))
+_HURD_LDFLAGS := $(if $(GLIBC_IN_TREE),--sysroot=$(SYSROOT) -L$(SYSROOT)/lib)
 
 $(HURD_BUILD)/.built: $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 	cd $(HURD_BUILD) && $(MAKE) MIG=$(MIG) USER_MIG=$(MIG)
@@ -1473,7 +1485,7 @@ $(HURD_CONFIGURED): $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(H
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
 	    MIG=$(MIG) USER_MIG=$(MIG) \
 	    CFLAGS="-fcommon -g -O2 $(_HURD_SYSROOT) $(call _macro_prefix_map,$(HURD_SRC))" \
-	    $(if $(GLIBC_IN_TREE),LDFLAGS="$(_HURD_SYSROOT)") \
+	    $(if $(GLIBC_IN_TREE),LDFLAGS="$(_HURD_LDFLAGS)") \
 	    --prefix=/ --libexecdir=/libexec --bindir=/bin --sbindir=/sbin \
 	    --sysconfdir=/etc --localstatedir=/var --libdir=/lib --includedir=/include
 
