@@ -55,6 +55,7 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
+  buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   # Upstream version parsed from version.m4 (AC_PACKAGE_VERSION).  If
   # upstream bumps the m4 file, the parser picks it up automatically.
@@ -113,20 +114,16 @@ let
         ++ (with pkgs; [ texinfo perl patchelf ])
         ++ [ toolchain crossMig ];
 
-      # The `-fdebug-prefix-map` entries rewrite the host-specific
-      # cross-toolchain /nix/store paths that leak into DWARF (header refs,
-      # comp dirs, file tables) to stable names, so the same source yields
-      # byte-identical `.debug_info` on every host.  The map values are
-      # arbitrary — only their stability matters; `${toolchain}` etc.
-      # resolve at eval time, normalising each host's hash away.  Debug info
-      # is preserved (paths only), so dist/ stays usable for gdb.
-      CFLAGS = lib.concatStringsSep " " [
+      # `buildFlags.debugPrefixMap` rewrites the host-specific cross-toolchain
+      # /nix/store paths that leak into DWARF (header refs, comp dirs, file
+      # tables) to stable names, so the same source yields byte-identical
+      # `.debug_info` on every host.  Shared with flakes/hurd + the in-tree
+      # dev shell (build-flags.nix) so all three build paths agree.  Debug
+      # info is preserved (paths only), so dist/ stays usable for gdb.
+      CFLAGS = lib.concatStringsSep " " ([
         "-g"
         "-O2"
-        "-fdebug-prefix-map=${toolchain}=/cross-cc-wrapper"
-        "-fdebug-prefix-map=${toolchain.cc}=/cross-gcc"
-        "-fdebug-prefix-map=${toolchain.bintools}=/cross-binutils-wrapper"
-      ];
+      ] ++ buildFlags.debugPrefixMap toolchain);
 
       # Splice the eval-time-composed version into version.m4 before the
       # autoreconfHook regenerates configure.  ${fullVersion} is composed

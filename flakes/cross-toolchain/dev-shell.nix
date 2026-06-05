@@ -31,6 +31,7 @@
 let
   lib = nixpkgs.lib;
   hurdConfig = import ./hurd-config.nix;
+  buildFlags = import ./build-flags.nix { inherit lib; };
 in
 
 {
@@ -57,6 +58,13 @@ in
       # toolchain bin names and binu's (same crossSystem).
       tp    = toolchain.targetPrefix;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
+      # DWARF store-path maps for every cc the in-tree build invokes: the
+      # working-wrapped `toolchain` (mach + hurd) and the ref-wrapped `glibcCC`
+      # (opt-in `make glibc`).  `toolchain.cc == glibcCC.cc` (both wrap the same
+      # final gcc), so lib.unique drops the duplicate gcc map.  Shared with the
+      # nix builds via build-flags.nix.
+      detPrefixMap = lib.concatStringsSep " "
+        (lib.unique (buildFlags.debugPrefixMap toolchain ++ buildFlags.debugPrefixMap glibcCC));
 
       # Build-tool deps inferred from this target's own derivations rather
       # than re-listed.  Subtract the own packages AND the libc-free stage-1
@@ -154,6 +162,32 @@ in
         # `-g -O2` default (+ its own -ffreestanding -nostdlib); the hurd
         # recipe adds -fcommon at configure time.
         export PKG_CONFIG_PATH=
+
+        # Cross-host determinism for the in-tree build (mach/hurd/glibc),
+        # applied through NIX_CFLAGS_COMPILE so EVERY in-tree compile inherits
+        # it — the Makefile recipes need not redefine it.  Two host-varying
+        # inputs would otherwise leak (see build-flags.nix):
+        #   - gcc's -frandom-seed: nixpkgs' reproducible-builds setup hook
+        #     derives it from $out, which differs per host for this dev shell
+        #     (its toolchain input's store hash differs per host), perturbing
+        #     seed-sensitive codegen.  Strip the hook's seed and pin our own.
+        #   - the cross-toolchain's own /nix/store paths in DWARF: map them to
+        #     stable names (detPrefixMap), shared with the nix builds.
+        export NIX_CFLAGS_COMPILE="$(printf '%s' "''${NIX_CFLAGS_COMPILE:-}" \
+          | sed 's/-frandom-seed=[^ ]*//g') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
+
+        # No build-dir RUNPATH leak.  `nix develop` points $out at
+        # <repo>/outputs/out and injects an EXPLICIT `-rpath $out/lib` into
+        # NIX_LDFLAGS (the dev shell's own-output rpath).  On Linux the cross
+        # ld-wrapper bakes it into EVERY in-tree binary's RUNPATH; darwin's
+        # stdenv never adds it.  That asymmetry both diverged the dist (the extra
+        # RUNPATH string enlarges .dynstr and shifts every address, so
+        # .text/.symtab/.dynsym cascade) AND leaked a build path into the shipped
+        # binaries.  Strip it so every host matches darwin — the deployable dist
+        # resolves libs via the target's own /lib + DT_NEEDED, no rpath wanted.
+        # NB: NIX_DONT_SET_RPATH does NOT cover this — it gates only the
+        # auto-derived rpath, not an explicit -rpath flag (verified on Linux).
+        [ -n "''${out:-}" ] && export NIX_LDFLAGS="$(printf '%s' "''${NIX_LDFLAGS:-}" | sed "s@-rpath $out/lib@@g")"
         # Same configure flag set as the nix Hurd build (hurd-config.nix).
         export HURD_CONFIGURE_FLAGS="--host=${target.crossTarget} ${coreFlags}"
       '';

@@ -30,6 +30,7 @@ let
   helpers = import ../lib { inherit lib; };
   # Configure flags shared with the in-tree dev shell (Makefile `make hurd`).
   hurdConfig = import ../cross-toolchain/hurd-config.nix;
+  buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
   fullVersion = helpers.composeVersion {
@@ -70,8 +71,11 @@ let
         ++ [ toolchain crossMig ];
 
       # hurd predates gcc's -fno-common default (gcc 10+); -fcommon keeps
-      # its tentative-definition globals linking.
-      CFLAGS = "-fcommon -g -O2";
+      # its tentative-definition globals linking.  buildFlags.debugPrefixMap
+      # maps the cross-toolchain store paths out of DWARF for host-stable
+      # debug info (shared with flakes/gnumach + the in-tree dev shell).
+      CFLAGS = lib.concatStringsSep " "
+        ([ "-fcommon" "-g" "-O2" ] ++ buildFlags.debugPrefixMap toolchain);
 
       postPatch = ''
         sed -i.bak \
