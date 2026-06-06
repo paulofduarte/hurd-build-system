@@ -57,6 +57,8 @@ in
       # The wrapped cc's target prefix ("i686-gnu-") — drives both the
       # toolchain bin names and binu's (same crossSystem).
       tp    = toolchain.targetPrefix;
+      # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
+      salt  = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
       # DWARF store-path maps for every cc the in-tree build invokes: the
       # working-wrapped `toolchain` (mach + hurd) and the ref-wrapped `glibcCC`
@@ -176,17 +178,27 @@ in
         export NIX_CFLAGS_COMPILE="$(printf '%s' "''${NIX_CFLAGS_COMPILE:-}" \
           | sed 's/-frandom-seed=[^ ]*//g') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
 
-        # No build-dir RUNPATH leak.  `nix develop` points $out at
-        # <repo>/outputs/out and injects an EXPLICIT `-rpath $out/lib` into
-        # NIX_LDFLAGS (the dev shell's own-output rpath).  On Linux the cross
-        # ld-wrapper bakes it into EVERY in-tree binary's RUNPATH; darwin's
-        # stdenv never adds it.  That asymmetry both diverged the dist (the extra
-        # RUNPATH string enlarges .dynstr and shifts every address, so
-        # .text/.symtab/.dynsym cascade) AND leaked a build path into the shipped
-        # binaries.  Strip it so every host matches darwin — the deployable dist
-        # resolves libs via the target's own /lib + DT_NEEDED, no rpath wanted.
-        # NB: NIX_DONT_SET_RPATH does NOT cover this — it gates only the
-        # auto-derived rpath, not an explicit -rpath flag (verified on Linux).
+        # No store RUNPATH leak in the shipped dist.  On Linux the cross
+        # ld-wrapper bakes a DT_RUNPATH into EVERY in-tree binary; darwin's
+        # stdenv never does.  The extra RUNPATH string enlarges .dynstr and
+        # shifts every address (.text/.symtab/.dynsym cascade), so the dist
+        # diverges cross-host AND leaks a build path.  Two distinct sources, two
+        # mechanisms — make every host match darwin (deployable dist resolves via
+        # the target's own /lib + DT_NEEDED, no rpath wanted):
+        #
+        #  (a) auto-derived rpath from the wrapped cc's OWN -L<store> dirs (the
+        #      abi-checked working glibc + gcc libdir, injected on every link).
+        #      NIX_DONT_SET_RPATH gates exactly this.  It must be a REAL env var,
+        #      not the wrapped bintools' add-local-ldflags-before.sh: gcc links
+        #      through its --with-ld bintools (the stage-1 wrapper), which never
+        #      sources the working wrapper's suppression — same trap glibc.nix /
+        #      mkGcc hit, fixed the same way (a salted env var the real ld honours).
+        export NIX_DONT_SET_RPATH${salt}=1
+        #
+        #  (b) the EXPLICIT `-rpath $out/lib` that `nix develop` injects into
+        #      NIX_LDFLAGS (the dev shell's own-output rpath).  NIX_DONT_SET_RPATH
+        #      does NOT cover an explicit -rpath flag (verified on Linux), so sed
+        #      it out of NIX_LDFLAGS directly.
         [ -n "''${out:-}" ] && export NIX_LDFLAGS="$(printf '%s' "''${NIX_LDFLAGS:-}" | sed "s@-rpath $out/lib@@g")"
         # Same configure flag set as the nix Hurd build (hurd-config.nix).
         export HURD_CONFIGURE_FLAGS="--host=${target.crossTarget} ${coreFlags}"

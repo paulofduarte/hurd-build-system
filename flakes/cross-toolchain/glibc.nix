@@ -90,6 +90,8 @@ let
       hurd-headers    = hurdHeaders."hurd-headers-${name}";
       pname           = "glibc-hurd-${target.crossTarget}";
       tp              = target.crossTarget;
+      # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
+      salt            = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
     in
     # Use native (host) stdenv — glibc IS the cross libc, can't be
     # built by a cross-stdenv that requires libc to bootstrap.  Cross
@@ -279,6 +281,18 @@ let
     } // lib.optionalAttrs deployPrefix {
       installFlags = [ "DESTDIR=${placeholder "out"}" ];
       dontMoveSbin = true;
+      # No /nix/store DT_RUNPATH on the shipped sub-libraries.  glibc links
+      # libmachuser/libhurduser/libpthread (and the nss/rt/resolv/… stubs)
+      # against the prior (reference) glibc via the wrapper's `-L<refglibc>/lib`
+      # (libc-ldflags).  The nix ld-wrapper then auto-derives a DT_RUNPATH to
+      # that store dir — a leak in a --prefix=/ deployed tree (no /nix/store; the
+      # libs resolve libc.so.0.3 from /lib via the loader path, like any distro
+      # system lib).  libc.so.0.3 / ld.so escape (linked -nostdlib).  The
+      # wrappedToolchain bintools sets this flag too, but glibc.nix uses the cc
+      # by ABSOLUTE PATH (to dodge nixpkgs' meta gate), so no wrapper setup-hook
+      # runs — and gcc's own --with-ld bintools carries no suppression.  So set
+      # the real env var here (same channel mkGcc uses for libgcc_s/libstdc++).
+      "NIX_DONT_SET_RPATH${salt}" = "1";
       # glibc's helper scripts (bin/{ldd,tzselect,xtrace,sotruss},
       # bin/mtrace) ship the portable shebang from their *.in source
       # (#!/bin/bash, #! /bin/sh) — glibc's ldd-rewrite sed never touches
