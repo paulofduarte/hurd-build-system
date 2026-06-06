@@ -155,6 +155,26 @@ let
           [ " -Wl,-rpath,${targetLibc}/lib" ] [ "" ]
           (old.env.EXTRA_LDFLAGS_FOR_TARGET or "");
       };
+      # libstdc++'s gdb pretty-printer hook (libstdc++.so.*-gdb.py) bakes THIS
+      # output's store path into its pythondir/libdir.  The hook only uses them to
+      # derive a RELATIVE offset at load time (it relocates against the objfile's
+      # actual dir — "preserves relocatability of the gcc tree"), so the absolute
+      # prefix is dead weight; but its build-host store HASH made the `lib` output
+      # (hence the shipped dist) differ across hosts.  Rewrite this output's store
+      # path to a fixed, hash-free placeholder so `lib` is byte-identical cross-host
+      # while the hook stays functional — letting the dist keep the .py rather than
+      # drop it.  No `sed -i` (portable across the build host's sed).
+      # NOTE: the better refinement (rewrite to the deployed /lib + /share paths) is
+      # parked in .claude/docs/build/gdbpy-deployed-paths.patch pending a cross-gcc
+      # rebuild; this placeholder form matches the currently-built toolchains (no
+      # rebuild).  Apply with `git apply` when ready, then rebuild + re-verify.
+      postFixup = (old.postFixup or "") + ''
+        fixed="/nix/store/00000000000000000000000000000000-$(basename "$lib" | sed -E 's/^[a-z0-9]{32}-//')"
+        for f in "$lib"/*/lib/*-gdb.py "$lib"/lib/*-gdb.py; do
+          [ -e "$f" ] || continue
+          sed "s|$lib|$fixed|g" "$f" > "$f.tmp" && mv -f "$f.tmp" "$f"
+        done
+      '';
     });
 
   # The wrapped cross-cc.  `cc` is the reference-built gcc; the cc-wrapper and
