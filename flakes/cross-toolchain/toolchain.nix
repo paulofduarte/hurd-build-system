@@ -136,17 +136,20 @@ let
       preFixupPhases = lib.filter (p: p != "preFixupLibGccPhase") (old.preFixupPhases or []);
       env               = old.env // {
         # mechanism #2: `--sysroot` so the --prefix=/ targetLibc's /lib GROUP
-        # resolves at the libgcc_s/libstdc++ link.  `-rpath /lib` bakes the
-        # DEPLOYABLE RUNPATH (the target's own libc dir) instead of nixpkgs'
-        # default `${targetLibc}/lib` (a /nix/store leak) — so the shipped
-        # libgcc_s/libstdc++ need no dist `patchelf --remove-rpath`.  Both ride
-        # NIX_LDFLAGS_BEFORE so they survive the ld-wrapper's purity strip (a
-        # command-line `-rpath /lib` would be dropped as impure).
+        # resolves at the libgcc_s/libstdc++ link.  Rides NIX_LDFLAGS_BEFORE so it
+        # survives the ld-wrapper's purity strip.  No `-rpath`: the shipped
+        # libgcc_s/libstdc++ carry NO DT_RUNPATH at all, matching Debian GNU/Hurd
+        # (which ships every lib + binary rpath-less) and the rest of our dist —
+        # they resolve libc from /lib via the loader's baked default search path
+        # (glibc's default-rpath=/lib + /etc/ld.so.cache), no per-binary rpath
+        # wanted.  NIX_DONT_SET_RPATH below already kills nixpkgs' store-path leak,
+        # so no explicit /lib substitute is needed (a prior `-rpath /lib` here was
+        # redundant with the loader default).
         "NIX_LDFLAGS_BEFORE${salt}" =
-          (old.env."NIX_LDFLAGS_BEFORE${salt}" or "") + " --sysroot=${targetLibc} -rpath /lib";
+          (old.env."NIX_LDFLAGS_BEFORE${salt}" or "") + " --sysroot=${targetLibc}";
         # Stop the wrapper auto-deriving -rpath from the -L dirs, and drop
         # nixpkgs' explicit store -rpath (keep -L + -rpath-link for build-time
-        # resolution) — else `${targetLibc}/lib` would be baked alongside /lib.
+        # resolution) — else `${targetLibc}/lib` would be baked.
         "NIX_DONT_SET_RPATH${salt}" = "1";
         EXTRA_LDFLAGS_FOR_TARGET = lib.replaceStrings
           [ " -Wl,-rpath,${targetLibc}/lib" ] [ "" ]
