@@ -1265,8 +1265,19 @@ $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(MACH_HDR_STAMP) $(HURD_HDR_STAMP)
 
 # `make glibc` COMPILES only — no install (work-glibc/dist-glibc install).
 # Hardening off (read at runtime by the wrapper; see the configure rule).
+# -ffile-prefix-map: glibc's mach/Machrules server-stub vpath is
+#   vpath %_server.c $(addprefix $(objpfx),$(sort $(dir $(server-interfaces))))
+# and $(dir ...) yields "./" for the dir-less `faultexc` interface, putting
+# $(objpfx)./ on the vpath.  When a stub resolves through that entry (instead of
+# the literal path) make bakes "$(GLIBC_BUILDDIR)/hurd/./…" into $< -> DWARF
+# DW_AT_name; which path wins is build-order-dependent, so libhurduser's debug
+# info diverges cross-host.  Collapse the "/." so the recorded path is
+# host-independent — a targeted map, no upstream glibc patch.  (objdir=`pwd` in
+# the build dir == $(GLIBC_BUILDDIR), so this prefix matches what glibc records.)
 $(GLIBC_BUILT): $(MIG) $(GLIBC_CONFIGURED) $(GLIBC_SRC_FILES)
-	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE)
+	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= \
+	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE -ffile-prefix-map=$(GLIBC_BUILDDIR)/hurd/.=$(GLIBC_BUILDDIR)/hurd" \
+	  $(MAKE)
 	@touch $(GLIBC_BUILT)
 
 # ---- work-glibc (private: install glibc into the build sysroot) ----
