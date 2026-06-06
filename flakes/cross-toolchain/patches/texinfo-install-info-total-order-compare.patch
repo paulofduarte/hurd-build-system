@@ -1,0 +1,40 @@
+install-info: make compare_entries_text a total order (cross-host determinism)
+
+compare_entries_text() (the qsort comparator for Info `dir` menu entries) is
+inconsistent: when two entries' names are equal case-insensitively AND the same
+length, it returns `len1 <= len2 ? -1 : +1` == -1 for BOTH (a,b) and (b,a)
+(e.g. "_Exit" vs "_exit", or the two same-name "WEOF:" entries in libc.info).
+That violates qsort's antisymmetry requirement, so qsort()'s result is undefined
+and differs between libc qsort implementations -> share/info/dir is byte-different
+on macOS vs glibc build hosts, breaking a reproducible cross-built install.
+
+Keep the existing "shorter (prefix) name first" rule for different-length names
+(it is already consistent), and for equal-length case-insensitive ties break on
+the full entry text (strcmp) so the comparator is a consistent total order and
+qsort is well-defined and host-independent.  Faithful: only reorders, never drops.
+
+--- a/install-info/install-info.c	2026-06-06 13:52:51
++++ b/install-info/install-info.c	2026-06-06 13:52:51
+@@ -2832,8 +2832,20 @@
+   else
+     len2 = colon2 - text2;
+   int result = mbsncasecmp (text1, text2, len1 <= len2 ? len1 : len2);
+-  if (result == 0) /* Identical start, the longer goes last */
+-    return len1 <= len2 ? -1 : +1;
++  if (result == 0)
++    {
++      /* One name is a case-insensitive prefix of the other: the shorter
++         (prefix) name sorts first, as upstream intended.  */
++      if (len1 != len2)
++        return len1 < len2 ? -1 : +1;
++      /* Names are equal case-insensitively AND the same length.  Break the tie
++         on the FULL entry text so the comparator is a consistent TOTAL order:
++         handles "_Exit" vs "_exit" (case only) and same-name/different-target
++         entries (e.g. two "WEOF:" lines).  The original always-(-1) here gave
++         cmp(a,b)==cmp(b,a)==-1 for such pairs -> inconsistent comparator ->
++         undefined qsort -> share/info/dir differs across build hosts.  */
++      return strcmp (text1, text2);
++    }
+   else
+     return result;
+ }

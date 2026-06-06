@@ -49,6 +49,25 @@ in
       pkgs      = nixpkgs.legacyPackages.${system};
       crossPkgs = mkCrossPkgs system target;
 
+      # Patched install-info: texinfo's compare_entries_text() is an inconsistent
+      # qsort comparator for case-only-different, equal-length menu names (e.g.
+      # `_Exit` vs `_exit` in libc.info) — it returns -1 for BOTH (a,b) and (b,a),
+      # so qsort's output is undefined and differs across libc qsort impls, making
+      # share/info/dir non-reproducible cross-host.  The patch breaks the tie
+      # case-sensitively (total order).  Replaces EVERY texinfo on PATH below so
+      # whichever install-info glibc/hurd's `make install` picks is deterministic
+      # out of the box — no post-dist dir regen.  (makeinfo is unaffected.)
+      texinfoDet = pkgs.texinfo.overrideAttrs (old: {
+        patches = (old.patches or [])
+          ++ [ ./patches/texinfo-install-info-total-order-compare.patch ];
+        # Patching install-info.c bumps its mtime, which would make `make` try to
+        # regenerate the shipped man page via help2man (not a build input) ->
+        # "install-info.1 Error 127".  Touch the prebuilt page so it stays current.
+        postPatch = (old.postPatch or "") + ''
+          touch man/install-info.1
+        '';
+      });
+
       # Unwrapped cross binutils — absolute source of the prefixed
       # ld/ar/nm/ranlib/strip/objcopy.  The wrapped `toolchain` supplies
       # cc/c++; using the unwrapped binutils for the rest sidesteps any
@@ -98,20 +117,26 @@ in
       #              the opt-in raw in-tree `make glibc` (mirrors glibc.nix's
       #              nativeBuildInputs).  Some overlap inferredBuildInputs; the
       #              dedup handles it.
-      # gnumake + awk + coreutils come from stdenv.
+      # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo`
+      # strips the unpatched texinfo wherever it appears (the explicit list AND
+      # inferredBuildInputs, which carries gnumach's), then texinfoDet is added
+      # once — so the only install-info on PATH is the deterministic one.
       nativeBuildInputs =
-        [ toolchain binu mig ]
-        ++ inferredBuildInputs
-        ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
-                         python3 gettext gawk bison perl texinfo ])
-        # gnumach's x86 `make check` builds a multiboot ISO with
-        # grub-mkrescue (needs xorriso + mtools) and the run scenarios
-        # build/boot images; nixpkgs' grub2 is linux-only, so gate on
-        # x86 + linux hosts.
-        ++ lib.optionals
-             ((lib.hasPrefix "x86_64-" target.crossTarget || lib.hasPrefix "i686-" target.crossTarget)
-              && lib.hasSuffix "-linux" system)
-             [ pkgs.grub2 pkgs.xorriso pkgs.mtools ];
+        lib.remove pkgs.texinfo (
+          [ toolchain binu mig ]
+          ++ inferredBuildInputs
+          ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
+                           python3 gettext gawk bison perl texinfo ])
+          # gnumach's x86 `make check` builds a multiboot ISO with
+          # grub-mkrescue (needs xorriso + mtools) and the run scenarios
+          # build/boot images; nixpkgs' grub2 is linux-only, so gate on
+          # x86 + linux hosts.
+          ++ lib.optionals
+               ((lib.hasPrefix "x86_64-" target.crossTarget || lib.hasPrefix "i686-" target.crossTarget)
+                && lib.hasSuffix "-linux" system)
+               [ pkgs.grub2 pkgs.xorriso pkgs.mtools ]
+        )
+        ++ [ texinfoDet ];
 
       shellHook = ''
         export ARCH=${name}
@@ -167,7 +192,7 @@ in
 
         # Cross-host determinism for the in-tree build (mach/hurd/glibc),
         # applied through NIX_CFLAGS_COMPILE so EVERY in-tree compile inherits
-        # it — the Makefile recipes need not redefine it.  Two host-varying
+        # it — the Makefile recipes need not redefine it.  Three host-varying
         # inputs would otherwise leak (see build-flags.nix):
         #   - gcc's -frandom-seed: nixpkgs' reproducible-builds setup hook
         #     derives it from $out, which differs per host for this dev shell
@@ -175,8 +200,18 @@ in
         #     seed-sensitive codegen.  Strip the hook's seed and pin our own.
         #   - the cross-toolchain's own /nix/store paths in DWARF: map them to
         #     stable names (detPrefixMap), shared with the nix builds.
+        #   - host build-tool `-isystem <dev>/include` dirs: mkShell dumps every
+        #     nativeBuildInput's include dir into the shared NIX_CFLAGS_COMPILE,
+        #     which the cross-cc also reads.  On darwin that puts the HOST libiconv
+        #     (propagated by gettext) ahead of the target glibc, so console/pc_kbd
+        #     compile against the wrong iconv.h (host `__tag_iconv_t`, not glibc's
+        #     `iconv_t`) and leak the host store path into DWARF — diverging from
+        #     Linux (glibc has iconv built-in, no host libiconv).  A cross-compile
+        #     must resolve system headers only from its own sysroot (the wrapper's
+        #     -idirafter glibc) + the Makefile -I, never host `-isystem`, so strip
+        #     them all; native `make mig` needs none of these lib headers.
         export NIX_CFLAGS_COMPILE="$(printf '%s' "''${NIX_CFLAGS_COMPILE:-}" \
-          | sed 's/-frandom-seed=[^ ]*//g') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
+          | sed -E 's/-frandom-seed=[^ ]*//g; s#-isystem +/nix/store/[^ ]*##g; s#-fmacro-prefix-map=/nix/store/[^ ]*##g') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
 
         # No store RUNPATH leak in the shipped dist.  On Linux the cross
         # ld-wrapper bakes a DT_RUNPATH into EVERY in-tree binary; darwin's
