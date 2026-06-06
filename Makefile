@@ -109,6 +109,9 @@ DIST_GLIBC_NIX_STAMP := $(WORK)/dist-glibc-nix/$(ARCH).stamp
 # dist-libgcc records the last-shipped gcc-runtime store path here (same work/
 # per-ARCH scheme); the gcc runtime is independent of the glibc choice.
 DIST_LIBGCC_STAMP    := $(WORK)/dist-libgcc/$(ARCH).stamp
+# dist-tzdata records the last-shipped tzdata store path here; tzdata is
+# arch-independent, but the stamp tracks the copy into this $(ARCH) dist tree.
+DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(ARCH).stamp
 
 # A xen variant shares its CPU sibling's `<cpu>-gnu` ABI: it has no separate
 # nix toolchain (`toolchain-<cpu>-xen`) and its entire USERLAND (glibc, the hurd
@@ -750,6 +753,15 @@ _SENTINEL.dist-libgcc := $(DIST_LIBGCC_STAMP)
 _PRIMARY.dist-libgcc  := $(DIST_LIBGCC_STAMP)
 _WATCH.dist-libgcc    := flakes/cross-toolchain
 
+# `dist-tzdata` — ship the IANA tz db (from the pinned nixpkgs tzdata).  Same
+# store-path-stamp scheme.  No _WATCH dir: tzdata's only input is the nixpkgs pin
+# (flake.lock, the recipe's prereq), and the store-path stamp makes a dispatch a
+# no-op when unchanged — so a MISSING sentinel is the outer gate's only trigger
+# (the inner recipe's `: flake.lock` prereq + the stamp catch a pin bump once any
+# dist component dispatches).
+_SENTINEL.dist-tzdata := $(DIST_TZDATA_STAMP)
+_PRIMARY.dist-tzdata  := $(DIST_TZDATA_STAMP)
+
 # `dist-glibc` — the PUBLIC glibc-shipment goal; a thin composite that resolves
 # to the in-tree install (dist-glibc-tree, opt-in) or the nix deployable glibc
 # (dist-glibc-nix) — exactly one, chosen by GLIBC_IN_TREE.  Nesting it as a
@@ -764,7 +776,7 @@ _COMPOSE.dist-glibc    := $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
 # dist-glibc is itself a composite (the in-tree or nix glibc); dist-libgcc adds
 # the gcc runtime (always from nix) — so `make dist` always lands a runnable
 # /-rooted glibc + gcc runtime.
-_COMPOSE.dist          := dist-mach dist-hurd dist-glibc dist-libgcc
+_COMPOSE.dist          := dist-mach dist-hurd dist-glibc dist-libgcc dist-tzdata
 
 # We rely on `git ls-files` to enumerate "real source" — anything else
 # (configure, Makefile.in, autom4te.cache/, INSTALL, doc/stamp-vti, ...) is
@@ -1023,11 +1035,11 @@ all: mach hurd
 
 # Lockstep with _COMPOSE.dist (above): both list dist-glibc (the public glibc
 # step, a composite picking the in-tree or nix glibc) + dist-libgcc (the gcc
-# runtime, always from nix) — keep in sync or the staleness gate and the recipe
-# disagree (silent mis-ship).
-dist: dist-mach dist-hurd dist-glibc dist-libgcc
+# runtime, always from nix) + dist-tzdata (the IANA timezone db, from nix) —
+# keep in sync or the staleness gate and the recipe disagree (silent mis-ship).
+dist: dist-mach dist-hurd dist-glibc dist-libgcc dist-tzdata
 
-# Serialize dist's four components under `make -j` — they contend on two shared
+# Serialize dist's components under `make -j` — they contend on two shared
 # resources and otherwise corrupt each other:
 #   - the glibc build dir: work-glibc (pulled in by dist-hurd, install ->
 #     $(SYSROOT)) and dist-glibc-tree (install -> $(DIST_GLIBC)) both run
@@ -1369,50 +1381,88 @@ $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.ni
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 
 # ---- dist-libgcc ----
-# Ship the gcc TARGET RUNTIME into the dist tree — ALWAYS from the nix cross-gcc
-# (cross-toolchain), independent of the glibc choice (the runtime is a gcc
-# artefact, not glibc; an in-tree glibc doesn't change it).  Ships only the BASE
-# runtime — libgcc_s + libstdc++ — each as a SINGLE real .so named by its SONAME
-# (libgcc_s.so.1, libstdc++.so.6), the form gcc already gives libgcc_s.  gcc
-# ships libstdc++ as libstdc++.so.6.0.34 + a libstdc++.so.6 SONAME symlink; we
-# collapse that to one real libstdc++.so.6 (the loader opens the SONAME
-# directly, so no symlink is needed and the layout matches libgcc_s).  NOT
-# shipped: the bare `.so` dev/link symlinks, the full-version duplicate, the
-# libstdc++*-gdb.py pretty-printer, the situational libs
-# (libatomic/libitm/libquadmath/libssp, which a C Hurd userland doesn't use; add
-# via a DT_NEEDED scan if a future binary needs one).  The libs ship
-# RUNPATH=/lib straight from the gcc build (mkGcc bakes `-rpath /lib` and drops
-# the store rpath — toolchain.nix), so no rpath scrub is needed; a plain
-# copy-by-SONAME (cp -L of libgcc_s.so.1 + libstdc++.so.6) suffices — no patchelf.
-# glibc dlopen()s libgcc_s for backtrace()/Hurd assert_backtrace (a DT_NEEDED
-# scan misses it), so it MUST be present.  The runtime dir is found by `find`ing
-# libgcc_s.so.1 (no hard-coded target tuple); store-path-stamped under work/ so
-# an unchanged gcc skips the copy.  Resolved via $(_TC_ARCH) (the xen suffix
-# stripped): a xen variant has no `cross-gcc-<arch>-xen` output — it reuses its
-# CPU sibling's final gcc (same `<cpu>-gnu` ABI), so its libgcc runtime is the
-# sibling's, same as the wrapped toolchain (push-cache uses the same strip).
+# Ship the gcc TARGET RUNTIME + its docs into the dist tree — ALWAYS from the nix
+# cross-gcc (cross-toolchain), independent of the glibc choice (these are gcc
+# artefacts, not glibc).  Copies the WHOLE gcc lib output (i686-gnu/lib) in its
+# native symlink layout: the full runtime set (libgcc_s, libstdc++, libatomic,
+# libitm, libquadmath, libssp) + libstdc++*-gdb.py (the gdb pretty-printer hook —
+# kept; toolchain.nix's postFixup rewrites its baked store paths to the deployed
+# /lib + /share/gcc-<ver>/python, so it's cross-host pure and target-correct).
+# Also installs
+# the gcc info manuals (gcc/cpp/gccint/cppinternals/gccinstall + libquadmath/libitm
+# for two of the runtime libs) into share/info via install-info, and the gcc man
+# pages into share/man.  All three nix outputs (^lib/^info/^man) are byte-identical
+# cross-host (verified), so a plain copy + the now-deterministic install-info
+# (texinfo total-order patch) keep the dist reproducible — no rpath scrub / patchelf
+# (the libs carry NO RUNPATH: toolchain.nix drops both the nixpkgs store rpath and
+# the /lib one, matching Debian GNU/Hurd).  glibc dlopen()s libgcc_s for
+# backtrace()/Hurd assert_backtrace (a DT_NEEDED scan misses it), so it MUST be
+# present.  Store-path-stamped (lib+info+man) under work/ so an unchanged gcc skips
+# the copy.  Resolved via $(_TC_ARCH) (xen suffix stripped): a xen variant reuses
+# its CPU sibling's final gcc (same `<cpu>-gnu` ABI).
 .PHONY: dist-libgcc
 dist-libgcc: $(DIST_LIBGCC_STAMP)
 
 $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
-	@mkdir -p $(DIST)/lib $(dir $(DIST_LIBGCC_STAMP))
-	@echo "  DIST-LIBGCC  resolving nix cross-gcc-$(_TC_ARCH) runtime…"
+	@mkdir -p $(DIST)/lib $(DIST)/share/info $(DIST)/share/man $(dir $(DIST_LIBGCC_STAMP))
+	@echo "  DIST-LIBGCC  resolving nix cross-gcc-$(_TC_ARCH) {lib,info,man}…"
 	@set -e; \
-	gcclib=$$($(NIX_FLAKE) build $(PROJ)\#cross-gcc-$(_TC_ARCH)^lib --no-link --print-out-paths); \
-	if [ "$$(cat $(DIST_LIBGCC_STAMP) 2>/dev/null)" = "$$gcclib" ] && [ -e $(DIST)/lib/libgcc_s.so.1 ]; then \
-	  echo "  unchanged ($$(basename $$gcclib)) — skip copy"; \
+	gcclib=$$($(NIX_FLAKE) build $(PROJ)\#cross-gcc-$(_TC_ARCH)^lib  --no-link --print-out-paths); \
+	gccinfo=$$($(NIX_FLAKE) build $(PROJ)\#cross-gcc-$(_TC_ARCH)^info --no-link --print-out-paths); \
+	gccman=$$($(NIX_FLAKE) build $(PROJ)\#cross-gcc-$(_TC_ARCH)^man  --no-link --print-out-paths); \
+	stamp="$$gcclib $$gccinfo $$gccman"; \
+	if [ "$$(cat $(DIST_LIBGCC_STAMP) 2>/dev/null)" = "$$stamp" ] && [ -e $(DIST)/lib/libgcc_s.so.1 ]; then \
+	  echo "  unchanged — skip copy"; \
 	else \
 	  rtdir=$$(dirname $$(find $$gcclib -name libgcc_s.so.1 | head -1)); \
-	  echo "  copying gcc base runtime (libgcc_s, libstdc++) from $$rtdir -> $(DIST)/lib"; \
+	  echo "  copying whole gcc runtime ($$(ls $$rtdir | grep -c '\.so') libs) -> $(DIST)/lib"; \
 	  chmod -R u+w $(DIST)/lib 2>/dev/null || true; \
-	  for soname in libgcc_s.so.1 libstdc++.so.6; do \
-	    cp -L "$$rtdir/$$soname" "$(DIST)/lib/$$soname"; \
-	    chmod u+w "$(DIST)/lib/$$soname"; \
+	  cp -a $$rtdir/. $(DIST)/lib/; \
+	  chmod -R u+w $(DIST)/lib; \
+	  echo "  copying gcc man -> $(DIST)/share/man"; \
+	  cp -a $$gccman/share/man/. $(DIST)/share/man/; \
+	  chmod -R u+w $(DIST)/share/man; \
+	  echo "  installing gcc info -> $(DIST)/share/info"; \
+	  cp -L $$gccinfo/share/info/*.info* $(DIST)/share/info/; \
+	  chmod -R u+w $(DIST)/share/info; \
+	  for inf in $$gccinfo/share/info/*.info; do \
+	    install-info --quiet --info-dir=$(DIST)/share/info "$(DIST)/share/info/$$(basename $$inf)" || true; \
 	  done; \
-	  printf '%s' "$$gcclib" > $(DIST_LIBGCC_STAMP); \
+	  printf '%s' "$$stamp" > $(DIST_LIBGCC_STAMP); \
 	fi
 	@ls $(DIST)/lib/libgcc_s.so.1  >/dev/null || { echo "ERROR: libgcc_s.so.1 missing";  exit 1; }
 	@ls $(DIST)/lib/libstdc++.so.6 >/dev/null || { echo "ERROR: libstdc++.so.6 missing"; exit 1; }
+	@ls $(DIST)/lib/libatomic.so.1 >/dev/null || { echo "ERROR: libatomic.so.1 missing"; exit 1; }
+
+# ---- dist-tzdata ----
+# Ship the IANA timezone database so glibc's TZ/localtime works (without it the
+# target has only UTC).  Copied from the pinned nixpkgs `tzdata` (re-exported as
+# the flake package `tzdata`) — arch-independent, zic-compiled data, verified
+# byte-identical cross-host (so one package serves every target, no $(_TC_ARCH)
+# keying).  Lands in /share/zoneinfo, which is glibc's compiled TZDIR
+# ($(datadir)/zoneinfo under our --datarootdir=/share deploy prefix).  Also drops
+# a default /etc/localtime -> /share/zoneinfo/UTC (admin-overridable).  Store-path
+# -stamped so an unchanged tzdata skips the copy.
+.PHONY: dist-tzdata
+dist-tzdata: $(DIST_TZDATA_STAMP)
+
+$(DIST_TZDATA_STAMP): flake.lock
+	@mkdir -p $(DIST)/share $(DIST)/etc $(dir $(DIST_TZDATA_STAMP))
+	@echo "  DIST-TZDATA  resolving nix tzdata…"
+	@set -e; \
+	tz=$$($(NIX_FLAKE) build $(PROJ)\#tzdata^out --no-link --print-out-paths); \
+	if [ "$$(cat $(DIST_TZDATA_STAMP) 2>/dev/null)" = "$$tz" ] && [ -e $(DIST)/share/zoneinfo/UTC ]; then \
+	  echo "  unchanged ($$(basename $$tz)) — skip copy"; \
+	else \
+	  echo "  copying zoneinfo ($$(find $$tz/share/zoneinfo -type f | grep -c .) files) -> $(DIST)/share/zoneinfo"; \
+	  chmod -R u+w $(DIST)/share/zoneinfo 2>/dev/null || true; \
+	  rm -rf $(DIST)/share/zoneinfo; \
+	  cp -a $$tz/share/zoneinfo $(DIST)/share/zoneinfo; \
+	  chmod -R u+w $(DIST)/share/zoneinfo; \
+	  ln -sfn /share/zoneinfo/UTC $(DIST)/etc/localtime; \
+	  printf '%s' "$$tz" > $(DIST_TZDATA_STAMP); \
+	fi
+	@ls $(DIST)/share/zoneinfo/UTC >/dev/null || { echo "ERROR: zoneinfo/UTC missing"; exit 1; }
 
 # ---- mach ----
 # In-tree kernel build under $(GNUMACH_BUILD), using $(MIG) — the effective

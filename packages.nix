@@ -324,7 +324,11 @@ in
     // glibcRefHurdPkgs
     // hurdFinalPkgs
     // migChecked
-    // abiReportPkgs);
+    // abiReportPkgs
+    # Timezone database for the dist (dist-tzdata copies its share/zoneinfo).
+    # Pinned nixpkgs tzdata — arch-independent zic-compiled data, verified
+    # byte-identical cross-host; one package serves every target.
+    // { tzdata = nixpkgs.legacyPackages.${system}.tzdata; });
 
   apps = forAllSystems (system: import ./flakes/run {
     inherit nixpkgs system targets crossToolchain;
