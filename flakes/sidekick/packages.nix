@@ -14,6 +14,6 @@
   alpineArch   = "x86_64";
 
   packages = {
-    "linux-virt" = { version = "6.12.90-r0"; sha256 = "40f3734bfe75d9865dbe6aadc154d7b52d9c700319c63de7beae55cc65306934"; };
+    "linux-virt" = { version = "6.12.91-r0"; sha256 = "939d8883dd8ff7cb200316c1240094172578fbd3eb2f5350fa81084b9545954e"; };
   };
 }
