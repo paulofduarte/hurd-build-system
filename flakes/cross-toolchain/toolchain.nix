@@ -97,10 +97,43 @@ let
     # pass) — which we don't want mutating the cross libs' RPATHs — so
     # dontPatchELF turns ONLY that shrink hook off, leaving the clear-execstack
     # call intact.  (Same pairing as glibc.nix.)  Unguarded — fine if it rebuilds.
+    #
+    # --with-ld: cross-host determinism for libstdc++.so.  libtool's C++ tag only
+    # enables `--whole-archive` for convenience libraries when
+    # `$CC -print-prog-name=ld --help` advertises `no-whole-archive`.  gcc records
+    # no absolute ld, so it returns the bare name `ld` and libtool runs the BUILD
+    # host's native ld: GNU on Linux (→ --whole-archive, archive order), macOS
+    # cctools on darwin (→ libtool falls back to EXTRACTING each archive and
+    # listing the objects via `find … | sort`, i.e. ALPHABETICAL order).  The two
+    # orders give different `.text`/`.cold` layouts → a non-reproducible
+    # libstdc++.so across build hosts.  Pinning gcc's ld to the GNU cross ld makes
+    # the probe succeed on every host → --whole-archive everywhere → byte-identical
+    # libstdc++.so.  Points at the WRAPPED bintools ld (the one the build already
+    # links through), so mechanism #2's NIX_LDFLAGS_BEFORE --sysroot is preserved.
     gcc.overrideAttrs (old: {
-      configureFlags    = (old.configureFlags or []) ++ [ "--disable-libgomp" ];
+      configureFlags    = (old.configureFlags or []) ++ [
+        "--disable-libgomp"
+        "--with-ld=${bp.gccWithoutTargetLibc.bintools}/bin/${target.crossTarget}-ld"
+      ];
       nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ bp.patchelf ];
       dontPatchELF      = true;
+      # Drop nixpkgs' `enableLibGccOutput` feature: it splits libgcc_s.so into a
+      # separate `libgcc` output and runs `patchelf --set-rpath ""` on it (to
+      # break the /nix/store glibc<->libgcc cycle).  That fires only on a
+      # non-darwin BUILD host (the flag is gated `&& !hostPlatform.isDarwin`), so
+      # a Linux-built gcc WIPES libgcc_s's RUNPATH while a darwin-built one keeps
+      # mechanism #2's `/lib` — a cross-host divergence in the shipped
+      # libgcc_s.so.1.  And because the wipe rewrites the ELF with patchelf, no
+      # post-hoc `patchelf --set-rpath /lib` can reconstruct the pristine layout
+      # (section reshuffle + .dynstr residue), so the fix must be at the source.
+      # Filtering the output + phase off makes EVERY build host emit the pristine
+      # `/lib` libgcc_s (matching libstdc++ and the deployable intent) → identical
+      # cross-host.  Safe: our glibc-hurd is a standalone derivation (not nixpkgs'
+      # glibc), so it never consumes gcc's `libgcc` output / `passthru.libgcc`,
+      # and nothing else references it.  No-op on darwin (the output/phase aren't
+      # present there).  (Names are nixpkgs-internal — gcc/common/libgcc.nix.)
+      outputs        = lib.filter (o: o != "libgcc") (old.outputs or [ "out" ]);
+      preFixupPhases = lib.filter (p: p != "preFixupLibGccPhase") (old.preFixupPhases or []);
       env               = old.env // {
         # mechanism #2: `--sysroot` so the --prefix=/ targetLibc's /lib GROUP
         # resolves at the libgcc_s/libstdc++ link.  `-rpath /lib` bakes the
