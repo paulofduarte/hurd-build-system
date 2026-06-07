@@ -53,6 +53,18 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
+  # Shared cross-build determinism flags (the SAME source the dev-shell +
+  # gnumach/hurd use) — fed through the wrapped cc's NIX_CFLAGS_COMPILE below so
+  # the nix glibc comes out byte-identical cross-host, like the in-tree build.
+  buildFlags = import ./build-flags.nix { inherit lib; };
+
+  # Patched (deterministic) install-info — the SAME one the dev-shell uses for the
+  # in-tree build (texinfo-det.nix).  glibc's `make install` runs install-info to
+  # build share/info/dir; the unpatched upstream comparator is host-dependent +
+  # writes a different default header, so the nix glibc's shipped dir diverged from
+  # the in-tree one (and cross-host).  Using the patched texinfo here makes them
+  # identical and reproducible.
+  texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
   # glibc puts its version in version.h as `#define VERSION "2.43"`,
   # NOT in configure.ac (which says "(see version.h)") nor in a
@@ -116,9 +128,9 @@ let
       # glibc gates the actual clear-execstack on patchelf >= 0.18.0; nixpkgs
       # ships 0.15.2, so this silences the probe but glibc still skips the
       # scrub until patchelf is overridden to >= 0.18.0.
-      nativeBuildInputs = with pkgs; [
-        bison perl gawk python3 texinfo gettext gnumake patchelf
-      ];
+      nativeBuildInputs = (with pkgs; [
+        bison perl gawk python3 gettext gnumake patchelf
+      ]) ++ [ texinfoDet ];
 
       # buildInputs only carries derivations whose meta.platforms
       # allows the Hurd target — i.e. our own per-target outputs.
@@ -171,6 +183,31 @@ let
         # invoked from $srcdir.
         mkdir -p build
         cd build
+
+        # Cross-host + in-tree==nix determinism (build-flags.nix — the same canon
+        # names the dev-shell + the in-tree Makefile use): map every host-varying /
+        # build-method-specific root out of glibc's DWARF so the result is identical
+        # in any combination of {darwin,linux} x {in-tree,nix}:
+        #   ${buildFlags.glibcCanonSrc} <- $src (this build's source root)
+        #   ${buildFlags.glibcCanonBuild} <- $PWD (this build dir — nix's is a SANDBOX
+        #     temp, host-varying, so this is load-bearing for nix cross-host)
+        #   ${buildFlags.glibcCanonSysroot} <- $TMPDIR/sysroot (the combined headers;
+        #     also a host-varying sandbox temp) + /cross-* (toolchain via build-flags).
+        #
+        # MUST set the SUFFIX-SALTED var (NIX_CFLAGS_COMPILE${salt}), not the plain
+        # one: the cc-wrapper only folds plain NIX_CFLAGS_COMPILE into the salted var
+        # it reads at invocation via its SETUP-HOOK (mangleVarList) — and crossCC is
+        # used by ABSOLUTE PATH here (never a buildInput; its meta.platforms gate
+        # would trip on Hurd), so that hook never runs.  ${tp}-gcc reads
+        # NIX_CFLAGS_COMPILE${salt} directly, so feed it there.  (The reproducible-
+        # builds $out -frandom-seed lands in the NATIVE salt and never reaches the
+        # cross cc, so there is nothing to strip; we still pin the seed for parity.)
+        # ORDER matters: gcc's -ffile-prefix-map is LAST-match-wins, so the specific
+        # "$PWD/hurd/." (collapses the Machrules `./` vpath that makes libhurduser's
+        # DWARF build-order-dependent — `$(objpfx)./`) must come AFTER the general
+        # "$PWD" build-dir map, else the general one overrides it and the `./` stays.
+        # Keep it the very last map so nothing (incl. the inherited var) overrides it.
+        export NIX_CFLAGS_COMPILE${salt}="${buildFlags.debugPrefixMapStr crossCC} -ffile-prefix-map=$PWD=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$src=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$TMPDIR/sysroot=${buildFlags.glibcCanonSysroot} -frandom-seed=${buildFlags.randomSeed} ''${NIX_CFLAGS_COMPILE${salt}:-} -ffile-prefix-map=$PWD/hurd/.=${buildFlags.glibcCanonBuild}/hurd"
 
         # Configure.  Flag set verbatim from cross-hurd
         # bootstrap-funcs.sh compile_first_glibc, plus --disable-werror

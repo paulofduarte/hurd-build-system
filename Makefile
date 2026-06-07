@@ -113,6 +113,35 @@ DIST_LIBGCC_STAMP    := $(WORK)/dist-libgcc/$(ARCH).stamp
 # arch-independent, but the stamp tracks the copy into this $(ARCH) dist tree.
 DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(ARCH).stamp
 
+# Per-component deterministic dist mtimes: each dist-* recipe stamps the files IT
+# wrote into the shared $(DIST) to ITS OWN source's commit date (flake.lock
+# `lastModified`), so e.g. /lib's glibc libs carry glibc-src's date while the gcc
+# runtime carries nixpkgs' — true provenance instead of nix's 1970 epoch.  The
+# untracked nix packages (gcc runtime, tzdata) have no commit we pin, so they use
+# the `nixpkgs` snapshot date (the source we DO pin for them).  Parsed with jq
+# (dev-shell); empty if flake.lock/jq absent -> that component's mtime left as-is.
+src-epoch      = $(shell jq -r '.nodes["$(1)"].locked.lastModified' flake.lock 2>/dev/null)
+EPOCH_MACH    := $(call src-epoch,gnumach-src)
+EPOCH_HURD    := $(call src-epoch,hurd-src)
+EPOCH_GLIBC   := $(call src-epoch,glibc-src)
+EPOCH_NIXPKGS := $(call src-epoch,nixpkgs)
+
+# Wall-clock when this make started — the cut between "written by this build"
+# (make install / install-info / cp -L set a CURRENT mtime) and earlier
+# components' already-stamped files (a past source date).  Evaluated once at parse.
+DIST_BUILD_START := $(shell date +%s)
+
+# $(call dist-stamp,<epoch>): stamp the files the calling dist-* recipe just wrote
+# into $(DIST) to <epoch>.  Matches files newer than DIST_BUILD_START (this build's
+# installs) OR still at the nix store epoch (mtime<=1, from `cp -a`); earlier
+# components' files (a past date, 1 < date < start) are left alone, so each
+# component owns its files even in the shared /lib, /share/info, /include.
+# Idempotent: a skipped (unchanged) component re-running this matches nothing.
+# No-op if <epoch> is empty.  Runs in the dev-shell (GNU find/touch).
+define dist-stamp
+[ -z "$(1)" ] || find $(DIST) \( -type f -o -type l \) \( -newermt @$(DIST_BUILD_START) -o ! -newermt @1 \) -exec touch -h -d @$(1) {} +
+endef
+
 # A xen variant shares its CPU sibling's `<cpu>-gnu` ABI: it has no separate
 # nix toolchain (`toolchain-<cpu>-xen`) and its entire USERLAND (glibc, the hurd
 # servers/libs, mig, the public mach/hurd headers) is byte-identical to the
@@ -144,6 +173,9 @@ GNUMACH_HDR_CONFIGURED := $(GNUMACH_HDR_BUILD)/config.status
 # dir, bumping its mtime — which, if used as a prereq, would invalidate glibc's
 # config.status and loop a rebuild.  The stamp is touched only by mach-headers.
 MACH_HDR_STAMP := $(GNUMACH_HDR_BUILD)/.headers-installed
+# Staging prefix for the Mach headers: install-data lands here, then they are
+# symlink-farmed into $(SYSROOT) with `cp -rs` (see the mach-headers recipe).
+MACH_HDR_STAGE := $(GNUMACH_HDR_BUILD)/install
 
 # Build-only sysroot for the cross headers, populated per component (Mach now
 # via `mach-headers`; Hurd later, for an opt-in glibc-from-source build).  This
@@ -213,6 +245,13 @@ GLIBC_BUILD      ?= $(WORK)/glibc/$(_TC_ARCH)
 # a `#`, and an embedded space would split $(GLIBC_CONFIGURED) into two targets.
 GLIBC_BUILDDIR   := $(GLIBC_BUILD)/build
 GLIBC_CONFIGURED := $(GLIBC_BUILDDIR)/config.status
+# Canonical glibc-path roots for -ffile-prefix-map in the in-tree glibc build, so
+# it bakes the SAME DWARF paths as the nix glibc (glibc.nix) -> the two are
+# byte-identical.  The dev-shell exports these from build-flags.nix (the single
+# source); these `?=` defaults match build-flags.nix glibcCanon* for a stray make.
+GLIBC_CANON_SRC     ?= /glibc-src
+GLIBC_CANON_BUILD   ?= /glibc-build
+GLIBC_CANON_SYSROOT ?= /glibc-sysroot
 # `make glibc` only BUILDS (compiles) glibc — this stamp is its sentinel.
 # Installs are DESTDIR-staged (glibc is configured --prefix=/, so its libc.so
 # comes out root-relative — a relocatable sysroot consumed via --sysroot):
@@ -1033,11 +1072,12 @@ $(foreach v,$(REQUIRED_VARS), \
 # `dist-hurd` here).
 all: mach hurd
 
-# Lockstep with _COMPOSE.dist (above): both list dist-glibc (the public glibc
-# step, a composite picking the in-tree or nix glibc) + dist-libgcc (the gcc
-# runtime, always from nix) + dist-tzdata (the IANA timezone db, from nix) —
-# keep in sync or the staleness gate and the recipe disagree (silent mis-ship).
-dist: dist-mach dist-hurd dist-glibc dist-libgcc dist-tzdata
+# Lockstep with _COMPOSE.dist (above): the COMPONENTS (dist-glibc + dist-libgcc +
+# dist-tzdata) must match both lists or the staleness gate and the recipe disagree
+# (silent mis-ship).  dist-normalize is NOT a component (it ships nothing) — it's a
+# post-step appended ONLY here; under `.NOTPARALLEL: dist` the prereqs run serially
+# left-to-right, so it runs LAST, after every component has populated $(DIST).
+dist: dist-mach dist-hurd dist-glibc dist-libgcc dist-tzdata dist-normalize
 
 # Serialize dist's components under `make -j` — they contend on two shared
 # resources and otherwise corrupt each other:
@@ -1094,10 +1134,11 @@ $(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4
 
 # ---- mach-headers (private: populates the build sysroot for in-tree mig) ----
 # Install the public Mach headers into the build-only sysroot ($(SYSROOT)),
-# in-tree via gnumach's `make install-data`.  This is the in-tree mig's stable
-# header dependency — see the SYSROOT comment for why it must NOT be the dist
-# tree.  Mirrors the flakes/gnumach-headers derivation: a separate build dir
-# configured with a STUB USER_MIG=/bin/true so it can run BEFORE mig exists
+# in-tree via gnumach's `make install-data` into a staging prefix + `cp -rs` farm
+# (see the recipe below for why the symlink farm matters).  This is the in-tree
+# mig's stable header dependency — see the SYSROOT comment for why it must NOT be
+# the dist tree.  Mirrors the flakes/gnumach-headers derivation: a separate build
+# dir configured with a STUB USER_MIG=/bin/true so it can run BEFORE mig exists
 # (mig needs these headers; install-data compiles nothing and never invokes
 # mig, so the stub satisfies configure's AC_CHECK_PROG).  Headers-only — the
 # kernel itself is never built here.
@@ -1118,14 +1159,30 @@ $(GNUMACH_HDR_CONFIGURED): $(GNUMACH_SRC)/configure
 	mkdir -p $(GNUMACH_HDR_BUILD)
 	cd $(GNUMACH_HDR_BUILD) && \
 	  USER_MIG=/bin/true \
-	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(SYSROOT)
+	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(MACH_HDR_STAGE)
 
 # $(_MACH_HDR_SRC) (every tracked .h/.defs in the tree) is a real prereq, so
 # editing any Mach header re-runs install-data and re-touches the stamp — which
 # the in-tree mig + glibc depend on.  install-data is cheap + idempotent
 # (merges); a .c edit never lands here (not a .h/.defs).
+#
+# install-data into a STAGING prefix, then symlink-farm into $(SYSROOT) with
+# `cp -rs` — MIRRORING glibc.nix's `cp -rs ${gnumach-headers}/include/.`.  gnumach
+# ships mach/machine -> i386 (symlink); when glibc compiles against the sysroot gcc
+# realpath-resolves that link.  With REAL files in the sysroot the realpath is the
+# short in-sysroot mach/i386, so gcc bakes `mach/i386` into libc.so's DWARF; with
+# `cp -rs` symlinks (to the longer staging path, exactly as nix's point to the
+# store) gcc keeps the logical `mach/machine`.  So this makes the in-tree glibc
+# bake the SAME mach/machine paths as the nix glibc — the last cross-build diff.
+# `cp -rs` preserves the machine->i386 symlink and turns the regular headers into
+# symlinks to the stage; -f makes it idempotent (replaces a prior run's entries,
+# and the first run's old real files).  glibc's own mach/* wrapper headers, written
+# into the same dir later, are left untouched (distinct filenames).
 $(MACH_HDR_STAMP): $(GNUMACH_HDR_CONFIGURED) $(_MACH_HDR_SRC)
+	rm -rf $(MACH_HDR_STAGE)
 	cd $(GNUMACH_HDR_BUILD) && $(MAKE) install-data
+	mkdir -p $(SYSROOT)/include
+	cp -rsf $(MACH_HDR_STAGE)/include/. $(SYSROOT)/include/
 	@touch $(MACH_HDR_STAMP)
 
 # ---- hurd-headers (private: the Hurd half of the in-tree glibc's sysroot) ----
@@ -1255,13 +1312,20 @@ $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(MACH_HDR_STAMP) $(HURD_HDR_STAMP)
 	    --libdir=/lib \
 	    --sysconfdir=/etc \
 	    --datarootdir=/share \
+	    --localstatedir=/var \
+	    --bindir=/bin \
+	    --sbindir=/sbin \
+	    --libexecdir=/libexec \
+	    --includedir=/include \
 	    --with-headers=$(SYSROOT)/include \
 	    --with-binutils=$(BINUTILS_BIN) \
 	    --enable-add-ons=libpthread \
 	    --enable-obsolete-rpc \
 	    --disable-profile --disable-nscd --disable-werror --disable-multilib \
 	    libc_cv_ctors_header=yes \
-	    libc_cv_slibdir=/lib libc_cv_rtlddir=/lib
+	    libc_cv_slibdir=/lib libc_cv_rtlddir=/lib \
+	    libc_cv_complocaledir=/lib/locale libc_cv_sysconfdir=/etc \
+	    libc_cv_localstatedir=/var libc_cv_rootsbindir=/sbin
 	@# --prefix=/ leaves slibdir/rtlddir defaulting to $(exec_prefix)/lib = //lib
 	@# (DOUBLE slash, baked into PT_INTERP and the libc.so GROUP; a leading // is
 	@# POSIX implementation-defined).  Pin them to single-slash /lib via the
@@ -1269,26 +1333,32 @@ $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(MACH_HDR_STAMP) $(HURD_HDR_STAMP)
 	@# into config.make — same mechanism as libc_cv_ctors_header) plus --libdir;
 	@# newer glibc derives the lib dirs from these, so this is more robust than a
 	@# build-dir configparms (which only overrides by include-order).
-	@# --sysconfdir=/etc, --datarootdir=/share: without them --prefix=/ bakes
-	@# //etc/{ld.so.cache,localtime} and //share/{locale,zoneinfo} (datarootdir,
-	@# NOT datadir, drives localedir).  complocaledir needs no flag — it falls
-	@# back to $(libdir)/locale = /lib/locale (libdir-derived).  These mirror the
-	@# nix glibc.nix deployable set so in-tree and nix glibc bake identical paths.
+	@# The remaining dirs all default to $(prefix)/<dir> = //<dir> under --prefix=/
+	@# (double slash baked into generated scripts/paths — e.g. xtrace's
+	@# pcprofiledump='//bin/...').  So pin EVERY install dir to a single-slash root,
+	@# matching glibc.nix's deployable set EXACTLY (--bindir/--sbindir/--libexecdir/
+	@# --localstatedir/--includedir + the libc_cv_* cache vars), so the in-tree and
+	@# nix glibc bake byte-identical paths everywhere.  (NB: this dir set is now
+	@# duplicated with glibc.nix — a candidate to define once in nix + pass through
+	@# the dev-shell env, like the GLIBC_CANON_* roots.)
 
 # `make glibc` COMPILES only — no install (work-glibc/dist-glibc install).
 # Hardening off (read at runtime by the wrapper; see the configure rule).
-# -ffile-prefix-map: glibc's mach/Machrules server-stub vpath is
+# NIX_CFLAGS_COMPILE adds the determinism -ffile-prefix-maps that make the in-tree
+# glibc bake the SAME DWARF paths as the nix glibc (glibc.nix): the build dir ->
+# /glibc-build, src -> /glibc-src, sysroot -> /glibc-sysroot (canon roots from the
+# dev-shell, build-flags.nix).  PLUS a "/."-collapse for glibc's Machrules
+# server-stub vpath:
 #   vpath %_server.c $(addprefix $(objpfx),$(sort $(dir $(server-interfaces))))
-# and $(dir ...) yields "./" for the dir-less `faultexc` interface, putting
-# $(objpfx)./ on the vpath.  When a stub resolves through that entry (instead of
-# the literal path) make bakes "$(GLIBC_BUILDDIR)/hurd/./…" into $< -> DWARF
-# DW_AT_name; which path wins is build-order-dependent, so libhurduser's debug
-# info diverges cross-host.  Collapse the "/." so the recorded path is
-# host-independent — a targeted map, no upstream glibc patch.  (objdir=`pwd` in
-# the build dir == $(GLIBC_BUILDDIR), so this prefix matches what glibc records.)
+# $(dir faultexc) = "./" (dir-less interface) puts $(objpfx)./ on the vpath; a stub
+# resolving through it bakes "$(GLIBC_BUILDDIR)/hurd/./…" into DWARF DW_AT_name
+# (which path wins is build-order-dependent -> libhurduser diverges).  The
+# "$(GLIBC_BUILDDIR)/hurd/." map collapses the "/.".  ORDER MATTERS: gcc's
+# -ffile-prefix-map is LAST-match-wins, so the specific hurd/. map MUST come AFTER
+# the general $(GLIBC_BUILDDIR) map — otherwise the general one wins and keeps "./".
 $(GLIBC_BUILT): $(MIG) $(GLIBC_CONFIGURED) $(GLIBC_SRC_FILES)
 	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= \
-	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE -ffile-prefix-map=$(GLIBC_BUILDDIR)/hurd/.=$(GLIBC_BUILDDIR)/hurd" \
+	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE -ffile-prefix-map=$(GLIBC_BUILDDIR)=$(GLIBC_CANON_BUILD) -ffile-prefix-map=$(GLIBC_SRC)=$(GLIBC_CANON_SRC) -ffile-prefix-map=$(SYSROOT)=$(GLIBC_CANON_SYSROOT) -ffile-prefix-map=$(GLIBC_BUILDDIR)/hurd/.=$(GLIBC_CANON_BUILD)/hurd" \
 	  $(MAKE)
 	@touch $(GLIBC_BUILT)
 
@@ -1334,6 +1404,7 @@ $(DIST_GLIBC)/lib/libc.so.0.3: $(GLIBC_BUILT)
 	rm -f $(DIST_GLIBC)/lib/libc.so.bak
 	@# i386 /lib/ld.so interpreter compat alias (see work-glibc).
 	@[ -e $(DIST_GLIBC)/lib/ld.so.1 ] && ln -sf ld.so.1 $(DIST_GLIBC)/lib/ld.so || true
+	@$(call dist-stamp,$(EPOCH_GLIBC))
 	@ls $(DIST_GLIBC)/lib/libc.so.0.3 >/dev/null || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so not augmented"; exit 1; }
 endif
@@ -1360,6 +1431,15 @@ dist-glibc: $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
 # not glibc, and must ship the same whether glibc is in-tree or nix).  Built
 # from the flake (not src/), so no _GNUMACH/_HURD bootstrap clone; store-path-
 # stamped so an unchanged glibc skips the copy.  nix is available in the dev shell.
+#
+# share/info/dir: the nix glibc ships its OWN standalone dir, and a verbatim cp -a
+# would lay it over the dir that dist-mach/dist-hurd already merged into — clobbering
+# their entries and bringing glibc's build's default header (the in-tree
+# dist-glibc-tree never does this: its `make install` install-info MERGES libc into
+# the accumulated dir).  So mirror `make install` here: stash the accumulated dir
+# across the copy, restore it (discarding glibc's standalone one), then install-info
+# the glibc's libc.info into it — keeping the "each package merges its own info"
+# model + the texinfo-det.nix total-order sort, so in-tree and nix dirs match.
 .PHONY: dist-glibc-nix
 dist-glibc-nix: $(DIST_GLIBC_NIX_STAMP)
 
@@ -1373,12 +1453,16 @@ $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.ni
 	else \
 	  echo "  copying $$glibc -> $(DIST_GLIBC) (full glibc tree)"; \
 	  chmod -R u+w $(DIST_GLIBC) 2>/dev/null || true; \
+	  acc=$$(mktemp); cp -a $(DIST_GLIBC)/share/info/dir "$$acc" 2>/dev/null || acc=; \
 	  cp -a $$glibc/. $(DIST_GLIBC); \
 	  chmod -R u+w $(DIST_GLIBC) 2>/dev/null || true; \
+	  if [ -n "$$acc" ]; then cp -a "$$acc" $(DIST_GLIBC)/share/info/dir; rm -f "$$acc"; else rm -f $(DIST_GLIBC)/share/info/dir; fi; \
+	  [ -e $(DIST_GLIBC)/share/info/libc.info ] && install-info --quiet --info-dir=$(DIST_GLIBC)/share/info $(DIST_GLIBC)/share/info/libc.info || true; \
 	  printf '%s' "$$glibc" > $(DIST_GLIBC_NIX_STAMP); \
 	fi
 	@ls $(DIST_GLIBC)/lib/libc.so.0.3 >/dev/null || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
+	@$(call dist-stamp,$(EPOCH_GLIBC))
 
 # ---- dist-libgcc ----
 # Ship the gcc TARGET RUNTIME + its docs into the dist tree — ALWAYS from the nix
@@ -1418,10 +1502,8 @@ $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
 	  echo "  copying whole gcc runtime ($$(ls $$rtdir | grep -c '\.so') libs) -> $(DIST)/lib"; \
 	  chmod -R u+w $(DIST)/lib 2>/dev/null || true; \
 	  cp -a $$rtdir/. $(DIST)/lib/; \
-	  chmod -R u+w $(DIST)/lib; \
 	  echo "  copying gcc man -> $(DIST)/share/man"; \
 	  cp -a $$gccman/share/man/. $(DIST)/share/man/; \
-	  chmod -R u+w $(DIST)/share/man; \
 	  echo "  installing gcc info -> $(DIST)/share/info"; \
 	  cp -L $$gccinfo/share/info/*.info* $(DIST)/share/info/; \
 	  chmod -R u+w $(DIST)/share/info; \
@@ -1433,6 +1515,7 @@ $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
 	@ls $(DIST)/lib/libgcc_s.so.1  >/dev/null || { echo "ERROR: libgcc_s.so.1 missing";  exit 1; }
 	@ls $(DIST)/lib/libstdc++.so.6 >/dev/null || { echo "ERROR: libstdc++.so.6 missing"; exit 1; }
 	@ls $(DIST)/lib/libatomic.so.1 >/dev/null || { echo "ERROR: libatomic.so.1 missing"; exit 1; }
+	@$(call dist-stamp,$(EPOCH_NIXPKGS))
 
 # ---- dist-tzdata ----
 # Ship the IANA timezone database so glibc's TZ/localtime works (without it the
@@ -1458,11 +1541,33 @@ $(DIST_TZDATA_STAMP): flake.lock
 	  chmod -R u+w $(DIST)/share/zoneinfo 2>/dev/null || true; \
 	  rm -rf $(DIST)/share/zoneinfo; \
 	  cp -a $$tz/share/zoneinfo $(DIST)/share/zoneinfo; \
-	  chmod -R u+w $(DIST)/share/zoneinfo; \
 	  ln -sfn /share/zoneinfo/UTC $(DIST)/etc/localtime; \
 	  printf '%s' "$$tz" > $(DIST_TZDATA_STAMP); \
 	fi
 	@ls $(DIST)/share/zoneinfo/UTC >/dev/null || { echo "ERROR: zoneinfo/UTC missing"; exit 1; }
+	@$(call dist-stamp,$(EPOCH_NIXPKGS))
+
+# ---- dist-normalize ----
+# Final, DRY filesystem-hygiene pass over the WHOLE assembled dist (perms here;
+# per-component MTIMES are stamped by each dist-* recipe's $(call dist-stamp,…)).
+# Nix store outputs are canonicalised to read-only + mtime=1 (unavoidable — nix
+# forces it in canonicalisePathMetaData) and `cp -a` clones that into $(DIST):
+#   - perms: owner-write so the deployed tree is editable (libs/bins stay 0755,
+#     data 0644 — `chmod -R u+w` only adds the missing u+w to the store's r-x).
+#   - share/info/dir: the merged Info index has no single source (libc + hurd +
+#     gcc all install-info into it) — date it from glibc-src (libc.info dominates).
+#   - straggler: any file a component's dist-stamp missed (still at the nix epoch)
+#     -> the nixpkgs snapshot date, belt-and-braces.
+# (The per-recipe chmods that remain are FUNCTIONAL — they make a prior tree
+# writable so a re-copy/install can overwrite, and let install-info write `dir`.)
+# Runs LAST via `.NOTPARALLEL: dist`.
+.PHONY: dist-normalize
+dist-normalize:
+	@[ -d $(DIST) ] || { echo "  DIST-NORMALIZE  no $(DIST) — skip"; exit 0; }
+	@echo "  DIST-NORMALIZE  owner-write perms + finalize mtimes over $(DIST)"
+	@chmod -R u+w $(DIST)
+	@[ -e $(DIST)/share/info/dir ] && [ -n "$(EPOCH_GLIBC)" ] && touch -d @$(EPOCH_GLIBC) $(DIST)/share/info/dir || true
+	@[ -n "$(EPOCH_NIXPKGS)" ] && find $(DIST) \( -type f -o -type l \) ! -newermt @1 -exec touch -h -d @$(EPOCH_NIXPKGS) {} + || true
 
 # ---- mach ----
 # In-tree kernel build under $(GNUMACH_BUILD), using $(MIG) — the effective
@@ -1497,6 +1602,7 @@ dist-mach: $(DIST_MACH)/boot/gnumach
 
 $(DIST_MACH)/boot/gnumach: $(GNUMACH_KERNEL)
 	cd $(GNUMACH_BUILD) && $(MAKE) install prefix=$(DIST_MACH)
+	@$(call dist-stamp,$(EPOCH_MACH))
 
 # ---- hurd / dist-hurd ----
 # `make hurd`      — in-tree incremental userland build under
@@ -1584,6 +1690,7 @@ dist-hurd: $(DIST_HURD)/hurd/ext2fs
 $(DIST_HURD)/hurd/ext2fs: $(HURD_BUILD)/.built
 	cd $(HURD_BUILD) && fakeroot $(MAKE) install DESTDIR=$(DIST_HURD) \
 	  MIG=$(MIG) USER_MIG=$(MIG)
+	@$(call dist-stamp,$(EPOCH_HURD))
 
 # ---- check ----
 # Test suite shipped by upstream gnumach, surfaced as a make target:

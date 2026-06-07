@@ -37,4 +37,19 @@ rec {
   # Fixed cross-build random seed, replacing the host-varying one the
   # reproducible-builds hook derives from $out.
   randomSeed = "gnu-hurd-cross";
+
+  # Canonical replacement roots for glibc's own paths, so the glibc build is
+  # reproducible cross-host AND byte-identical whether built in-tree or via nix.
+  # The real roots differ per method and some are host-VARYING:
+  #   source : in-tree $(GLIBC_SRC) /Volumes/.../src/glibc | nix $src /nix/store/-source
+  #   build  : in-tree $(GLIBC_BUILDDIR)                    | nix the SANDBOX build dir
+  #   sysroot: in-tree $(SYSROOT)                           | nix $TMPDIR/sysroot
+  # The nix build/sysroot live in the sandbox temp ($NIX_BUILD_TOP/$TMPDIR), which
+  # varies per host (linux /build vs darwin /builds/nix-<pid>-<rand>) — so without
+  # these maps the nix glibc diverges cross-host even with the gcc map.  Each build
+  # -ffile-prefix-map's its real roots to these names; consumed by glibc.nix (nix
+  # side) and the in-tree Makefile (via the dev-shell env — see dev-shell.nix).
+  glibcCanonSrc     = "/glibc-src";
+  glibcCanonBuild   = "/glibc-build";
+  glibcCanonSysroot = "/glibc-sysroot";
 }

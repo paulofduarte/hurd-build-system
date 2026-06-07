@@ -49,24 +49,11 @@ in
       pkgs      = nixpkgs.legacyPackages.${system};
       crossPkgs = mkCrossPkgs system target;
 
-      # Patched install-info: texinfo's compare_entries_text() is an inconsistent
-      # qsort comparator for case-only-different, equal-length menu names (e.g.
-      # `_Exit` vs `_exit` in libc.info) — it returns -1 for BOTH (a,b) and (b,a),
-      # so qsort's output is undefined and differs across libc qsort impls, making
-      # share/info/dir non-reproducible cross-host.  The patch breaks the tie
-      # case-sensitively (total order).  Replaces EVERY texinfo on PATH below so
+      # Patched install-info (deterministic dir), shared with glibc.nix — see
+      # texinfo-det.nix for the why.  Replaces EVERY texinfo on PATH below so
       # whichever install-info glibc/hurd's `make install` picks is deterministic
-      # out of the box — no post-dist dir regen.  (makeinfo is unaffected.)
-      texinfoDet = pkgs.texinfo.overrideAttrs (old: {
-        patches = (old.patches or [])
-          ++ [ ./patches/texinfo-install-info-total-order-compare.patch ];
-        # Patching install-info.c bumps its mtime, which would make `make` try to
-        # regenerate the shipped man page via help2man (not a build input) ->
-        # "install-info.1 Error 127".  Touch the prebuilt page so it stays current.
-        postPatch = (old.postPatch or "") + ''
-          touch man/install-info.1
-        '';
-      });
+      # out of the box — no post-dist dir regen.
+      texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
       # Unwrapped cross binutils — absolute source of the prefixed
       # ld/ar/nm/ranlib/strip/objcopy.  The wrapped `toolchain` supplies
@@ -126,7 +113,7 @@ in
           [ toolchain binu mig ]
           ++ inferredBuildInputs
           ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
-                           python3 gettext gawk bison perl texinfo ])
+                           python3 jq gettext gawk bison perl texinfo ])
           # gnumach's x86 `make check` builds a multiboot ISO with
           # grub-mkrescue (needs xorriso + mtools) and the run scenarios
           # build/boot images; nixpkgs' grub2 is linux-only, so gate on
@@ -212,6 +199,14 @@ in
         #     them all; native `make mig` needs none of these lib headers.
         export NIX_CFLAGS_COMPILE="$(printf '%s' "''${NIX_CFLAGS_COMPILE:-}" \
           | sed -E 's/-frandom-seed=[^ ]*//g; s#-isystem +/nix/store/[^ ]*##g; s#-fmacro-prefix-map=/nix/store/[^ ]*##g') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
+
+        # Canonical glibc roots (build-flags.nix) for the in-tree glibc build to
+        # -ffile-prefix-map its $(GLIBC_SRC)/$(GLIBC_BUILDDIR)/$(SYSROOT) to — the
+        # SAME names glibc.nix maps the nix build's roots to, so the in-tree and nix
+        # glibc come out byte-identical.  Passed via env so the Makefile stays DRY.
+        export GLIBC_CANON_SRC=${buildFlags.glibcCanonSrc}
+        export GLIBC_CANON_BUILD=${buildFlags.glibcCanonBuild}
+        export GLIBC_CANON_SYSROOT=${buildFlags.glibcCanonSysroot}
 
         # No store RUNPATH leak in the shipped dist.  On Linux the cross
         # ld-wrapper bakes a DT_RUNPATH into EVERY in-tree binary; darwin's
