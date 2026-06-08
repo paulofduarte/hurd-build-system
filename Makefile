@@ -303,6 +303,12 @@ $(eval $(call _detect_in_tree,HURD_IN_TREE,$(HURD_SRC)))
 # paths intact for offline debugging.  $(1) = the build's absolute source dir.
 _macro_prefix_map = -fmacro-prefix-map=$(1)/=
 
+# $(call _det_maps,build,src,canon): the determinism -ffile-prefix-maps for an
+# out-of-tree gnumach/hurd build — both the build dir and the source tree map to
+# <canon> so DWARF/__FILE__ match the nix build.  (glibc has its own 4-map set
+# inline: it adds a sysroot map + a distinct hurd/. submap, so it isn't this.)
+_det_maps = -ffile-prefix-map=$(1)=$(3) -ffile-prefix-map=$(2)=$(3)
+
 # Headers-only build dir for hurd (sibling to GNUMACH_HDR_BUILD): `make
 # install-headers` populates $(SYSROOT)/include/hurd, the Hurd half of the
 # sysroot the in-tree glibc builds against.
@@ -652,9 +658,9 @@ $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 # references.  Two roots, walked with `nix-store --requisites --include-outputs`
 # (build graph + each dep's output), then the .drv files filtered out:
 #   toolchain-<arch>                          the wrapped cross-cc.  Its build
-#       graph already contains the whole 3-stage bootstrap chain — stage-1 cc,
-#       bootstrap glibc, stage-2 cc, the reference glibc + headers/mig, the final
-#       gcc and the working glibc — so this one root caches every bootstrap piece
+#       graph already contains the whole 2-pass bootstrap chain — the nolibc
+#       stage-1 cc, the reference glibc + headers/mig, the final gcc and the
+#       working glibc — so this one root caches every bootstrap piece
 #       without enumerating them.  A fresh machine (or a `glibc-ref-src` bump)
 #       then PULLS the heavy seed compilers instead of rebuilding them.
 #   devShells.<sys>.<arch>.inputDerivation    the host build tools the shell adds
@@ -1408,6 +1414,17 @@ gnumach-headers: $(GNUMACH_HDR_STAMP)
 # Mach headers are byte-identical regardless of platform (the flag selects
 # kernel-internal/device code, not the userland RPC ABI).  Omitting it keeps the
 # shared headers deterministic no matter which variant's dev shell builds first.
+# $(call _headers_nix,tag,attr,stage,stamp): opted-out header install — resolve the
+# nix <attr> headers package and cp -rs symlink-farm it into <stage> (so an in-tree
+# glibc/mig still finds the headers and bakes the same paths).  Caller touches <stamp>.
+define _headers_nix
+	@mkdir -p $(dir $(4)); \
+	echo "  HEADERS-NIX  resolving nix $(2)…"; \
+	set -e; \
+	pkg=$$($(NIX_BUILD) $(call _overrides,$(1)) $(PROJ)\#$(2) --no-link --print-out-paths); \
+	$(call _farm_nix_headers,$$pkg,$(3))
+endef
+
 ifdef GNUMACH_IN_TREE
 $(GNUMACH_HDR_CONFIGURED): $(GNUMACH_SRC)/configure
 	mkdir -p $(GNUMACH_HDR_BUILD)
@@ -1443,11 +1460,7 @@ else
 # the Mach headers, and the in-tree glibc bakes the same header paths it would
 # against the in-tree stage.
 $(GNUMACH_HDR_STAMP): packages.nix flake.lock flakes/gnumach-headers/default.nix
-	@mkdir -p $(dir $(GNUMACH_HDR_STAMP))
-	@echo "  GNUMACH-HEADERS-NIX  resolving nix gnumach-headers-$(ARCH)…"
-	@set -e; \
-	pkg=$$($(NIX_BUILD) $(call _overrides,gnumach-headers) $(PROJ)\#gnumach-headers-$(ARCH) --no-link --print-out-paths); \
-	$(call _farm_nix_headers,$$pkg,$(GNUMACH_HDR_STAGE))
+	$(call _headers_nix,gnumach-headers,gnumach-headers-$(ARCH),$(GNUMACH_HDR_STAGE),$(GNUMACH_HDR_STAMP))
 	@touch $(GNUMACH_HDR_STAMP)
 endif
 
@@ -1486,11 +1499,7 @@ else
 # equivalent for glibc's DWARF (gcc keeps the logical sysroot path — no shorter
 # symlink target like mach/machine here).
 $(HURD_HDR_STAMP): packages.nix flake.lock flakes/hurd-headers/default.nix
-	@mkdir -p $(dir $(HURD_HDR_STAMP))
-	@echo "  HURD-HEADERS-NIX  resolving nix hurd-headers-$(_TC_ARCH)…"
-	@set -e; \
-	pkg=$$($(NIX_BUILD) $(call _overrides,hurd-headers) $(PROJ)\#hurd-headers-$(_TC_ARCH) --no-link --print-out-paths); \
-	$(call _farm_nix_headers,$$pkg,$(HURD_HDR_STAGE))
+	$(call _headers_nix,hurd-headers,hurd-headers-$(_TC_ARCH),$(HURD_HDR_STAGE),$(HURD_HDR_STAMP))
 	@touch $(HURD_HDR_STAMP)
 endif
 
@@ -1537,9 +1546,11 @@ endif
 
 # ---- glibc (opt-in raw in-tree build; mirrors flakes/cross-toolchain/glibc.nix) ----
 # With src/glibc present (GLIBC_IN_TREE), build glibc from source against the
-# combined Mach+Hurd sysroot.  Built with the LIBC-FREE stage-1 cc ($(GLIBC_CC),
-# exported by the dev shell) — the wrapped final cc has glibc baked in, which
-# would be circular.  Out-of-tree build dir (glibc refuses an in-src build).
+# combined Mach+Hurd sysroot.  Built with $(GLIBC_CC) — the COMPLETE final cc
+# (exported by the dev shell), the same final gcc as $(CC) but wrapped against
+# the REFERENCE glibc, not the working one: building glibc against the work
+# glibc (its own output) would be circular, so the ref breaks the cycle
+# (work != ref).  Out-of-tree build dir (glibc refuses an in-src build).
 # postInstall mirrors glibc.nix: merge the sysroot's Mach+Hurd headers into the
 # install tree (so it's a complete GNU/Hurd sysroot) and augment libc.so's GROUP
 # with the Mach/Hurd RPC stub libs (else every userland link fails on undefined
@@ -1713,26 +1724,36 @@ dist-glibc: $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
 # the glibc's libc.info into it — keeping the "each package merges its own info"
 # model + the texinfo-det.nix total-order sort, so in-tree and nix dirs match.
 .PHONY: dist-glibc-nix
+# $(call _dist_nix_copy,module,DEST,attr,STAMP,keyfile,infofile): shared body of
+# every dist-<m>-nix.  Resolve the nix package <attr>, copy its whole tree into
+# DEST (skipping when the store path is unchanged and <keyfile> is present),
+# preserving the dist's shared share/info/dir across the copy + re-registering
+# <infofile>, stamp STAMP, assert <keyfile>.  Module-specific post-checks and the
+# dist-finalize stay in the caller, AFTER this (kept outside the shared body).
+define _dist_nix_copy
+	@mkdir -p $(dir $(2)/$(5)) $(dir $(4)); \
+	echo "  DIST-NIX  resolving nix $(3)…"; \
+	set -e; \
+	pkg=$$($(NIX_BUILD) $(call _overrides,dist-$(1)-nix) $(PROJ)\#$(3) --no-link --print-out-paths); \
+	if [ "$$(cat $(4) 2>/dev/null)" = "$$pkg" ] && [ -e $(2)/$(5) ]; then \
+	  echo "  unchanged ($$(basename $$pkg)) — skip copy"; \
+	else \
+	  echo "  copying $$pkg -> $(2)"; \
+	  chmod -R u+w $(2) 2>/dev/null || true; \
+	  acc=$$(mktemp); cp -a $(2)/share/info/dir "$$acc" 2>/dev/null || acc=; \
+	  cp -a $$pkg/. $(2); \
+	  chmod -R u+w $(2) 2>/dev/null || true; \
+	  if [ -n "$$acc" ]; then cp -a "$$acc" $(2)/share/info/dir; rm -f "$$acc"; else rm -f $(2)/share/info/dir; fi; \
+	  [ -e $(2)/share/info/$(6) ] && install-info --quiet --info-dir=$(2)/share/info $(2)/share/info/$(6) || true; \
+	  printf '%s' "$$pkg" > $(4); \
+	fi; \
+	ls $(2)/$(5) >/dev/null || { echo "ERROR: $(5) missing"; exit 1; }
+endef
+
 dist-glibc-nix: $(DIST_GLIBC_NIX_STAMP)
 
 $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix
-	@mkdir -p $(DIST_GLIBC)/lib $(dir $(DIST_GLIBC_NIX_STAMP))
-	@echo "  DIST-GLIBC-NIX  resolving nix glibc-hurd-$(_TC_ARCH)…"
-	@set -e; \
-	glibc=$$($(NIX_BUILD) $(call _overrides,dist-glibc-nix) $(PROJ)\#glibc-hurd-$(_TC_ARCH) --no-link --print-out-paths); \
-	if [ "$$(cat $(DIST_GLIBC_NIX_STAMP) 2>/dev/null)" = "$$glibc" ] && [ -e $(DIST_GLIBC)/lib/libc.so.0.3 ]; then \
-	  echo "  unchanged ($$(basename $$glibc)) — skip copy"; \
-	else \
-	  echo "  copying $$glibc -> $(DIST_GLIBC) (full glibc tree)"; \
-	  chmod -R u+w $(DIST_GLIBC) 2>/dev/null || true; \
-	  acc=$$(mktemp); cp -a $(DIST_GLIBC)/share/info/dir "$$acc" 2>/dev/null || acc=; \
-	  cp -a $$glibc/. $(DIST_GLIBC); \
-	  chmod -R u+w $(DIST_GLIBC) 2>/dev/null || true; \
-	  if [ -n "$$acc" ]; then cp -a "$$acc" $(DIST_GLIBC)/share/info/dir; rm -f "$$acc"; else rm -f $(DIST_GLIBC)/share/info/dir; fi; \
-	  [ -e $(DIST_GLIBC)/share/info/libc.info ] && install-info --quiet --info-dir=$(DIST_GLIBC)/share/info $(DIST_GLIBC)/share/info/libc.info || true; \
-	  printf '%s' "$$glibc" > $(DIST_GLIBC_NIX_STAMP); \
-	fi
-	@ls $(DIST_GLIBC)/lib/libc.so.0.3 >/dev/null || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
+	$(call _dist_nix_copy,glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_NIX_STAMP),lib/libc.so.0.3,libc.info)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call dist-finalize,$(EPOCH_GLIBC))
 
@@ -1863,7 +1884,7 @@ $(GNUMACH_KERNEL): $(MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 	sde=$$(git -C $(GNUMACH_SRC) log -1 --format=%ct 2>/dev/null); \
 	[ -n "$$sde" ] && touch -d @$$sde $(GNUMACH_SRC)/doc/*.texi; \
 	cd $(GNUMACH_BUILD) && \
-	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE -ffile-prefix-map=$(GNUMACH_BUILD)=$(GNUMACH_CANON_BUILD) -ffile-prefix-map=$(GNUMACH_SRC)=$(GNUMACH_CANON_BUILD)" \
+	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE $(call _det_maps,$(GNUMACH_BUILD),$(GNUMACH_SRC),$(GNUMACH_CANON_BUILD))" \
 	  NIX_HARDENING_ENABLE= \
 	  $(MAKE) VERSION="$$ver"
 
@@ -1892,23 +1913,7 @@ dist-gnumach: $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 dist-gnumach-nix: $(DIST_GNUMACH_NIX_STAMP)
 
 $(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix
-	@mkdir -p $(DIST_GNUMACH)/boot $(dir $(DIST_GNUMACH_NIX_STAMP))
-	@echo "  DIST-GNUMACH-NIX  resolving nix gnumach-$(ARCH)…"
-	@set -e; \
-	pkg=$$($(NIX_BUILD) $(call _overrides,dist-gnumach-nix) $(PROJ)\#gnumach-$(ARCH) --no-link --print-out-paths); \
-	if [ "$$(cat $(DIST_GNUMACH_NIX_STAMP) 2>/dev/null)" = "$$pkg" ] && [ -e $(DIST_GNUMACH)/boot/gnumach ]; then \
-	  echo "  unchanged ($$(basename $$pkg)) — skip copy"; \
-	else \
-	  echo "  copying $$pkg -> $(DIST_GNUMACH)"; \
-	  chmod -R u+w $(DIST_GNUMACH) 2>/dev/null || true; \
-	  acc=$$(mktemp); cp -a $(DIST_GNUMACH)/share/info/dir "$$acc" 2>/dev/null || acc=; \
-	  cp -a $$pkg/. $(DIST_GNUMACH); \
-	  chmod -R u+w $(DIST_GNUMACH) 2>/dev/null || true; \
-	  if [ -n "$$acc" ]; then cp -a "$$acc" $(DIST_GNUMACH)/share/info/dir; rm -f "$$acc"; else rm -f $(DIST_GNUMACH)/share/info/dir; fi; \
-	  [ -e $(DIST_GNUMACH)/share/info/mach.info ] && install-info --quiet --info-dir=$(DIST_GNUMACH)/share/info $(DIST_GNUMACH)/share/info/mach.info || true; \
-	  printf '%s' "$$pkg" > $(DIST_GNUMACH_NIX_STAMP); \
-	fi
-	@ls $(DIST_GNUMACH)/boot/gnumach >/dev/null || { echo "ERROR: boot/gnumach missing"; exit 1; }
+	$(call _dist_nix_copy,gnumach,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
 	@$(call dist-finalize,$(EPOCH_GNUMACH))
 
 # ---- hurd / dist-hurd ----
@@ -1963,7 +1968,7 @@ _HURD_LDFLAGS := $(if $(GLIBC_IN_TREE),--sysroot=$(SYSROOT) -L$(SYSROOT)/lib)
 $(HURD_BUILD)/.built: $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 	@$(call _req_env,HURD_CANON_BUILD)
 	cd $(HURD_BUILD) && \
-	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE -ffile-prefix-map=$(HURD_BUILD)=$(HURD_CANON_BUILD) -ffile-prefix-map=$(HURD_SRC)=$(HURD_CANON_BUILD)" \
+	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE $(call _det_maps,$(HURD_BUILD),$(HURD_SRC),$(HURD_CANON_BUILD))" \
 	  $(MAKE) MIG=$(MIG) USER_MIG=$(MIG)
 	@touch $(HURD_BUILD)/.built
 
@@ -2025,23 +2030,7 @@ dist-hurd: $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 dist-hurd-nix: $(DIST_HURD_NIX_STAMP)
 
 $(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix
-	@mkdir -p $(DIST_HURD)/hurd $(dir $(DIST_HURD_NIX_STAMP))
-	@echo "  DIST-HURD-NIX  resolving nix hurd-$(_TC_ARCH)…"
-	@set -e; \
-	pkg=$$($(NIX_BUILD) $(call _overrides,dist-hurd-nix) $(PROJ)\#hurd-$(_TC_ARCH) --no-link --print-out-paths); \
-	if [ "$$(cat $(DIST_HURD_NIX_STAMP) 2>/dev/null)" = "$$pkg" ] && [ -e $(DIST_HURD)/hurd/ext2fs ]; then \
-	  echo "  unchanged ($$(basename $$pkg)) — skip copy"; \
-	else \
-	  echo "  copying $$pkg -> $(DIST_HURD)"; \
-	  chmod -R u+w $(DIST_HURD) 2>/dev/null || true; \
-	  acc=$$(mktemp); cp -a $(DIST_HURD)/share/info/dir "$$acc" 2>/dev/null || acc=; \
-	  cp -a $$pkg/. $(DIST_HURD); \
-	  chmod -R u+w $(DIST_HURD) 2>/dev/null || true; \
-	  if [ -n "$$acc" ]; then cp -a "$$acc" $(DIST_HURD)/share/info/dir; rm -f "$$acc"; else rm -f $(DIST_HURD)/share/info/dir; fi; \
-	  [ -e $(DIST_HURD)/share/info/hurd.info ] && install-info --quiet --info-dir=$(DIST_HURD)/share/info $(DIST_HURD)/share/info/hurd.info || true; \
-	  printf '%s' "$$pkg" > $(DIST_HURD_NIX_STAMP); \
-	fi
-	@ls $(DIST_HURD)/hurd/ext2fs >/dev/null || { echo "ERROR: hurd/ext2fs missing"; exit 1; }
+	$(call _dist_nix_copy,hurd,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
 	@$(call dist-finalize,$(EPOCH_HURD))
 
 # ---- check ----
