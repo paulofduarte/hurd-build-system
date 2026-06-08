@@ -390,19 +390,25 @@ _farm_headers = mkdir -p $(SYSROOT)/include && cp -rsf $(1)/include/. $(SYSROOT)
 # make it writable, then farm from there.
 _farm_nix_headers = rm -rf $(2); mkdir -p $(2); cp -a $(1)/include $(2)/; $(call _make_writable,$(2)); $(call _farm_headers,$(2))
 
+# $(call _nix_version,DEPKEY,ATTR): resolve ATTR's composed version from nix into shell
+# $ver, append `-dirty` when the in-tree chain has uncommitted src (nix can't see it —
+# flake inputs lock the committed rev), then guard non-empty.  Guard LAST so the helper
+# ends on a definite command; a trailing optional $(if) would leave a `; ;` at the call site.
+define _nix_version
+ver=$$($(NIX_FLAKE) eval --raw $(call _overrides,$(1)) $(PROJ)\#$(2).version 2>/dev/null); \
+$(if $(call _chain_dirty,$(1)),ver=$$(printf %s "$$ver" | sed -E 's/(-g[0-9a-f]+)(\+|$$)/\1-dirty\2/');) \
+[ -n "$$ver" ] || { echo "ERROR: cannot resolve nix $(2).version"; exit 1; }
+endef
+
 # $(call _bake_version,DEPKEY,ATTR,SRCDIR): stamp the in-tree build with the SAME
 # composed PACKAGE_VERSION the nix build bakes, so nix == in-tree byte-for-byte.
 # autoconf has no configure-time version override (it's hard-set via AC_INIT/
 # version.m4), so we sed the FRESHLY-GENERATED, untracked `configure` (this rule's
 # own autoreconf output; tracked src is never touched).  The version comes from nix
 # (`.#<ATTR>.version`, same composeVersion + overrides) so the two agree by reuse.
-# DIRTY FLAG: nix can't see a dirty src (flake inputs lock the committed rev), so
-# the in-tree appends `-dirty` after `-g<src>` when the module OR any in-tree dep
-# source has uncommitted changes.
+# Version (incl. the -dirty flag for an uncommitted chain) comes from _nix_version.
 define _bake_version
-	@ver=$$($(NIX_FLAKE) eval --raw $(call _overrides,$(1)) $(PROJ)\#$(2).version 2>/dev/null); \
-	[ -n "$$ver" ] || { echo "ERROR: cannot resolve nix $(2).version for the in-tree version stamp"; exit 1; }; \
-	$(if $(call _chain_dirty,$(1)),ver="$$(printf %s "$$ver" | sed -E 's/(-g[0-9a-f]+)(\+|$$)/\1-dirty\2/')";) \
+	@$(call _nix_version,$(1),$(2)); \
 	echo "  STAMP-VERSION   $(2) = $$ver"; \
 	sed -E -i \
 	  -e "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION='$$ver'/" \
@@ -1474,9 +1480,7 @@ GNUMACH_SRC_FILES := $(call _tracked_files,$(GNUMACH_SRC))
 # VERSION" is the rich composed version too.
 $(GNUMACH_KERNEL): $(MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 	@$(call _req_env,GNUMACH_CANON_BUILD)
-	@ver=$$($(NIX_FLAKE) eval --raw $(call _overrides,gnumach) $(PROJ)\#gnumach-$(ARCH).version 2>/dev/null); \
-	[ -n "$$ver" ] || { echo "ERROR: cannot resolve nix gnumach-$(ARCH).version for VERSION= (mach.info)"; exit 1; }; \
-	$(if $(call _chain_dirty,gnumach),ver=$$(printf %s "$$ver" | sed -E 's/(-g[0-9a-f]+)(\+|$$)/\1-dirty\2/');) \
+	@$(call _nix_version,gnumach,gnumach-$(ARCH)); \
 	sde=$$(git -C $(GNUMACH_SRC) log -1 --format=%ct 2>/dev/null); \
 	[ -n "$$sde" ] && touch -d @$$sde $(GNUMACH_SRC)/doc/*.texi; \
 	cd $(GNUMACH_BUILD) && \
