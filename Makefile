@@ -173,6 +173,11 @@ define dist-finalize
 }
 endef
 
+# $(call _make_writable,DIR): make a subtree writable — tolerant of a read-only
+# /nix/store copy (`cp -a` clones the store's r-o perms) and a missing dir.  Used after
+# a store copy (so the recipe's writes + dist-finalize can touch it) and by clean/mrproper.
+_make_writable = chmod -R u+w $(1) 2>/dev/null || true
+
 # A xen variant shares its CPU sibling's `<cpu>-gnu` ABI: "xen" only selects the
 # gnumach KERNEL's platform (which links -ffreestanding -nostdlib and never reads
 # the userland sysroot), so the entire userland is byte-identical to the non-xen
@@ -383,7 +388,7 @@ _farm_headers = mkdir -p $(SYSROOT)/include && cp -rsf $(1)/include/. $(SYSROOT)
 # WRITABLE files (symlinking straight to the store fails EACCES).  Stage PKG/include
 # into the writable STAGE (cp -a preserves symlinks like mach/machine → DWARF parity),
 # make it writable, then farm from there.
-_farm_nix_headers = rm -rf $(2); mkdir -p $(2); cp -a $(1)/include $(2)/; chmod -R u+w $(2); $(call _farm_headers,$(2))
+_farm_nix_headers = rm -rf $(2); mkdir -p $(2); cp -a $(1)/include $(2)/; $(call _make_writable,$(2)); $(call _farm_headers,$(2))
 
 # $(call _bake_version,DEPKEY,ATTR,SRCDIR): stamp the in-tree build with the SAME
 # composed PACKAGE_VERSION the nix build bakes, so nix == in-tree byte-for-byte.
@@ -490,7 +495,7 @@ clean-dist:
 	@# dist/ may hold read-only trees verbatim-copied from /nix/store (e.g.
 	@# dist-glibc-nix's full glibc copy); rm can't unlink inside a read-only
 	@# dir, so make the tree writable first.
-	@chmod -R u+w $(DIST) 2>/dev/null || true
+	@$(call _make_writable,$(DIST))
 	rm -rf $(DIST)
 	@# the dist-*-nix / dist-libgcc store-path stamps live under work/ (they
 	@# survive this rm); drop them too, else their "already shipped" record makes
@@ -506,7 +511,7 @@ mrproper:
 	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-* $(FLAKES)/hurd/result-*
 	@# dist/ may hold read-only /nix/store copies (dist-glibc-nix); chmod so rm
 	@# can unlink inside them (a read-only dir blocks removal of its entries).
-	@chmod -R u+w $(DIST_ROOT) 2>/dev/null || true
+	@$(call _make_writable,$(DIST_ROOT))
 	rm -rf $(DIST_ROOT)
 	@# git clean each working src clone, guarded by `-d .git`: the opt-in clones
 	@# (src/mig, src/glibc) may not be present, and a bare `git -C` on a missing
@@ -1258,6 +1263,18 @@ $(GLIBC_BUILT): $(MIG) $(GLIBC_CONFIGURED) $(GLIBC_SRC_FILES)
 	  $(MAKE)
 	@touch $(GLIBC_BUILT)
 
+# $(call _glibc_finalize_libc,DIR): finalize an installed glibc tree under DIR — make
+# lib writable, augment libc.so's GROUP with the Hurd RPC stub libs (else userland
+# links fail on undefined __mach_port_*), add the i386 /lib/ld.so->ld.so.1 alias (no-op
+# on x86_64), verify.  Shared by work-glibc + dist-glibc-tree.
+define _glibc_finalize_libc
+	$(call _make_writable,$(1)/lib); \
+	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(1)/lib/libc.so; \
+	rm -f $(1)/lib/libc.so.bak; \
+	[ -e $(1)/lib/ld.so.1 ] && ln -sf ld.so.1 $(1)/lib/ld.so || true; \
+	grep -q libmachuser $(1)/lib/libc.so || { echo "ERROR: $(1)/lib/libc.so GROUP not augmented"; exit 1; }
+endef
+
 # ---- work-glibc (private: install glibc into the build sysroot) ----
 # Install the built glibc into $(SYSROOT) so the in-tree hurd build links against it
 # — the build counterpart to dist-glibc, beside the mach+hurd headers.  Staged via
@@ -1268,13 +1285,7 @@ work-glibc: $(SYSROOT)/lib/libc.so.0.3
 
 $(SYSROOT)/lib/libc.so.0.3: $(GLIBC_BUILT)
 	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE) install DESTDIR=$(SYSROOT)
-	chmod -R u+w $(SYSROOT)/lib
-	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(SYSROOT)/lib/libc.so
-	rm -f $(SYSROOT)/lib/libc.so.bak
-	@grep -q libmachuser $(SYSROOT)/lib/libc.so || { echo "ERROR: libc.so not augmented"; exit 1; }
-	@# i386: in-tree binaries request the /lib/ld.so interpreter; glibc names the
-	@# loader ld.so.1 — ship the compat alias (no-op on x86_64: ld-x86-64.so.1).
-	@[ -e $(SYSROOT)/lib/ld.so.1 ] && ln -sf ld.so.1 $(SYSROOT)/lib/ld.so || true
+	@$(call _glibc_finalize_libc,$(SYSROOT))
 
 # ---- dist-glibc-tree (in-tree half of the public dist-glibc) ----
 # Install the built glibc into the dist tree (opt-in).  Staged via DESTDIR — glibc
@@ -1289,17 +1300,11 @@ dist-glibc-tree: $(DIST_GLIBC_TREE_STAMP)
 # file back to the source epoch, so as a make target it's forever older than its
 # prereq → re-installs every run.  The stamp (touched last) is the real "installed" mark.
 $(DIST_GLIBC_TREE_STAMP): $(GLIBC_BUILT)
-	chmod -R u+w $(DIST_GLIBC) 2>/dev/null || true
 	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE) install DESTDIR=$(DIST_GLIBC)
-	chmod -R u+w $(DIST_GLIBC)/include
-	cp -an $(SYSROOT)/include/. $(DIST_GLIBC)/include/ ; chmod -R u+w $(DIST_GLIBC)/include
-	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(DIST_GLIBC)/lib/libc.so
-	rm -f $(DIST_GLIBC)/lib/libc.so.bak
-	@# i386 /lib/ld.so interpreter compat alias (see work-glibc).
-	@[ -e $(DIST_GLIBC)/lib/ld.so.1 ] && ln -sf ld.so.1 $(DIST_GLIBC)/lib/ld.so || true
+	cp -an $(SYSROOT)/include/. $(DIST_GLIBC)/include/ ; $(call _make_writable,$(DIST_GLIBC)/include)
+	@$(call _glibc_finalize_libc,$(DIST_GLIBC))
 	@$(call dist-finalize,$(EPOCH_GLIBC))
 	@$(call _assert_file,$(DIST_GLIBC)/lib/libc.so.0.3,libc.so.0.3)
-	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so not augmented"; exit 1; }
 	@$(call _dist_done,$@)
 endif
 
@@ -1348,10 +1353,9 @@ define _dist_nix_copy
 	  echo "  unchanged ($$(basename $$pkg)) — skip copy"; \
 	else \
 	  echo "  copying $$pkg -> $(2)"; \
-	  chmod -R u+w $(2) 2>/dev/null || true; \
 	  acc=$$(mktemp); cp -a $(2)/share/info/dir "$$acc" 2>/dev/null || acc=; \
 	  cp -a $$pkg/. $(2); \
-	  chmod -R u+w $(2) 2>/dev/null || true; \
+	  $(call _make_writable,$(2)); \
 	  if [ -n "$$acc" ]; then cp -a "$$acc" $(2)/share/info/dir; rm -f "$$acc"; else rm -f $(2)/share/info/dir; fi; \
 	  [ -e $(2)/share/info/$(6) ] && install-info --quiet --info-dir=$(2)/share/info $(2)/share/info/$(6) || true; \
 	  printf '%s' "$$pkg" > $(4); \
@@ -1397,13 +1401,12 @@ $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
 	else \
 	  rtdir=$$(dirname $$(find $$gcclib -name libgcc_s.so.1 | head -1)); \
 	  echo "  copying whole gcc runtime ($$(ls $$rtdir | grep -c '\.so') libs) -> $(DIST)/lib"; \
-	  chmod -R u+w $(DIST)/lib 2>/dev/null || true; \
 	  cp -a $$rtdir/. $(DIST)/lib/; \
 	  echo "  copying gcc man -> $(DIST)/share/man"; \
 	  cp -a $$gccman/share/man/. $(DIST)/share/man/; \
 	  echo "  installing gcc info -> $(DIST)/share/info"; \
 	  cp -L $$gccinfo/share/info/*.info* $(DIST)/share/info/; \
-	  chmod -R u+w $(DIST)/share/info; \
+	  $(call _make_writable,$(DIST)/share/info); \
 	  for inf in $$gccinfo/share/info/*.info; do \
 	    install-info --quiet --info-dir=$(DIST)/share/info "$(DIST)/share/info/$$(basename $$inf)" || true; \
 	  done; \
@@ -1433,7 +1436,6 @@ $(DIST_TZDATA_STAMP): flake.lock
 	  echo "  unchanged ($$(basename $$tz)) — skip copy"; \
 	else \
 	  echo "  copying zoneinfo ($$(find $$tz/share/zoneinfo -type f | grep -c .) files) -> $(DIST)/share/zoneinfo"; \
-	  chmod -R u+w $(DIST)/share/zoneinfo 2>/dev/null || true; \
 	  rm -rf $(DIST)/share/zoneinfo; \
 	  cp -a $$tz/share/zoneinfo $(DIST)/share/zoneinfo; \
 	  ln -sfn /share/zoneinfo/UTC $(DIST)/etc/localtime; \
