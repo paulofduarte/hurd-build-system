@@ -755,103 +755,77 @@ endif
 # recipe runs, no dispatch) — like srcs/clean.
 _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache srcs pin-srcs show-srcs-pins src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
-# A goal is "satisfied" when every required sentinel file exists AND no tracked
-# file (per `git ls-files`) under its watch-dir is newer than the goal's own final
-# output.  Two sentinel sets per goal:
-#   _SENTINEL.<goal>  - files that must exist (own output + transitive prereqs').
-#   _PRIMARY.<goal>   - the goal's own final output(s); their mtime is the staleness
-#                       reference (the OLDEST of _PRIMARY, not _SENTINEL, so we don't
-#                       trip on sources merely newer than upstream artefacts).
-# Goals with no entry are conservatively always unsatisfied — dispatch runs and the
-# inner make decides.
+# Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
+#   _MARK.<goal>   the completion marker — its stamp/output.  Existence is the
+#                  sentinel; its mtime is the staleness baseline.  Composites: none.
+#   _WATCH.<goal>  the DIRECT src dirs the recipe reads.  Transitive src arrives via
+#                  _SDEPS, NOT here (gnumach-headers watches src/gnumach; glibc reaches
+#                  it by depending on gnumach-headers).
+#   _SDEPS.<goal>  upstream GOALS — flag-gated: an in-tree module is a src-dependency,
+#                  a nix module is a fixed external input (no edge).
+# A goal is stale if its mark is missing, a watched file out-dates the mark, or any
+# _SDEPS goal is stale.  A goal with neither _MARK nor _SDEPS is conservatively stale.
 
-# Mach-headers sentinel — the build-dir STAMP, not $(SYSROOT)/include/mach (glibc's
-# install writes mach/* there, so its mtime isn't reliable; see GNUMACH_HDR_STAMP).
-_HEADERS_FILES   := $(GNUMACH_HDR_STAMP)
-# In-tree mig's binary is a sentinel; the nix mig is a fixed external input — NOT a
-# sentinel (else its missing-from-worktree path would mark mach/hurd forever stale).
-ifdef MIG_IN_TREE
-_MIG_FILES       := $(_HEADERS_FILES) $(LOCAL_MIG)
-else
-_MIG_FILES       := $(_HEADERS_FILES)
-endif
-_GNUMACH_FILES   := $(_MIG_FILES) $(GNUMACH_KERNEL)
+# Marks — build outputs (NOT epoch-normalised, unlike the shipped dist tree) + the
+# dist work-side stamps.  GNUMACH_HDR_STAMP is the build-dir stamp, not the shared
+# $(SYSROOT)/include/mach glibc later writes into.
+_MARK.gnumach-headers   := $(GNUMACH_HDR_STAMP)
+_MARK.hurd-headers      := $(HURD_HDR_STAMP)
+_MARK.mig               := $(LOCAL_MIG)
+_MARK.glibc             := $(GLIBC_BUILT)
+_MARK.work-glibc        := $(SYSROOT)/lib/libc.so.0.3
+_MARK.gnumach           := $(GNUMACH_KERNEL)
+_MARK.hurd              := $(HURD_BUILD)/.built
+_MARK.dist-gnumach-tree := $(DIST_GNUMACH_TREE_STAMP)
+_MARK.dist-gnumach-nix  := $(DIST_GNUMACH_NIX_STAMP)
+_MARK.dist-hurd-tree    := $(DIST_HURD_TREE_STAMP)
+_MARK.dist-hurd-nix     := $(DIST_HURD_NIX_STAMP)
+_MARK.dist-glibc-tree   := $(DIST_GLIBC_TREE_STAMP)
+_MARK.dist-glibc-nix    := $(DIST_GLIBC_NIX_STAMP)
+_MARK.dist-libgcc       := $(DIST_LIBGCC_STAMP)
+_MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
 
-# Source-watch sets, defined ONCE and shared by each module's build + dist stanzas (a
-# build is stale if any tracked file under these is newer than its output).
-_WS_GLIBC   := $(GLIBC_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC)) $(GNUMACH_SRC) $(HURD_SRC)
-_WS_GNUMACH := $(GNUMACH_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC))
-_WS_HURD    := $(HURD_SRC) $(if $(MIG_IN_TREE),$(MIG_SRC)) $(if $(GLIBC_IN_TREE),$(GLIBC_SRC) $(GNUMACH_SRC))
-# hurd's sentinel is broader than its .built stamp: it MUST mirror the .built prereq
-# (mig + the in-tree glibc), else a stale .built short-circuits and never relinks.
-_S_HURD     := $(_MIG_FILES) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_BUILD)/.built
+# Direct src watches (transitive src flows through _SDEPS).  The nix dist halves watch
+# only their flake, never src/, so a non-opt-in build never expects a clone.
+_WATCH.gnumach-headers  := $(GNUMACH_SRC)
+_WATCH.hurd-headers     := $(HURD_SRC)
+_WATCH.mig              := $(MIG_SRC) flakes/mig
+_WATCH.glibc            := $(GLIBC_SRC)
+_WATCH.gnumach          := $(GNUMACH_SRC)
+_WATCH.hurd             := $(HURD_SRC)
+_WATCH.dist-gnumach-nix := flakes/gnumach
+_WATCH.dist-hurd-nix    := flakes/hurd
+_WATCH.dist-glibc-nix   := flakes/cross-toolchain
+_WATCH.dist-libgcc      := flakes/cross-toolchain
+# (work-glibc/dist-*-tree inherit src via _SDEPS; dist-tzdata's only input is the
+# nixpkgs pin — flake.lock, the recipe's prereq — so a missing mark is its trigger.)
 
-# $(call _leaf,goal,output,watch): the goal's only required file IS its own output
-# (sentinel == primary).  $(call _node,goal,sentinel,primary,watch): the sentinel is
-# the broader set (own output + transitive prereqs') — only mig/gnumach/hurd need it,
-# to still rebuild when a deleted upstream artefact leaves the own output present.
-# Pass comma-bearing sentinel/watch as a $(_WS_*)/$(_S_*) ref (the comma stays inside
-# the var, clear of the $(call) split).
-define _leaf
-_SENTINEL.$(1) := $(2)
-_PRIMARY.$(1)  := $(2)
-$(if $(3),_WATCH.$(1) := $(3))
-endef
-define _node
-_SENTINEL.$(1) := $(2)
-_PRIMARY.$(1)  := $(3)
-$(if $(4),_WATCH.$(1) := $(4))
-endef
-
-# Build goals.  mig/gnumach/hurd are _node (sentinel ⊃ own output: it includes the
-# transitive prereq artefacts — headers, mig binary, in-tree glibc).  The rest are
-# _leaf.  `gnumach-headers`/`hurd-headers` install public headers into the build-only
-# sysroot, keyed on their build-dir STAMP; `glibc`/`work-glibc` compile + install.
-$(eval $(call _leaf,gnumach-headers,$(GNUMACH_HDR_STAMP),$(GNUMACH_SRC)))
-$(eval $(call _leaf,hurd-headers,$(HURD_HDR_STAMP),$(HURD_SRC)))
-$(eval $(call _node,mig,$(_MIG_FILES),$(LOCAL_MIG),$(MIG_SRC) flakes/mig $(GNUMACH_SRC)))
-$(eval $(call _leaf,glibc,$(GLIBC_BUILT),$(_WS_GLIBC)))
-$(eval $(call _leaf,work-glibc,$(SYSROOT)/lib/libc.so.0.3,$(_WS_GLIBC)))
-$(eval $(call _node,gnumach,$(_GNUMACH_FILES),$(GNUMACH_KERNEL),$(_WS_GNUMACH)))
-$(eval $(call _node,hurd,$(_S_HURD),$(HURD_BUILD)/.built,$(_WS_HURD)))
-
-# Composite goals — stale iff any component is stale, evaluated PER component so each
-# primary is compared only against its own src (NOT flattened: the oldest primary vs
-# every watch would falsely dispatch).  The nix dist halves watch only the flake
-# (never src/), so a non-opt-in build never expects a clone.
-_COMPOSE.all          := gnumach hurd
-_COMPOSE.dist-gnumach := $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
-$(eval $(call _leaf,dist-gnumach-tree,$(DIST_GNUMACH_TREE_STAMP),$(_WS_GNUMACH)))
-$(eval $(call _leaf,dist-gnumach-nix,$(DIST_GNUMACH_NIX_STAMP),flakes/gnumach))
-_COMPOSE.dist-hurd    := $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
-$(eval $(call _leaf,dist-hurd-tree,$(DIST_HURD_TREE_STAMP),$(_WS_HURD)))
-$(eval $(call _leaf,dist-hurd-nix,$(DIST_HURD_NIX_STAMP),flakes/hurd))
-_COMPOSE.dist-glibc   := $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
-$(eval $(call _leaf,dist-glibc-tree,$(DIST_GLIBC_TREE_STAMP),$(_WS_GLIBC)))
-$(eval $(call _leaf,dist-glibc-nix,$(DIST_GLIBC_NIX_STAMP),flakes/cross-toolchain))
-$(eval $(call _leaf,dist-libgcc,$(DIST_LIBGCC_STAMP),flakes/cross-toolchain))
-# dist-tzdata: no watch dir — its only input is the nixpkgs pin (flake.lock, the
-# recipe's prereq), so a missing sentinel is the outer gate's only trigger.
-$(eval $(call _leaf,dist-tzdata,$(DIST_TZDATA_STAMP),))
-_COMPOSE.dist         := dist-gnumach dist-hurd dist-glibc dist-libgcc dist-tzdata
+# Dep graph — flag-gated: $(if X_IN_TREE,…) drops the edge when the module is nix
+# (then the matching dist-*-nix half watches the flake directly instead).
+_SDEPS.mig               := gnumach-headers
+_SDEPS.glibc             := gnumach-headers hurd-headers $(if $(MIG_IN_TREE),mig)
+_SDEPS.work-glibc        := glibc
+_SDEPS.gnumach           := gnumach-headers $(if $(MIG_IN_TREE),mig)
+_SDEPS.hurd              := hurd-headers gnumach-headers $(if $(MIG_IN_TREE),mig) $(if $(GLIBC_IN_TREE),work-glibc)
+_SDEPS.dist-gnumach-tree := gnumach
+_SDEPS.dist-hurd-tree    := hurd
+_SDEPS.dist-glibc-tree   := work-glibc
+_SDEPS.dist-gnumach      := $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
+_SDEPS.dist-hurd         := $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
+_SDEPS.dist-glibc        := $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
+_SDEPS.all               := gnumach hurd
+_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-libgcc dist-tzdata
 
 # We rely on `git ls-files` to enumerate "real source" — generated files
 # (configure, Makefile.in, autom4te.cache/, ...) shouldn't trigger staleness.
 # Authoritative: exactly what `git clean -fdX` would NOT touch.
 
-# Resolve to the oldest existing PRIMARY sentinel for `goal` — the staleness
-# reference (an ABSOLUTE path).  Anything newer means source moved after the goal
-# completed.  `-d` is load-bearing: a PRIMARY may be a DIRECTORY, and without -d
-# `ls -t <dir>` lists its CONTENTS as bare basenames — losing the path, so
-# _newer_tracked_one resolves in the wrong dir where a missing file makes every
-# `-nt` true → permanent false-stale.  With -d, ls lists each entry by its own mtime.
-_oldest_primary = $(shell ls -td $(_PRIMARY.$(1)) 2>/dev/null | tail -1)
+# $(call _mark_missing,goal) — the mark's path if it doesn't exist, else empty.
+_mark_missing = $(if $(wildcard $(_MARK.$(1))),,$(_MARK.$(1)))
 
-# Returns any sentinel file (in the full transitive set) that doesn't exist.
-_missing_sentinel = $(strip $(foreach f,$(_SENTINEL.$(1)),$(if $(wildcard $(f)),,$(f))))
-
-# $(call _newer_tracked_one,sentinel,watch_dir) — first tracked file under
-# watch_dir that's newer than `sentinel`, else empty.
+# $(call _newer_tracked_one,ref,watch_dir) — first git-tracked file under watch_dir
+# newer than `ref` (an absolute path), else empty.  A missing `ref` makes every
+# `-nt` true → every watched file "newer" (so a missing mark also reads as stale).
 _newer_tracked_one = $(shell \
   if [ -d $(2) ]; then \
     cd $(2) && git ls-files . 2>/dev/null | while IFS= read -r f; do \
@@ -859,23 +833,19 @@ _newer_tracked_one = $(shell \
     done; \
   fi)
 
-# Check across all watch dirs for the goal.
-_newer_tracked = $(strip $(foreach d,$(_WATCH.$(1)),$(call _newer_tracked_one,$(call _oldest_primary,$(1)),$(d))))
+# Any watched file newer than the goal's own mark.
+_newer_tracked = $(strip $(foreach d,$(_WATCH.$(1)),$(call _newer_tracked_one,$(_MARK.$(1)),$(d))))
 
-# $(call _stale,goal) returns non-empty if `goal` needs to be rebuilt.
-#   _COMPOSE goal — non-empty iff ANY listed component is stale (recursion
-#                   terminates: components are leaves with no _COMPOSE).
-#   <filename>   — at least one sentinel is missing
-#   <filename>   — all sentinels exist but some tracked file is newer
-#   (empty)      — fresh, nothing to do
+# $(call _stale,goal) — non-empty if `goal` needs rebuilding.  Recurses through
+# _SDEPS (a DAG → terminates): a goal is stale if its mark is missing, a watched file
+# out-dates the mark, or any _SDEPS goal is stale.  Transitive src reaches a goal
+# through its deps' own watches, so each src dir is compared against the nearest mark.
+# A goal with neither _MARK nor _SDEPS is conservatively stale (returns its own name).
 _stale = $(strip \
-  $(if $(_COMPOSE.$(1)), \
-    $(foreach s,$(_COMPOSE.$(1)),$(call _stale,$(s))), \
-    $(if $(_SENTINEL.$(1)), \
-      $(if $(call _missing_sentinel,$(1)), \
-        $(call _missing_sentinel,$(1)), \
-        $(call _newer_tracked,$(1))), \
-      yes)))
+  $(if $(_MARK.$(1))$(_SDEPS.$(1)), \
+    $(if $(_MARK.$(1)),$(call _mark_missing,$(1)) $(call _newer_tracked,$(1))) \
+    $(foreach d,$(_SDEPS.$(1)),$(call _stale,$(d))), \
+    $(1)))
 
 # Detect any unsatisfied build goal.
 _UNSATISFIED :=
@@ -1043,7 +1013,7 @@ $(foreach v,$(REQUIRED_VARS), \
 # ---- Default & top-level groupings ----
 all: gnumach hurd
 
-# Lockstep with _COMPOSE.dist (above): the components must match both lists or the
+# Lockstep with _SDEPS.dist (above): the components must match both lists or the
 # staleness gate and the recipe disagree (silent mis-ship).  No whole-tree
 # post-step: each dist-* finalises only its slice via $(call dist-finalize,…).
 dist: dist-gnumach dist-hurd dist-glibc dist-libgcc dist-tzdata
@@ -1550,7 +1520,7 @@ $(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix
 
 # Unlike gnumach (a single-file sentinel), hurd produces many outputs and no single
 # binary, so the sentinel is a build stamp ($(HURD_BUILD)/.built), touched after a
-# successful compile.  With _SENTINEL.hurd/_WATCH.hurd above, a no-op `make hurd`
+# successful compile.  With _MARK.hurd/_WATCH.hurd above, a no-op `make hurd`
 # short-circuits unless a tracked src/hurd file is newer than the stamp; the
 # $(HURD_SRC_FILES) prereq makes the inner make re-run on a real change.  Without
 # src/hurd, `make hurd` realizes the nix userland (top-level).
@@ -1639,7 +1609,7 @@ $(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix
 #   check      : alias for check-gnumach.
 # MIG's own test-suite has no make target — it runs inline via doCheck=true on every
 # `nix build .#mig-<arch>`, transitively triggered by `make dist-gnumach`/`dist`.
-# No _SENTINEL entries — a test suite isn't idempotent, so always dispatch.
+# No _MARK/_SDEPS entries — a test suite isn't idempotent, so always dispatch.
 
 # Xen variants self-skip via gnumach's tests/Makefrag.am (`if !PLATFORM_xen`).
 # Darwin can't host check-gnumach: the test harness needs a real bootloader nixpkgs
@@ -1706,7 +1676,7 @@ _RUN_PREREQS := \
     $(if $(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO)),sidekick, \
       $(if $(and $(filter x86_64,$(ARCH)),$(filter boot,$(SCENARIO))),sidekick)))
 
-# Each run is NOT idempotent, so no _SENTINEL entry — every invocation re-enters
+# Each run is NOT idempotent, so no _MARK entry — every invocation re-enters
 # dispatch and re-checks `gnumach` (skipped if fresh).
 run: $(_RUN_PREREQS)
 	@set -a; . ./flakes/run/lib/distro-urls.sh; set +a; \
