@@ -4,18 +4,17 @@
 # (the gate's tiers/probes) and SIDEKICK-DISPATCHER.md (how the Linux-only
 # analysers run).
 #
-# The DWARF-free probes (Tier-1 + cheap/Hurd Tier-3) run host-side with the
-# cross binutils/gcc — uniform on every host.  The DWARF analysers
-# (abidiff, pahole) are Linux-only in nixpkgs, so instead of depending on
-# them there we dispatch them into the Debian **sidekick** VM: the gate
-# boots the sidekick once (warm `serve`), puts transparent `abidiff`/`pahole`
-# shims on PATH that ship the call into the VM (with /nix/store 9p-mounted
-# so the glibc .so path args resolve verbatim), runs the FULL probe suite,
-# and tears the VM down.  So the full gate runs on EVERY host — no darwin
-# skip, no nixpkgs libabigail/pahole dependency.
+# The DWARF-free probes (Tier-1 + cheap/Hurd Tier-3) run host-side with the cross
+# binutils/gcc — uniform on every host.  The DWARF analysers (abidiff, pahole) are
+# Linux-only in nixpkgs, so the gate dispatches them into the Debian **sidekick**
+# VM: boot the sidekick once (warm `serve`), put transparent `abidiff`/`pahole`
+# shims on PATH that ship the call into the VM (with /nix/store 9p-mounted so the
+# glibc .so path args resolve verbatim), run the FULL probe suite, tear it down.
+# So the full gate runs on EVERY host — no darwin skip, no nixpkgs libabigail/
+# pahole dependency.
 #
-# Entry points (both take the sidekick image + dispatch scripts, threaded
-# from packages.nix):
+# Entry points (both take the sidekick image + dispatch scripts, threaded from
+# packages.nix):
 #   mkAbiChecked … { working, reference, … }   the in-build gate wired into
 #     provider.working; on pass re-exports the real working glibc (the gated sysroot).
 #   mkAbiReport  … { working, reference, level } the explicit `make
@@ -30,10 +29,10 @@ let
     let cpu = lib.head (lib.splitString "-" target.crossTarget);
     in if cpu == "i686" || cpu == "i386" then "i386" else cpu;
 
-  # Env + inputs shared by both entry points.  No libabigail/pahole here —
-  # they live in the sidekick; we add qemu to boot it + the cross tools the
-  # host-side probes use.  REF/WORK are the real glibcs (built dontStrip, so
-  # they carry the DWARF abidiff/pahole need — no throwaway unstripped twins).
+  # Env + inputs shared by both entry points.  No libabigail/pahole here (they
+  # live in the sidekick); add qemu to boot it + the cross tools the host-side
+  # probes use.  REF/WORK are the real glibcs (built dontStrip, so they carry the
+  # DWARF abidiff/pahole need — no unstripped twins).
   mkGateEnv = system: target: { working, reference, sidekick, glibcSrc ? null }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
@@ -43,12 +42,10 @@ let
       tp        = target.crossTarget;
     in {
       inherit pkgs;
-      # `cc` is reached by absolute path via CROSS_CC; kept here as a build input
-      # too.  (It once activated the salted wrapper env for a --sysroot inject, but
-      # the link probes no longer use --sysroot — they resolve the deployable /lib
-      # GROUP via sidekickRun's WORK_LINK bare-name libc.so (members found on the -L
-      # path), since a --sysroot is stripped by the ld-wrapper under purity in a
-      # Linux sandbox.)
+      # `cc` is reached by absolute path via CROSS_CC; a build input too.  The link
+      # probes resolve the deployable /lib GROUP via sidekickRun's WORK_LINK
+      # bare-name libc.so (members found on the -L path), not a --sysroot (which the
+      # ld-wrapper strips under purity in a Linux sandbox).
       nativeBuildInputs = (with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu ]) ++ [ cc ];
       env = {
         REF             = reference;
@@ -68,9 +65,9 @@ let
       };
     };
 
-  # Shell prelude/teardown that boots the warm sidekick, installs the
-  # abidiff/pahole shims, runs the runner at $level, and stops the VM.
-  # `dispatchLib`/`sendScript` are the host-side sidekick scripts.
+  # Shell prelude/teardown that boots the warm sidekick, installs the abidiff/pahole
+  # shims, runs the runner at $level, and stops the VM.  `dispatchLib`/`sendScript`
+  # are the host-side sidekick scripts.
   sidekickRun = { dispatchLib, sendScript, level }: ''
     export SK_CTL="$TMPDIR/sk"; mkdir -p "$SK_CTL/q"
     cp ${sendScript} "$TMPDIR/sidekick-send"; chmod +x "$TMPDIR/sidekick-send"
@@ -134,10 +131,10 @@ in
 {
   inherit abiArchOf;
 
-  # The in-build gate (provider.working).  Runs the FULL suite via sidekick
-  # on every host; keyed on (working, reference) so it runs once per
-  # working-glibc change and caches.  On pass, re-exports the real
-  # working glibc as a drop-in sysroot (symlink farm).
+  # The in-build gate (provider.working).  Runs the FULL suite via sidekick on
+  # every host; keyed on (working, reference) so it runs once per working-glibc
+  # change and caches.  On pass, re-exports the real working glibc as a drop-in
+  # sysroot (symlink farm).
   mkAbiChecked = system: target: { working, reference, sidekick, dispatchLib, sendScript, glibcSrc ? null }:
     let g = mkGateEnv system target { inherit working reference sidekick glibcSrc; };
     in g.pkgs.runCommand "glibc-hurd-${target.crossTarget}-abi-checked"
@@ -170,7 +167,7 @@ in
       '';
 
   # The explicit deep/full report (`make check-glibc[-full]`).  Same sidekick
-  # dispatch; emits the report at $out, fails the derivation on a probe fail.
+  # dispatch; emits the report at $out, fails on a probe fail.
   mkAbiReport = system: target: { working, reference, sidekick, dispatchLib, sendScript, level ? "full", glibcSrc ? null }:
     let g = mkGateEnv system target { inherit working reference sidekick glibcSrc; };
     in g.pkgs.runCommand "glibc-hurd-${target.crossTarget}-abi-report-${level}"
@@ -181,16 +178,15 @@ in
         [ "$_abi_rc" -eq 0 ] || { echo "ABI report FAILED (rc=$_abi_rc)"; exit "$_abi_rc"; }
       '';
 
-  # The HOST-SIDE report — `make check-glibc[-full]` for the IN-TREE glibc.
-  # Same sidekick dispatch + probes as mkAbiReport, but WORK is a RUNTIME arg
-  # (the in-tree build sysroot, e.g. work/sysroot/<arch> — a host path NOT in the
-  # nix store) instead of a baked store path; the reference + all tooling are
-  # baked.  Lets a hacker compare their in-tree glibc against the frozen
-  # reference without a nix rebuild.  Built as a plain script (writeShellScriptBin
-  # — no shellcheck/wrapper) that prepends its runtime deps to PATH and runs the
-  # same orchestration host-side.  The link probes resolve the in-tree /lib GROUP
-  # via sidekickRun's WORK_LINK (a probe-only libc.so with bare-name members found
-  # on the -L path), so no --sysroot is needed (it's stripped under purity).
+  # The HOST-SIDE report — `make check-glibc[-full]` for the IN-TREE glibc.  Same
+  # sidekick dispatch + probes as mkAbiReport, but WORK is a RUNTIME arg (the
+  # in-tree build sysroot, a host path NOT in the nix store); the reference + all
+  # tooling are baked.  Lets a hacker compare their in-tree glibc against the
+  # frozen reference without a nix rebuild.  A plain writeShellScriptBin that
+  # prepends its runtime deps to PATH and runs the same orchestration host-side.
+  # The link probes resolve the in-tree /lib GROUP via sidekickRun's WORK_LINK
+  # (bare-name members on the -L path), so no --sysroot needed (stripped under
+  # purity).
   mkAbiReportHost = system: target: { reference, sidekick, dispatchLib, sendScript }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};

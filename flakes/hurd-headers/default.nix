@@ -1,41 +1,25 @@
-# GNU Hurd public headers — per-target derivations.
-#
-# Outputs the include tree downstream consumers (glibc-hurd, the hurd
-# userland, downstream packages) need to see:
+# GNU Hurd public headers — per-target derivations, one `hurd-headers-<name>`
+# per entry in `targets`.  Outputs the include tree downstream consumers
+# (glibc-hurd, the hurd userland) need:
 #
 #   $out/include/hurd/...        (Hurd-side type/RPC headers + .defs)
 #   $out/include/hurd_types.h    (the AC_CONFIG_SRCDIR sentinel)
 #   $out/share/msgids/...        (debugger msgid tables — only if MIG
 #                                 generation succeeds at configure time)
 #
-# Returned shape — one attribute per entry in `targets`, named
-# `hurd-headers-<name>`.  Mirrors flakes/gnumach-headers's shape so the
-# root flake just merges what comes back into `packages.<system>`.
+# Uses the **native** host stdenv, NOT a Hurd cross-toolchain: `make
+# install-headers` is a pure file-copy walk (no compilation), so configure
+# only needs SOME CC to satisfy AC_PROG_CC; host gcc with `--host=i686-gnu
+# --build=<host-tuple>` is enough, and its false-positive HAVE_* defines don't
+# matter because no .c is compiled.  (Hurd's configure.ac rejects any --host
+# whose OS isn't `gnu*`, so the bare-metal `i686-elf` toolchain won't work here
+# — which is why this diverges from flakes/gnumach-headers.)
 #
-# Toolchain story: this derivation uses the **native** host stdenv
-# (build-host gcc), NOT a Hurd cross-toolchain.  `make install-headers`
-# is a pure file-copy walk over $(installhdrs) in each sub-Makefile —
-# no compilation, no linking — so the Hurd cross-cc is not a
-# prerequisite here.  Configure still needs SOME working CC to satisfy
-# AC_PROG_CC; host gcc with `--host=i686-gnu --build=<host-tuple>` is
-# enough.  False-positive HAVE_* defines from configure's link tests
-# don't matter because no .c file ever gets compiled.
+# MIG is required by `AC_CHECK_TOOL([MIG], [mig])`; we pull in the cross-flavor
+# mig-<crossTarget> so autoconf's host-prefixed search finds it via PATH.  It's
+# never invoked (no .defs → .h codegen happens), just needs to be discoverable.
 #
-# Hurd's configure.ac explicitly rejects any --host whose OS isn't
-# `gnu*`, so the bare-metal `i686-elf` toolchain the rest of this flake
-# uses for the gnumach kernel won't work here — which is why this file
-# diverges from flakes/gnumach-headers/default.nix.
-#
-# MIG is required as a build tool by `AC_CHECK_TOOL([MIG], [mig])`.
-# We pull in the matching cross-flavor mig-<crossTarget> from the sibling
-# flake (already produces `i686-gnu-mig`) — autoconf's host-prefixed
-# tool search picks it up via PATH.  The mig output isn't actually
-# invoked for install-headers (no .defs → .h codegen happens there);
-# the binary just needs to be discoverable so configure doesn't
-# AC_MSG_ERROR.
-#
-# Source comes from the pinned `hurd-src` flake input (savannah master,
-# locked in flake.lock).
+# Source comes from the pinned `hurd-src` flake input.
 
 { nixpkgs, system, targets, mig, srcInput, forkUrl }:
 
@@ -52,9 +36,8 @@ let
     inherit upstreamVersion srcInput forkUrl;
   };
 
-  # Hurd userland targets — the non-xen ones (i686, x86_64).  The xen
-  # variants share their CPU sibling's userland ABI (only gnumach differs
-  # by platform), so they're excluded.
+  # Hurd userland targets — the non-xen ones.  The xen variants share their CPU
+  # sibling's userland ABI (only gnumach differs by platform), so excluded.
   hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
 
   mkOne = name: target:
@@ -66,19 +49,13 @@ let
       inherit pname;
       version = fullVersion;
 
-      # The pinned `hurd-src` input (savannah master locked in flake.lock).
-      # Never the local src/hurd working clone — same convention as
-      # gnumach / mig.
+      # The pinned `hurd-src` input, never the local src/hurd clone.
       src = srcInput;
 
-      # autoreconfHook regenerates configure from configure.ac (the shipped
-      # configure script is older than current automake; regenerating
-      # ensures the dependency-tracking + per-host hooks match the rest
-      # of this flake).  texinfo: hurd's docs build invokes makeinfo
-      # transitively — install-headers itself doesn't, but configure
-      # checks for it.  perl: some build-time scripts shell out to perl.
-      # crossMig: provides `<crossTarget>-mig` on PATH so configure's
-      # AC_CHECK_TOOL([MIG], [mig]) resolves with the right host prefix.
+      # autoreconfHook regenerates configure (the shipped script is older than
+      # current automake).  texinfo: configure checks for it.  perl: some
+      # build-time scripts shell out to perl.  crossMig: provides
+      # `<crossTarget>-mig` on PATH so AC_CHECK_TOOL([MIG], [mig]) resolves.
       nativeBuildInputs =
         [ pkgs.autoreconfHook ]
         ++ (with pkgs; [ texinfo perl ])
@@ -86,9 +63,8 @@ let
 
       CFLAGS = buildFlags.baseCflags;
 
-      # Splice the eval-time composed version into AC_INIT before
-      # autoreconfHook regenerates configure.  Same pattern as
-      # flakes/gnumach/ and flakes/mig/.
+      # Splice the composed version into AC_INIT before autoreconfHook
+      # regenerates configure.
       postPatch = ''
         sed -i.bak \
           -e 's|^AC_INIT(\[GNU Hurd\], \[[^]]*\],|AC_INIT([GNU Hurd], [${fullVersion}],|' \
@@ -97,19 +73,12 @@ let
         grep "^AC_INIT" configure.ac
       '';
 
-      # --host=<crossTarget> tells configure this is a cross-build (so
-      # autoconf skips run-tests and uses link-tests instead).  The
-      # link tests then false-positive against the host libc — which
-      # is fine for headers-only because we never compile any .c file.
-      # --build is set by stdenv to the host system; explicitly
-      # passing --host is enough to flip autoconf into cross mode.
-      #
-      # The `ac_cv_*` lies / disable-* flags break the chicken-and-egg
-      # with glibc / libpthread / parted / libtirpc: hurd's configure
-      # would otherwise want to link against those libs to test for
-      # specific symbols, but we don't have them at headers-only time.
-      # Verbatim from Guix's gnu/packages/hurd.scm `hurd-headers`
-      # configureFlags.
+      # --host=<crossTarget> flips autoconf into cross mode (link-tests, not
+      # run-tests); the link tests false-positive against the host libc, fine for
+      # headers-only since no .c is compiled.  The `ac_cv_*` lies / disable-*
+      # flags break the chicken-and-egg with glibc/libpthread/parted/libtirpc,
+      # which we don't have at headers-only time.  Verbatim from Guix's
+      # gnu/packages/hurd.scm `hurd-headers`.
       configureFlags = [
         "--host=${target.crossTarget}"
         "--disable-profile"

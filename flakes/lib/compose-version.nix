@@ -1,37 +1,29 @@
-# Compose the full PACKAGE_VERSION string at flake eval — no shell needed.
+# Compose the full PACKAGE_VERSION string at flake eval.
 #
 # Shape (matching the GNU Hurd projects' `git describe --tags` outputs):
 #
 #   v<upstream>+git<date>-g<src>+<short-url>[+build.g<build>[-dirty]]
 #
-# `-` stays inside the describe-style core; the fork and build sections
-# are each `+`-fenced.  Branch is intentionally omitted from the fork
-# section — `<src>` already uniquely identifies the commit, branches
-# move (or get deleted), and detached pins have no branch.  The
-# `+build.g<build>` field is keyed on ARTIFACT ROLE: shipped artifacts
-# (gnumach kernel, hurd userland) carry it; toolchain blocks
-# (gnumach-headers, hurd-headers, mig, glibc-hurd) omit it (their
-# identity is upstream version + source rev, so a build-system commit
-# must not rehash them).  Full format rationale lives in the README
-# "Versioning" section.
+# `-` stays inside the describe-style core; the fork and build sections are each
+# `+`-fenced.  Branch is omitted from the fork section — `<src>` already pins the
+# commit, branches move, detached pins have none.  The `+build.g<build>` field is
+# keyed on ARTIFACT ROLE: shipped artifacts (gnumach kernel, hurd userland) carry
+# it; toolchain blocks omit it, so a build-system commit doesn't rehash them.
+# Full rationale: README "Versioning".
 #
 # Three entry points:
 #
-#   composeFromParts — the raw string template; takes already-resolved
-#     parts (srcShort, srcDate, forkId, and an optional buildShort —
-#     omitted ⇒ no `+build.g…` field).
+#   composeFromParts — the raw string template; takes resolved parts (srcShort,
+#     srcDate, forkId, optional buildShort — omitted ⇒ no `+build.g…` field).
 #
-#   composeVersion — pure-eval wrapper for the SHIPPED derivations.
-#     Resolves the parts itself from a source flake input + the flake's
-#     `self` (→ build-rev).  Caveat: pure eval can't run git, so <date>
-#     is the HEAD commit date (not a real tag) and there is no
-#     commit-count — describe-SHAPED, not a true tag.  A dirty `src/<repo>`
-#     tree is invisible (inputs lock to the committed rev); only the
-#     build-system tree's dirtiness shows, as `-dirty` on the `+build.`
-#     field.
+#   composeVersion — pure-eval wrapper for the SHIPPED derivations.  Resolves the
+#     parts from a source flake input + `self`.  Caveat: pure eval can't run git,
+#     so <date> is the HEAD commit date (describe-SHAPED, not a true tag).  A
+#     dirty `src/<repo>` tree is invisible (inputs lock to the committed rev);
+#     only the build-system tree's dirtiness shows, as `-dirty` on `+build.`.
 #
-#   composeToolchainVersion — the same, for TOOLCHAIN blocks: no `self`,
-#     no `+build.g…` field, so build-system commits don't rehash them.
+#   composeToolchainVersion — the same for TOOLCHAIN blocks: no `self`, no
+#     `+build.g…` field.
 
 { lib, selfMeta, url }:
 
@@ -53,10 +45,8 @@ in
 {
   inherit composeFromParts;
 
-  # Args (eval-time): upstreamVersion (from parseM4Version /
-  # parseAcInitVersion), srcInput (source flake input → .shortRev +
-  # .lastModifiedDate), forkUrl (owner/repo from flakes/sources), self
-  # (the build flake — feeds buildRev).
+  # Args: upstreamVersion (from the parsers), srcInput (→ .shortRev +
+  # .lastModifiedDate), forkUrl (owner/repo from flakes/sources), self (→ buildRev).
   composeVersion = {
     upstreamVersion,
     srcInput,
@@ -71,12 +61,10 @@ in
       buildShort = buildRev self;
     };
 
-  # Toolchain-block variant — same as composeVersion but with no build-rev
-  # (and so no `self`).  build-rev is provenance for the shipped artifacts
-  # (gnumach kernel, hurd userland); the toolchain building blocks
-  # (gnumach-headers, hurd-headers, mig, glibc-hurd) are tools whose
-  # identity is upstream version + source rev, so a build-system commit
-  # must not rehash them.  Omitting buildShort drops the `+build.g…` field.
+  # Toolchain-block variant — composeVersion with no build-rev (and no `self`).
+  # The toolchain building blocks' identity is upstream version + source rev, so
+  # a build-system commit must not rehash them; omitting buildShort drops the
+  # `+build.g…` field.
   composeToolchainVersion = {
     upstreamVersion,
     srcInput,

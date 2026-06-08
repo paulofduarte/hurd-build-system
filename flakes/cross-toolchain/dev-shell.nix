@@ -1,30 +1,25 @@
 # The single per-(host, target) development shell — `nix develop .#<arch>`.
 #
-# One shell drives every in-tree build: `make mach` (the freestanding
-# gnumach kernel), `make mig` (the host-side MIG codegen tool), and
-# `make hurd` (the userland servers).  They all use the SAME wrapped
-# `<cpu>-gnu` cross-cc (cross-toolchain/toolchain.nix → `toolchain-<arch>`):
-# the kernel builds freestanding (gnumach's configure forces
-# `-ffreestanding -nostdlib`), the userland builds hosted against
-# glibc-hurd.
+# One shell drives every in-tree build: `make mach` (freestanding gnumach
+# kernel), `make mig` (host-side MIG codegen tool), `make hurd` (userland
+# servers).  All use the SAME wrapped `<cpu>-gnu` cross-cc (toolchain.nix →
+# `toolchain-<arch>`): the kernel builds freestanding (gnumach's configure forces
+# `-ffreestanding -nostdlib`), the userland hosted against glibc-hurd.
 #
-# Build TOOLS (autoreconf, bison/flex, perl, texinfo, …) are INFERRED from
-# this target's own derivations (gnumach + mig + gnumach-headers) — add a
-# tool to a package's nativeBuildInputs and the shell picks it up.  The
-# nix-built working mig IS added to the shell (and exported as $MIG / $USER_MIG)
-# so mig is always available without a `make mig`; running `make src-mig` to
-# populate src/mig opts into an in-tree mig that the Makefile builds and uses
-# instead.  The libc-free stage-1 cc is SUBTRACTED so its prefixed gcc can't
-# shadow the wrapped cc on PATH.
+# Build TOOLS (autoreconf, bison/flex, perl, texinfo, …) are INFERRED from this
+# target's own derivations (gnumach + mig + gnumach-headers) — add a tool to a
+# package's nativeBuildInputs and the shell picks it up.  The nix-built working
+# mig is added + exported as $MIG / $USER_MIG so mig is always available without a
+# `make mig`; `make src-mig` opts into an in-tree mig the Makefile builds instead.
+# The libc-free stage-1 cc is SUBTRACTED so its prefixed gcc can't shadow the
+# wrapped cc on PATH.
 #
 # The cross compiler + binutils are wired by ABSOLUTE path in the shellHook
 # (CC/CXX from the wrapped toolchain; LD/AR/NM/… from the unwrapped cross
-# binutils) so configure + recursive sub-makes resolve to exactly these,
-# regardless of PATH ordering.  HURD_CONFIGURE_FLAGS carries the same flag
-# set the nix Hurd build uses (hurd-config.nix); the Makefile's hurd recipe
-# adds `CFLAGS=-fcommon` at configure time (hurd predates gcc's -fno-common
-# default), so -fcommon stays scoped to the userland — the kernel never
-# sees it.
+# binutils) so configure + sub-makes resolve to exactly these regardless of PATH
+# ordering.  HURD_CONFIGURE_FLAGS carries the same flag set the nix Hurd build
+# uses (hurd-config.nix); the Makefile's hurd recipe adds `CFLAGS=-fcommon` at
+# configure time, scoping -fcommon to the userland — the kernel never sees it.
 
 { nixpkgs, mkCrossPkgs }:
 
@@ -38,33 +33,32 @@ in
 
 {
   # mkDevShell : system -> name -> target -> { toolchain, glibcCC, gnumach, mig,
-  #              headers } -> shell.  `toolchain` is the wrapped cc
-  #              (toolchain-<arch>, or the CPU sibling's for a xen variant);
-  #              `glibcCC` is the COMPLETE final gcc wrapped against the
-  #              REFERENCE glibc (the cc the nix working glibc is built with) —
-  #              what the opt-in in-tree `make glibc` uses, so in-tree-work and
-  #              nix-work glibc are built by the same compiler.  gnumach/mig/
-  #              headers are this target's derivations, used for build-tool
-  #              inference (and mig/headers/gnumach for subtraction).
+  #              headers } -> shell.  `toolchain` is the wrapped cc (toolchain-<arch>,
+  #              or the CPU sibling's for a xen variant); `glibcCC` is the COMPLETE
+  #              final gcc wrapped against the REFERENCE glibc (the cc the nix working
+  #              glibc is built with) — what the opt-in `make glibc` uses, so in-tree
+  #              and nix work-glibc are built by the same compiler.  gnumach/mig/
+  #              headers are this target's derivations, for build-tool inference (and
+  #              subtraction).
   mkDevShell = system: name: target: { toolchain, glibcCC, gnumach, mig, headers }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
       crossPkgs = mkCrossPkgs system target;
 
       # Patched install-info (deterministic dir), shared with glibc.nix — see
-      # texinfo-det.nix for the why.  Replaces EVERY texinfo on PATH below so
-      # whichever install-info glibc/hurd's `make install` picks is deterministic
-      # out of the box — no post-dist dir regen.
+      # texinfo-det.nix.  Replaces EVERY texinfo on PATH below so whichever
+      # install-info glibc/hurd's `make install` picks is deterministic — no
+      # post-dist dir regen.
       texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
       # Unwrapped cross binutils — absolute source of the prefixed
-      # ld/ar/nm/ranlib/strip/objcopy.  The wrapped `toolchain` supplies
-      # cc/c++; using the unwrapped binutils for the rest sidesteps any
-      # ambiguity about what the cc-wrapper re-exports.
+      # ld/ar/nm/ranlib/strip/objcopy.  The wrapped `toolchain` supplies cc/c++;
+      # the unwrapped binutils for the rest sidesteps any ambiguity about what the
+      # cc-wrapper re-exports.
       tcPaths = toolchainPaths system target;
       binu  = tcPaths.binutils;
-      # The wrapped cc's target prefix ("i686-gnu-") — drives both the
-      # toolchain bin names and binu's (same crossSystem).
+      # The wrapped cc's target prefix ("i686-gnu-") — drives both the toolchain
+      # bin names and binu's (same crossSystem).
       tp    = toolchain.targetPrefix;
       # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
       salt  = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
@@ -75,20 +69,17 @@ in
       # DWARF store-path maps for every cc the in-tree build invokes: the
       # working-wrapped `toolchain` (mach + hurd) and the ref-wrapped `glibcCC`
       # (opt-in `make glibc`).  `toolchain.cc == glibcCC.cc` (both wrap the same
-      # final gcc), so lib.unique drops the duplicate gcc map.  Shared with the
-      # nix builds via build-flags.nix.
+      # final gcc), so lib.unique drops the duplicate gcc map.  Shared with the nix
+      # builds via build-flags.nix.
       detPrefixMap = lib.concatStringsSep " "
         (lib.unique (buildFlags.debugPrefixMap toolchain ++ buildFlags.debugPrefixMap glibcCC));
 
-      # Build-tool deps inferred from this target's own derivations rather
-      # than re-listed.  Subtract the own packages AND the libc-free stage-1
-      # cc: mig is subtracted HERE so a mig pulled in via gnumach's build
-      # inputs doesn't sneak onto PATH through inference — the shell's mig is
-      # instead the `mig` arg, added explicitly + exported below.  The stage-1
-      # cc is pulled in via gnumach-headers' nativeBuildInputs (it builds the
-      # headers); it's no longer used as a build cc here (in-tree `make glibc`
-      # now uses `glibcCC`), but its prefixed gcc must still not land on PATH
-      # where it could shadow the wrapped cc — so keep subtracting it.
+      # Build-tool deps inferred from this target's own derivations.  Subtract the
+      # own packages AND the libc-free stage-1 cc: mig is subtracted so a mig pulled
+      # in via gnumach's build inputs doesn't sneak onto PATH through inference (the
+      # shell's mig is the `mig` arg, added + exported below).  The stage-1 cc comes
+      # in via gnumach-headers' nativeBuildInputs but isn't the build cc here, and
+      # its prefixed gcc must not shadow the wrapped cc on PATH — so subtracted.
       stage1 = crossPkgs.buildPackages.gccWithoutTargetLibc;
       ownDrvs = [ gnumach mig headers toolchain stage1 ];
       inferredBuildInputs = lib.subtractLists ownDrvs
@@ -96,33 +87,29 @@ in
     in
     pkgs.mkShell {
       # Inferred tools (autoreconfHook + bison/flex/perl/texinfo) come via
-      # inferredBuildInputs.  Here we add the toolchain + binutils (for
-      # PATH) and the dev/run-only extras the packages don't declare:
+      # inferredBuildInputs.  Here we add the toolchain + binutils (for PATH) and
+      # the dev/run-only extras the packages don't declare:
       #   gcc        native compiler for in-tree `make mig` (a host tool)
       #   pkg-config hurd's optional PKG_CHECK probes
       #   git/nix    source ops + Makefile re-dispatch into a target shell
       #   qemu       qemu-system-* (+ qemu-img) for `make run`
       #   curl/which run scenarios + gnumach's run-qemu.sh test gate
-      #   fakeroot   `make dist-hurd` install: hurd's daemons/utils install
-      #              some programs -o root -m 4755 (setuid); fakeroot fakes
-      #              the chown/setuid so a non-root install completes.
-      #   python3/gettext/gawk/bison/perl/texinfo  glibc's host build tools, for
-      #              the opt-in raw in-tree `make glibc` (mirrors glibc.nix's
-      #              nativeBuildInputs).  Some overlap inferredBuildInputs; the
-      #              dedup handles it.
-      # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo`
-      # strips the unpatched texinfo wherever it appears (the explicit list AND
-      # inferredBuildInputs, which carries gnumach's), then texinfoDet is added
-      # once — so the only install-info on PATH is the deterministic one.
+      #   fakeroot   `make dist-hurd`: hurd installs some programs -o root -m 4755
+      #              (setuid); fakeroot fakes the chown/setuid for a non-root install.
+      #   python3/gettext/gawk/bison/perl/texinfo  glibc's host build tools, for the
+      #              opt-in `make glibc` (mirrors glibc.nix); the dedup handles the
+      #              overlap with inferredBuildInputs.
+      # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo` strips
+      # the unpatched texinfo wherever it appears, then texinfoDet is added once — so
+      # the only install-info on PATH is the deterministic one.
       nativeBuildInputs =
         lib.remove pkgs.texinfo (
           [ toolchain binu mig ]
           ++ inferredBuildInputs
           ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
                            python3 jq gettext gawk bison perl texinfo ])
-          # gnumach's x86 `make check` builds a multiboot ISO with
-          # grub-mkrescue (needs xorriso + mtools) and the run scenarios
-          # build/boot images; nixpkgs' grub2 is linux-only, so gate on
+          # gnumach's x86 `make check` builds a multiboot ISO with grub-mkrescue
+          # (needs xorriso + mtools); nixpkgs' grub2 is linux-only, so gate on
           # x86 + linux hosts.
           ++ lib.optionals
                ((lib.hasPrefix "x86_64-" target.crossTarget || lib.hasPrefix "i686-" target.crossTarget)

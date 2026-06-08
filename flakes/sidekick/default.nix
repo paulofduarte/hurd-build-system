@@ -1,16 +1,15 @@
-# Sidekick helper VM — a generic Debian (glibc) command dispatcher for
-# harness operations darwin can't do natively (abidiff/pahole for the ABI
-# gate, grub-mkrescue/ext-mount for the run scenarios).  The VM is dumb: it
-# runs host-supplied commands/scripts (see dispatcher.sh); all logic lives
-# host-side (the ABI gate + flakes/run).  See SIDEKICK-DISPATCHER.md.
+# Sidekick helper VM — a generic Debian (glibc) command dispatcher for harness
+# operations darwin can't do natively (abidiff/pahole for the ABI gate,
+# grub-mkrescue/ext-mount for the run scenarios).  The VM is dumb: it runs
+# host-supplied commands/scripts (see dispatcher.sh); all logic lives host-side.
+# See SIDEKICK-DISPATCHER.md.
 #
-# Built by FETCHING pre-built binaries (no compilation), reproducibly:
-#   - kernel + modules: the Alpine linux-virt bzImage (libc-agnostic boot
-#     vehicle, small, 9p-ready), pinned by APK hash (packages.nix);
+# Built by FETCHING pre-built binaries (no compilation), so it builds
+# identically on darwin / linux-arm64 / linux-x86_64:
+#   - kernel + modules: the Alpine linux-virt bzImage (libc-agnostic, small,
+#     9p-ready), pinned by APK hash (packages.nix);
 #   - userland: a glibc Debian tool closure, pinned by snapshot.debian.org
 #     version+SHA256 (debian-packages.nix, regen via refresh-packages.sh).
-# So the same derivation builds identically on darwin / linux-arm64 /
-# linux-x86_64.
 #
 # Output (under $out): vmlinuz + initramfs.cpio.gz.
 

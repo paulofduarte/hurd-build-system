@@ -1,16 +1,12 @@
-# Shared glibc-hurd DEPLOYABLE (--prefix=/) configure flags — the root-relative
-# install dirs + the `libc_cv_*` cache vars that pin slibdir/rtlddir/complocaledir/
-# etc. to `/` (under --prefix=/ they would otherwise default to $(exec_prefix)/lib
-# = //lib; the AC_SUBST'd cache vars set them straight).  Consumed by BOTH the nix
-# build (flakes/cross-toolchain/glibc.nix) and the in-tree Makefile (via the
-# dev-shell GLIBC_DEPLOY_FLAGS export), so the two build paths stay byte-identical
-# and the set lives in ONE place.  Mirrors hurd-config.nix.  Order matches glibc.nix's
-# original inline set (keeps that derivation drvPath-identical across the extraction).
+# Shared glibc-hurd configure flags (consumed by glibc.nix + the in-tree Makefile via
+# dev-shell exports).  deployFlags pins the root-relative install dirs + the libc_cv_*
+# cache vars to /lib — under --prefix=/ they would otherwise default to //lib.  Mirrors
+# hurd-config.nix.
 
 {
   # Always-on glibc-hurd configure flags (identical for nix + in-tree, independent
   # of the deployable prefix): the libpthread add-on, obsolete-rpc, the disables,
-  # and the ctors-header cache var.  Order matches glibc.nix's original inline set.
+  # and the ctors-header cache var.
   coreFlags = [
     "--enable-add-ons=libpthread"
     "--enable-obsolete-rpc"

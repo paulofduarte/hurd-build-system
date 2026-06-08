@@ -3,29 +3,24 @@
 # shell (dev-shell.nix), so gnumach/hurd/glibc come out byte-identical on
 # every host.  Two host-varying inputs otherwise leak into the output:
 #
-#   1. The cross-toolchain's own /nix/store paths — gcc's internal `include`
-#      and `sys-include` dirs — recorded in DWARF (.debug_str/.debug_line_str,
-#      and referenced from .debug_info).  The store hash differs per host
-#      (nix input-addresses the cross-gcc per build platform), so the same
-#      source yields different DWARF on each host.  `debugPrefixMap` rewrites
-#      each toolchain path to a stable name; the values are arbitrary, only
-#      their stability matters, and debug info stays usable (paths only).
+#   1. The cross-toolchain's own /nix/store paths (gcc's internal include /
+#      sys-include dirs) recorded in DWARF — the store hash is per-host, so the
+#      same source yields different DWARF.  `debugPrefixMap` rewrites each to a
+#      stable name (values arbitrary; only stability matters, paths stay usable).
 #
 #   2. gcc's `-frandom-seed`, which nixpkgs' reproducible-builds setup hook
-#      (pkgs/build-support/setup-hooks/reproducible-builds.sh) derives from
-#      $out — host-varying for our cross derivations and the dev shell, since
-#      the toolchain input's store hash differs per host.  The seed feeds
-#      gcc's symbol-name uniquifier, perturbing .text/.rodata of seed-sensitive
-#      TUs (all of glibc + the hurd servers).  Pin it to `randomSeed`.  No
-#      runtime-security impact: it is compile-time symbol naming only, not
-#      runtime entropy (stack canary, ASLR, RELRO/PIE are all independent).
+#      derives from $out (host-varying here).  It feeds gcc's symbol-name
+#      uniquifier, perturbing .text/.rodata of seed-sensitive TUs (all of glibc
+#      + the hurd servers).  Pin it to `randomSeed`.  No runtime-security impact:
+#      compile-time symbol naming only, not runtime entropy (canary/ASLR/RELRO/
+#      PIE are independent).
 
 { lib }:
 
 rec {
-  # Stable names for a wrapped toolchain's three store paths.  `toolchain` is
-  # a `wrapCCWith` result, so `.cc` is the underlying gcc (the one whose
-  # include dirs leak) and `.bintools` the wrapped binutils.
+  # Stable names for a wrapped toolchain's three store paths.  `toolchain` is a
+  # `wrapCCWith` result: `.cc` is the underlying gcc (whose include dirs leak),
+  # `.bintools` the wrapped binutils.
   debugPrefixMap = toolchain: [
     "-fdebug-prefix-map=${toolchain}=/cross-cc-wrapper"
     "-fdebug-prefix-map=${toolchain.cc}=/cross-gcc"
@@ -48,9 +43,8 @@ rec {
   hurdExtraCflags = "-fcommon";
 
   # Strip host build-tool `-isystem /nix/store/*` (+ their macro-prefix-maps) AND the
-  # reproducible-builds hook's $out-derived -frandom-seed from NIX_CFLAGS_COMPILE: a
-  # cross-compile must resolve system headers from its own sysroot only (on darwin the
-  # native stdenv / mkShell dumps every nativeBuildInput's include, leaking e.g. the
+  # hook's $out-derived -frandom-seed from NIX_CFLAGS_COMPILE: a cross-compile must
+  # resolve system headers from its own sysroot only (on darwin mkShell leaks e.g. the
   # host libiconv ahead of the target glibc).  Shared by dev-shell.nix and the hurd
   # derivation's preBuild (sed -E program; sedSeedOnly drops just the seed).
   sedSeedOnly     = "s/-frandom-seed=[^ ]*//g";
@@ -59,8 +53,8 @@ rec {
   # The preBuild NIX_CFLAGS_COMPILE rewrite for an OUT-OF-TREE cross build: strip the
   # hook's seed (+ optionally host -isystem leaks), add the toolchain debug-prefix-map,
   # map the absolute srcdir AND build dir to one canonical root, then pin the seed.
-  # `$srcdir` is exported by the out-of-tree preConfigure; `$PWD` is the build dir.
-  # Returns the `export …` line; consumers (gnumach/hurd preBuild) compose around it.
+  # `$srcdir` from the out-of-tree preConfigure; `$PWD` is the build dir.  Returns the
+  # `export …` line; consumers (gnumach/hurd preBuild) compose around it.
   detCflagsExport = { toolchain, canonBuild, stripIsystem ? false }:
     ''export NIX_CFLAGS_COMPILE="$(printf %s "$NIX_CFLAGS_COMPILE" | sed -E '${if stripIsystem then isystemStripSed else sedSeedOnly}') ${debugPrefixMapStr toolchain} -ffile-prefix-map=$srcdir=${canonBuild} -ffile-prefix-map=$PWD=${canonBuild} -frandom-seed=${randomSeed}"'';
 
@@ -70,21 +64,19 @@ rec {
   #   source : in-tree $(GLIBC_SRC) /Volumes/.../src/glibc | nix $src /nix/store/-source
   #   build  : in-tree $(GLIBC_BUILDDIR)                    | nix the SANDBOX build dir
   #   sysroot: in-tree $(SYSROOT)                           | nix $TMPDIR/sysroot
-  # The nix build/sysroot live in the sandbox temp ($NIX_BUILD_TOP/$TMPDIR), which
-  # varies per host (linux /build vs darwin /builds/nix-<pid>-<rand>) — so without
-  # these maps the nix glibc diverges cross-host even with the gcc map.  Each build
-  # -ffile-prefix-map's its real roots to these names; consumed by glibc.nix (nix
-  # side) and the in-tree Makefile (via the dev-shell env — see dev-shell.nix).
+  # The nix build/sysroot live in the sandbox temp, host-varying (linux /build vs
+  # darwin /builds/nix-<pid>-<rand>) — so without these maps the nix glibc diverges
+  # cross-host even with the gcc map.  Each build -ffile-prefix-map's its real roots
+  # to these names; consumed by glibc.nix and the in-tree Makefile (dev-shell env).
   glibcCanonSrc     = "/glibc-src";
   glibcCanonBuild   = "/glibc-build";
   glibcCanonSysroot = "/glibc-sysroot";
 
-  # One canonical root per gnumach/hurd build, so their nix builds (flakes/gnumach,
-  # flakes/hurd) come out byte-identical to the in-tree Makefile builds.  The nix
-  # builds run IN-SOURCE (one $PWD = src+build); the in-tree builds run out-of-tree
-  # (separate src + build dirs).  Mapping ALL of them to a SINGLE name reconciles
-  # the two layouts (identical relative paths under one root).  Consumed by
-  # gnumach/default.nix + hurd/default.nix and the in-tree Makefile (dev-shell env).
+  # One canonical root per gnumach/hurd build, so their nix builds come out
+  # byte-identical to the in-tree Makefile builds.  The nix builds run IN-SOURCE
+  # (one $PWD = src+build); the in-tree builds run out-of-tree (separate dirs).
+  # Mapping ALL to a SINGLE name reconciles the two layouts (identical relative
+  # paths under one root).  Consumed by gnumach/hurd default.nix + the Makefile.
   gnumachCanonBuild = "/gnumach-build";
   hurdCanonBuild    = "/hurd-build";
 }

@@ -1,14 +1,11 @@
-# Parse the upstream version string out of an autoconf input file —
-# version.m4 (gnumach-style: `m4_define([AC_PACKAGE_VERSION], [X])`) or
-# configure.ac (mig-style: `AC_INIT([Name], [X], …)`).  Both run at pure
-# flake eval via `builtins.readFile` + `builtins.match`; no impure flag,
-# no in-sandbox git.  Returns "unknown" when the file doesn't match the
-# expected shape.
+# Parse the upstream version string out of an autoconf input file — version.m4
+# (gnumach: `m4_define([AC_PACKAGE_VERSION], [X])`) or configure.ac (mig:
+# `AC_INIT([Name], [X], …)`).  Pure-eval (readFile + match).  Returns "unknown"
+# on no match.
 #
-# NB: nix's `builtins.match` uses POSIX ERE, which rejects `\(` / `\[` as
-# invalid escapes.  Literals are spelled via single-char classes:
-# `[(]` matches `(`, `[[]` matches `[`, `[]]` matches `]`.  `.` already
-# matches newlines in nix's regex, so no multi-line dance.
+# NB: nix's `builtins.match` uses POSIX ERE, which rejects `\(` / `\[`.
+# Literals are spelled via single-char classes: `[(]`, `[[]`, `[]]`.  `.`
+# already matches newlines in nix's regex, so no multi-line dance.
 
 { lib }:
 

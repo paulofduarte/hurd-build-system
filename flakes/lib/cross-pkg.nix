@@ -3,11 +3,9 @@
 { lib }:
 
 {
-  # OUT-OF-TREE build prelude: configure + build in a sibling dir with an ABSOLUTE
-  # srcdir, so source paths in DWARF/__FILE__ are absolute and map cleanly to the
-  # canonical root (an in-source build leaves unmapped relative `../` paths, diverging
-  # from the in-tree out-of-tree build).  `$srcdir` is then read by the preBuild
-  # det-flags rewrite (build-flags.detCflagsExport) + any doc-mtime touch.
+  # Configure + build in a sibling dir with an absolute $srcdir, so DWARF/__FILE__
+  # paths map cleanly to the canonical root (an in-source build leaves unmapped `../`
+  # paths).  $srcdir is read by the preBuild det-flags rewrite.
   outOfTreePreConfigure = ''
     srcdir="$PWD"
     mkdir -p "$NIX_BUILD_TOP/build"

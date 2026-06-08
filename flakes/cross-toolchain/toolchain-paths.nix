@@ -1,8 +1,5 @@
-# Per-target toolchain paths + triples, computed ONCE so the nix glibc build
-# (glibc.nix) and the in-tree dev shell (dev-shell.nix) derive `--with-binutils`,
-# `--build` and `--host` from a single source instead of repeating the same
-# expressions.  There is only one cross-binutils (binutils-unwrapped); both sides
-# get its `/bin` from here, so `--with-binutils` is genuinely DRY (same store path).
+# Per-target toolchain paths + triples (--with-binutils / --build / --host), shared
+# by glibc.nix and the dev shell so the nix and in-tree builds use the same values.
 { nixpkgs, mkCrossPkgs }:
 
 system: target:

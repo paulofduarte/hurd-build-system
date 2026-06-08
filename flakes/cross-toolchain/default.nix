@@ -1,18 +1,16 @@
-# Cross-toolchain machinery — barrel.  This is THE toolchain for the repo:
-# the `<cpu>-gnu` Hurd cross-toolchain that builds the gnumach kernel, MIG,
-# glibc-hurd, and the Hurd userland.  (Formerly split between a bare-metal
-# `*-elf` cross-toolchain and a separate `hurd-toolchain`; merged here so
-# there is a single toolchain + a single dev shell.)
+# Cross-toolchain machinery — barrel.  THE `<cpu>-gnu` Hurd cross-toolchain
+# for the repo: builds the gnumach kernel, MIG, glibc-hurd, and the Hurd
+# userland — one toolchain + one dev shell.
 #
-# The actual logic lives in sibling modules, grouped by concern:
+# Logic lives in sibling modules:
 #
-#   pkgs.nix        — `mkCrossPkgs`: the only place that imports the patched
+#   pkgs.nix        — `mkCrossPkgs`: the only importer of the patched
 #                     `<cpu>-gnu` nixpkgs (lib/systems extension from
 #                     flakes/lib-systems-hurd) with `crossSystem` set, + the
 #                     gas-determinism chunksize overlay.
 #   toolchain.nix   — `mkAll` (cross-binutils + stage-1 cc per target), and the
 #                     `mkGcc` (a complete cross-gcc vs a given target libc) /
-#                     `wrappedToolchain` / `hurdTargets` helpers.  The 3-stage
+#                     `wrappedToolchain` / `hurdTargets` helpers.  The 2-pass
 #                     gcc/glibc chain is orchestrated in packages.nix.
 #   glibc.nix       — `glibc-hurd-<arch>` (imported directly by packages.nix).
 #   abi-check.nix   — `mkAbiChecked` (in-build ABI gate) + `mkAbiReport`

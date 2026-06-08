@@ -1,22 +1,16 @@
 # glibc-hurd — per-target Hurd C library derivation.
 # (See .claude/docs/build/HURD-TOOLCHAIN-DESIGN.md for the overall plan.)
 #
-# Builds vanilla upstream glibc 2.43 from the pinned `glibc-src` flake
-# input, configured for the Hurd target via `--host=<cpu>-gnu`.  glibc
-# 2.43 has the htl (Hurd Threading Library) port built in — no separate
-# `libpthread` add-on needed, unlike pre-2.40 configurations.
+# Builds vanilla upstream glibc 2.43 from the pinned `glibc-src` flake input,
+# configured for the Hurd target via `--host=<cpu>-gnu`.  glibc 2.43 has the htl
+# (Hurd Threading Library) port built in — no separate `libpthread` add-on.
 #
-# Why a standalone derivation (not `nixpkgs.glibc.override`):
-# nixpkgs' glibc package has many Linux-specific assumptions baked
-# into its build expression (post-install hooks, linker-script
-# rewrites, audit-libs propagation) plus a hard `meta.platforms =
-# lib.platforms.linux` gate that refuses Hurd at evaluation time.
-# Working around all of that would mean re-writing most of the
-# nixpkgs derivation anyway; a fresh derivation against vanilla
-# upstream glibc is cleaner, smaller, and easier to debug.  The
-# trade-off is we re-implement the standard glibc build dance —
-# but that dance is ~20 lines (out-of-tree build dir, configure with
-# the cross-hurd flag set, make + make install).
+# A standalone derivation (not `nixpkgs.glibc.override`): nixpkgs' glibc bakes in
+# Linux-specific assumptions (post-install hooks, linker-script rewrites, audit-
+# libs propagation) plus a hard `meta.platforms = lib.platforms.linux` gate that
+# refuses Hurd at eval time.  Working around all of it means rewriting most of the
+# derivation anyway; a fresh one against vanilla glibc is cleaner — the standard
+# build dance is ~20 lines (out-of-tree build dir, configure, make + make install).
 #
 # Outputs:
 #   $out/lib/libc.so.0.3                 the Hurd libc SONAME
@@ -34,19 +28,16 @@
 #   gnumach-headers + hurd-headers    sibling flakes
 #   mig                               sibling flake
 #
-# The combined sysroot include tree is built in preConfigure by
-# symlink-farming gnumach-headers + hurd-headers into one directory —
-# `--with-headers=$sysroot/include` then sees both as if they came
-# from a unified GNU/Hurd installation.
+# The combined sysroot include tree is built in preConfigure by symlink-farming
+# gnumach-headers + hurd-headers into one directory, so
+# `--with-headers=$sysroot/include` sees both as one GNU/Hurd installation.
 
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
 , srcInput, forkUrl
-  # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc
-  # is referenced by absolute path for CC=/CXX=, so pass a derivation whose
-  # bin/<tp>-gcc + bin/<tp>-g++ exist).  Default = the libc-free stage-1 nolibc
-  # cc (gccWithoutTargetLibc), used for the bootstrap glibc.  The reference and
-  # working glibcs override this with the complete stage-2 / final gcc (Phase-2
-  # 3-stage bootstrap — see PHASE-2-3STAGE-BOOTSTRAP.md).
+  # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc is
+  # referenced by absolute path for CC=/CXX=, so pass a derivation with bin/<tp>-gcc
+  # + bin/<tp>-g++).  Default = the libc-free nolibc stage-1 cc, used by the
+  # reference glibc; the working glibc overrides it with the final ref-wrapped gcc.
 , buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc) }:
 
 let
@@ -54,23 +45,21 @@ let
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
   # Shared cross-build determinism flags (the SAME source the dev-shell +
-  # gnumach/hurd use) — fed through the wrapped cc's NIX_CFLAGS_COMPILE below so
-  # the nix glibc comes out byte-identical cross-host, like the in-tree build.
+  # gnumach/hurd use), fed through NIX_CFLAGS_COMPILE below so the nix glibc comes
+  # out byte-identical cross-host, like the in-tree build.
   buildFlags = import ./build-flags.nix { inherit lib; };
   glibcConfig = import ./glibc-config.nix;
   toolchainPaths = import ./toolchain-paths.nix { inherit nixpkgs mkCrossPkgs; };
 
-  # Patched (deterministic) install-info — the SAME one the dev-shell uses for the
-  # in-tree build (texinfo-det.nix).  glibc's `make install` runs install-info to
-  # build share/info/dir; the unpatched upstream comparator is host-dependent +
-  # writes a different default header, so the nix glibc's shipped dir diverged from
-  # the in-tree one (and cross-host).  Using the patched texinfo here makes them
+  # Patched (deterministic) install-info — the SAME one the dev-shell uses
+  # (texinfo-det.nix).  glibc's `make install` runs install-info to build
+  # share/info/dir; the unpatched upstream comparator is host-dependent + writes a
+  # different default header, so the shipped dir diverges.  The patch makes it
   # identical and reproducible.
   texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
-  # glibc puts its version in version.h as `#define VERSION "2.43"`,
-  # NOT in configure.ac (which says "(see version.h)") nor in a
-  # version.m4.  Parse it directly with a regex match.
+  # glibc's version lives in version.h as `#define VERSION "2.43"`, not in
+  # configure.ac or a version.m4 — parse it with a regex match.
   upstreamVersion =
     let
       content = builtins.readFile (srcInput + "/version.h");
@@ -88,15 +77,10 @@ let
   mkOne = name: target:
     let
       crossPkgs       = mkCrossPkgs system target;
-      # gccWithoutTargetLibc is a wrapper around the raw gcc; its
-      # .cc attr is the raw cross-gcc derivation.  We reference both:
-      # the wrapper for its bin/ (needed for absolute CC= paths) and
-      # the raw cc/include for header search paths.  Crucially we do
-      # NOT include the wrapper in buildInputs — its setup-hook
-      # propagation would otherwise pull in binutils-wrapper, which
-      # carries `libc_bin = glibc-i686-gnu-2.40-224` and trips
-      # nixpkgs' `meta.platforms = lib.platforms.linux` gate on the
-      # Hurd target.  Using paths only sidesteps the meta probe.
+      # crossCC is reached by absolute path only — NOT a buildInput.  As a
+      # buildInput its setup-hook would pull in binutils-wrapper (which carries a
+      # `libc_bin` glibc dep) and trip nixpkgs' `meta.platforms = lib.platforms.
+      # linux` gate on the Hurd target.  Paths-only sidesteps the meta probe.
       crossCC         = buildCC name target;
       tcPaths         = toolchainPaths system target;
       crossBinuRaw    = tcPaths.binutils;
@@ -108,50 +92,42 @@ let
       # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
       salt            = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
     in
-    # Use native (host) stdenv — glibc IS the cross libc, can't be
-    # built by a cross-stdenv that requires libc to bootstrap.  Cross
-    # tools come via explicit env vars in preConfigure (matches what
-    # cross-hurd's bootstrap-funcs.sh does).
+    # Native (host) stdenv — glibc IS the cross libc, can't be built by a
+    # cross-stdenv that requires libc to bootstrap.  Cross tools come via explicit
+    # env vars in preConfigure (matches cross-hurd's bootstrap-funcs.sh).
     pkgs.stdenv.mkDerivation ({
       inherit pname;
       version = fullVersion;
       src = srcInput;
 
-      # rtld.c: walk _environ directly in process_envvars_secure,
-      # otherwise the ld.so link fails with undefined `getenv` when
-      # cross-building from a non-Linux host.  See the patch preamble.
+      # rtld.c: walk _environ directly in process_envvars_secure, else the ld.so
+      # link fails with undefined `getenv` when cross-building from a non-Linux
+      # host.  See the patch preamble.
       patches = [ ./patches/01-rtld-getenv-walk-environ.patch ];
 
-      # glibc's build needs bison + perl + gawk + python + texinfo +
-      # gettext at host side.  No autoreconf — glibc ships a working
-      # configure in its git tree.  patchelf: glibc's Makerules runs
-      # `patchelf --clear-execstack` on each installed .so at install time
-      # (and probes `patchelf --version` first) — without it on PATH the
-      # install logs "patchelf: command not found" for every library.  NOTE:
-      # glibc gates the actual clear-execstack on patchelf >= 0.18.0; nixpkgs
-      # ships 0.15.2, so this silences the probe but glibc still skips the
-      # scrub until patchelf is overridden to >= 0.18.0.
+      # Host-side build tools.  No autoreconf — glibc ships a working configure.
+      # patchelf: glibc's Makerules probes `patchelf --version` + runs
+      # `--clear-execstack` per installed .so; without it on PATH the install logs
+      # "patchelf: command not found".  NOTE: glibc gates the actual scrub on
+      # patchelf >= 0.18.0 and nixpkgs ships 0.15.2, so this silences the probe but
+      # the scrub still skips until patchelf is overridden to >= 0.18.0.
       nativeBuildInputs = (with pkgs; [
         bison perl gawk python3 gettext gnumake patchelf
       ]) ++ [ texinfoDet ];
 
-      # buildInputs only carries derivations whose meta.platforms
-      # allows the Hurd target — i.e. our own per-target outputs.
-      # The cross-cc + cross-binutils are reached by absolute path
-      # in configurePhase to avoid pulling the wrapped binutils
-      # (which has a libc_bin dep on nixpkgs glibc → meta.platforms
-      # gate trips on Hurd).
+      # buildInputs only carries derivations whose meta.platforms allows the Hurd
+      # target (our own per-target outputs).  The cross-cc + cross-binutils are
+      # reached by absolute path in configurePhase to dodge the wrapped binutils'
+      # libc_bin dep → meta.platforms gate.
       buildInputs = [
         crossMig
         gnumach-headers
         hurd-headers
       ];
 
-      # glibc REQUIRES an out-of-tree build dir — `configure` refuses
-      # to run in the source dir.  Set up: combined sysroot include
-      # tree (gnumach + hurd headers symlink-farmed) and the build
-      # dir; export cross-toolchain tool names for glibc's configure
-      # to pick up.
+      # glibc REQUIRES an out-of-tree build dir.  Sets up the combined sysroot
+      # include tree (gnumach + hurd headers symlink-farmed) and the build dir,
+      # and exports the cross-toolchain tool names for glibc's configure.
       configurePhase = ''
         runHook preConfigure
 
@@ -232,44 +208,36 @@ let
         runHook postConfigure
       '';
 
-      # glibc's htl subdir emits both `stamp.os` and `stamp.oST` stamp
-      # files, which collide on a case-insensitive filesystem — so the
-      # nix store volume must be case-sensitive APFS (or any Linux fs).
+      # glibc's htl subdir emits both `stamp.os` and `stamp.oST`, which collide on
+      # a case-insensitive filesystem — so the nix store volume must be case-
+      # sensitive APFS (or any Linux fs).
       enableParallelBuilding = true;
 
-      # Keep glibc's `-g` DWARF (don't let stdenv strip it).  The ABI gate
-      # needs DWARF on both the working + reference glibc for abidiff/pahole;
-      # carrying it natively means the gate analyses the real libraries
-      # directly instead of building throwaway unstripped twins.  Stripping,
-      # if ever wanted for a release artifact, is a dist-phase concern (no
-      # dist-glibc exists today — glibc isn't a shipped artifact, only a
-      # toolchain component).  See TOOLCHAIN-LIBC-DECOUPLING.md / task #197.
+      # Keep glibc's `-g` DWARF (don't let stdenv strip it): the ABI gate needs
+      # DWARF on both the working + reference glibc for abidiff/pahole, so it
+      # analyses the real libraries directly instead of unstripped twins.
+      # Stripping for a release artifact is a dist-phase concern (no dist-glibc
+      # today — glibc is a toolchain component, not a shipped artifact).
+      # See TOOLCHAIN-LIBC-DECOUPLING.md / task #197.
       dontStrip = true;
 
-      # patchelf is in nativeBuildInputs for glibc's own Makerules
-      # `--clear-execstack` step — but pulling it in also registers patchelf's
-      # setup-hook, which adds a `patchelf --shrink-rpath` pass to fixupPhase.
-      # We don't want that mutating a cross i686-gnu libc's .so RPATHs (output
-      # stability), and observed it spams "shrinking …" / "wrong ELF type"
-      # (the latter is patchelf refusing the crt*.o relocatables; harmless,
-      # `|| true`d).  `dontPatchELF` guards ONLY that shrink hook — glibc's own
-      # patchelf call is unaffected — so this keeps the binary available while
-      # turning the shrink pass off.
+      # patchelf is in nativeBuildInputs for glibc's own `--clear-execstack` step,
+      # but pulling it in also registers patchelf's `--shrink-rpath` setup-hook.
+      # We don't want that mutating the cross libc's .so RPATHs (output stability),
+      # and it spams "shrinking …" / "wrong ELF type" (patchelf refusing the crt*.o
+      # relocatables; harmless).  `dontPatchELF` guards ONLY that shrink hook —
+      # glibc's own patchelf call is unaffected.
       dontPatchELF = true;
 
-      # Smoke-validate the deliverable: libc.so.0.3 (Hurd SONAME,
-      # NOT libc.so.6) and the dynamic linker per arch.  Fails the
-      # build early if the install layout is wrong.
-      # glibc install-headers lays down glibc's own headers + the
-      # mig-generated RPC stubs, but not the gnumach kernel headers or
-      # the hurd headers (e.g. bits/sigcontext.h includes
-      # mach/machine/fp_reg.h, which lives in gnumach-headers).  A
-      # consumer that treats this output as the cross sysroot — gcc's
-      # libcCross, the wrapped cc — needs the complete GNU/Hurd include
-      # tree, so merge the gnumach + hurd headers in.  cp -an preserves
-      # the mach/machine -> <arch> symlink and keeps glibc's own headers
-      # on any overlap (glibc was built against these exact headers, so
-      # there is no version skew).
+      # Smoke-validate the deliverable: libc.so.0.3 (Hurd SONAME, NOT libc.so.6) +
+      # the per-arch dynamic linker; fails early on a wrong install layout.
+      # glibc install-headers lays down glibc's own headers + the mig RPC stubs,
+      # but not the gnumach/hurd headers (e.g. bits/sigcontext.h includes
+      # mach/machine/fp_reg.h from gnumach-headers).  A consumer treating this as
+      # the cross sysroot (gcc's libcCross, the wrapped cc) needs the complete
+      # GNU/Hurd include tree, so merge them in.  cp -an preserves the
+      # mach/machine -> <arch> symlink and keeps glibc's own headers on overlap
+      # (built against these exact headers — no version skew).
       postInstall = ''
         # Merge in the gnumach + hurd headers (cp -a preserves the
         # mach/machine -> <arch> symlink; -n keeps glibc's own on any
@@ -303,9 +271,8 @@ let
         grep -q libmachuser $out/lib/libc.so  || { echo "ERROR: libc.so not augmented"; exit 1; }
       '';
 
-      # Documents what this is, but glibc-hurd doesn't have a
-      # meta.platforms restriction (it's only built for the non-xen
-      # userland targets anyway).
+      # No meta.platforms restriction — only built for the non-xen userland targets
+      # anyway.
       passthru = { inherit target; };
       meta = with lib; {
         description = "GNU C Library for ${tp} (Hurd port)";
@@ -316,24 +283,20 @@ let
       installFlags = [ "DESTDIR=${placeholder "out"}" ];
       dontMoveSbin = true;
       # No /nix/store DT_RUNPATH on the shipped sub-libraries.  glibc links
-      # libmachuser/libhurduser/libpthread (and the nss/rt/resolv/… stubs)
-      # against the prior (reference) glibc via the wrapper's `-L<refglibc>/lib`
-      # (libc-ldflags).  The nix ld-wrapper then auto-derives a DT_RUNPATH to
-      # that store dir — a leak in a --prefix=/ deployed tree (no /nix/store; the
-      # libs resolve libc.so.0.3 from /lib via the loader path, like any distro
-      # system lib).  libc.so.0.3 / ld.so escape (linked -nostdlib).  The
-      # wrappedToolchain bintools sets this flag too, but glibc.nix uses the cc
-      # by ABSOLUTE PATH (to dodge nixpkgs' meta gate), so no wrapper setup-hook
-      # runs — and gcc's own --with-ld bintools carries no suppression.  So set
-      # the real env var here (same channel mkGcc uses for libgcc_s/libstdc++).
+      # libmachuser/libhurduser/libpthread (and the nss/rt/resolv/… stubs) against
+      # the prior (reference) glibc via the wrapper's `-L<refglibc>/lib`, and the
+      # nix ld-wrapper auto-derives a DT_RUNPATH to that store dir — a leak in a
+      # --prefix=/ tree (the libs resolve libc.so.0.3 from /lib via the loader
+      # path).  libc.so.0.3 / ld.so escape (linked -nostdlib).  glibc.nix uses the
+      # cc by ABSOLUTE PATH (to dodge the meta gate), so no wrapper setup-hook runs
+      # and gcc's --with-ld bintools carries no suppression — set the real env var
+      # here (same channel mkGcc uses for libgcc_s/libstdc++).
       "NIX_DONT_SET_RPATH${salt}" = "1";
-      # glibc's helper scripts (bin/{ldd,tzselect,xtrace,sotruss},
-      # bin/mtrace) ship the portable shebang from their *.in source
-      # (#!/bin/bash, #! /bin/sh) — glibc's ldd-rewrite sed never touches
-      # line 1.  nixpkgs' patchShebangs fixup is what rewrites them to a
-      # /nix/store bash, the lone store leak left in a deployed tree.  These
-      # scripts run on the TARGET, not the build host, so disable the rewrite
-      # and keep the /-rooted target shebang (fixed at build, no dist sed).
+      # glibc's helper scripts (bin/{ldd,tzselect,xtrace,sotruss,mtrace}) ship a
+      # portable shebang from their *.in source; nixpkgs' patchShebangs rewrites it
+      # to a /nix/store bash, the lone store leak left in a deployed tree.  These
+      # scripts run on the TARGET, so disable the rewrite and keep the /-rooted
+      # shebang (fixed at build, no dist sed).
       dontPatchShebangs = true;
     });
 in
