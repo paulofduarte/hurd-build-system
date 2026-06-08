@@ -52,4 +52,13 @@ rec {
   glibcCanonSrc     = "/glibc-src";
   glibcCanonBuild   = "/glibc-build";
   glibcCanonSysroot = "/glibc-sysroot";
+
+  # One canonical root per gnumach/hurd build, so their nix builds (flakes/gnumach,
+  # flakes/hurd) come out byte-identical to the in-tree Makefile builds.  The nix
+  # builds run IN-SOURCE (one $PWD = src+build); the in-tree builds run out-of-tree
+  # (separate src + build dirs).  Mapping ALL of them to a SINGLE name reconciles
+  # the two layouts (identical relative paths under one root).  Consumed by
+  # gnumach/default.nix + hurd/default.nix and the in-tree Makefile (dev-shell env).
+  gnumachCanonBuild = "/gnumach-build";
+  hurdCanonBuild    = "/hurd-build";
 }

@@ -207,6 +207,11 @@ in
         export GLIBC_CANON_SRC=${buildFlags.glibcCanonSrc}
         export GLIBC_CANON_BUILD=${buildFlags.glibcCanonBuild}
         export GLIBC_CANON_SYSROOT=${buildFlags.glibcCanonSysroot}
+        # Same for the in-tree gnumach + hurd builds (see build-flags.nix) — the
+        # SAME single canonical gnumach/default.nix + hurd/default.nix map their
+        # nix build's $PWD to, so in-tree == nix for those modules too.
+        export GNUMACH_CANON_BUILD=${buildFlags.gnumachCanonBuild}
+        export HURD_CANON_BUILD=${buildFlags.hurdCanonBuild}
 
         # No store RUNPATH leak in the shipped dist.  On Linux the cross
         # ld-wrapper bakes a DT_RUNPATH into EVERY in-tree binary; darwin's

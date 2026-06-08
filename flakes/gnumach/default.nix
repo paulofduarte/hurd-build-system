@@ -114,16 +114,11 @@ let
         ++ (with pkgs; [ texinfo perl patchelf ])
         ++ [ toolchain crossMig ];
 
-      # `buildFlags.debugPrefixMap` rewrites the host-specific cross-toolchain
-      # /nix/store paths that leak into DWARF (header refs, comp dirs, file
-      # tables) to stable names, so the same source yields byte-identical
-      # `.debug_info` on every host.  Shared with flakes/hurd + the in-tree
-      # dev shell (build-flags.nix) so all three build paths agree.  Debug
-      # info is preserved (paths only), so dist/ stays usable for gdb.
-      CFLAGS = lib.concatStringsSep " " ([
-        "-g"
-        "-O2"
-      ] ++ buildFlags.debugPrefixMap toolchain);
+      # CFLAGS go via configureFlags (below), NOT a derivation env var: an env
+      # CFLAGS is seen by configure (→ config.make) AND make, so `-g/-O/-std`
+      # land in DW_AT_producer twice vs the in-tree build (configure-only).  The
+      # toolchain debug-prefix-map moves to NIX_CFLAGS_COMPILE (preBuild) — the
+      # in-tree dev shell's channel — so neither doubles.
 
       # Splice the eval-time-composed version into version.m4 before the
       # autoreconfHook regenerates configure.  ${fullVersion} is composed
@@ -143,6 +138,17 @@ let
       # cc links the freestanding kernel with no libc.
       preConfigure = ''
         export CC=${tp}-gcc
+        # CFLAGS via configureFlagsArray (a bash array) so the embedded space
+        # survives — a plain configureFlags list element is word-split by nix.
+        configureFlagsArray+=("CFLAGS=-g -O2")
+        # Build OUT-OF-TREE with an ABSOLUTE srcdir, mirroring the in-tree build
+        # (work/gnumach/… ≠ src/gnumach): an in-source build leaves unmapped
+        # relative `../` paths in DWARF; absolute source paths map cleanly to
+        # ${buildFlags.gnumachCanonBuild} (see preBuild) — matching the in-tree.
+        srcdir="$PWD"
+        mkdir -p "$NIX_BUILD_TOP/build"
+        cd "$NIX_BUILD_TOP/build"
+        configureScript="$srcdir/configure"
       '';
 
       # Force the cross binutils into the recursive sub-makes.  configure's
@@ -199,6 +205,16 @@ let
       # is a dist-phase concern.
       dontStrip = true;
 
+      # Disable nixpkgs' userland hardening on the freestanding kernel.  The
+      # mkDerivation default (relro/bindnow/pie/…) makes ld page-align the RW
+      # PT_LOAD (.data → a page boundary), whereas the in-tree dev-shell build
+      # packs it right after the RO segment — a +0x1000-class layout shift that
+      # relocates every absolute address (identical code, divergent bytes).  The
+      # flags are inert/meaningless for a -nostdlib -ffreestanding kernel; turning
+      # them off here (and NIX_HARDENING_ENABLE= in the in-tree recipe) makes both
+      # links lay the kernel out identically.
+      hardeningDisable = [ "all" ];
+
       # `make install` produces $out/boot/gnumach plus the public
       # headers + .defs.  stdenv's default buildPhase ("make")
       # handles the kernel link.
@@ -241,6 +257,27 @@ let
         description = "GNU Mach microkernel for ${target.crossTarget}";
         platforms = platforms.all;
       };
-    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
+
+      # Determinism — make the nix kernel BYTE-IDENTICAL to the in-tree build of
+      # the same source (mirrors flakes/cross-toolchain/glibc.nix + the in-tree
+      # Makefile recipe).  gnumach builds IN-SOURCE here, so $PWD is the one root
+      # holding both source and generated files; map it to the SINGLE canonical the
+      # in-tree out-of-tree build also maps its src+build dirs to (build-flags.nix
+      # gnumachCanonBuild), so the DWARF paths agree.  Pin the shared -frandom-seed
+      # (stripping the reproducible-builds hook's $out-derived, host-varying one
+      # first — exactly as the dev-shell does for the in-tree build).  Replaces
+      # helpers.mkReproAttrs (whose /build map + per-package seed don't match the
+      # in-tree's canonical + shared seed).  debugPrefixMap (toolchain→/cross-gcc,
+      # in CFLAGS) + dontStrip stay.
+      preBuild = ''
+        # mach.info's "last updated …" comes from the doc .texi FILE MTIME via
+        # mdate-sh (which ignores SOURCE_DATE_EPOCH, despite its comment — true of
+        # automake 1.18's mdate-sh too).  Set the mtime to the source commit date
+        # so it's a MEANINGFUL date that matches the in-tree build (which touches
+        # the same from `git log %ct`), not the store mtime=1 (1 Jan 1970).
+        touch -d @${toString srcInput.lastModified} "$srcdir"/doc/*.texi
+        export NIX_CFLAGS_COMPILE="$(printf %s "$NIX_CFLAGS_COMPILE" | sed -E 's/-frandom-seed=[^ ]*//g') ${buildFlags.debugPrefixMapStr toolchain} -ffile-prefix-map=$srcdir=${buildFlags.gnumachCanonBuild} -ffile-prefix-map=$PWD=${buildFlags.gnumachCanonBuild} -frandom-seed=${buildFlags.randomSeed}"
+      '';
+    });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-${name}" (mkOne name target)) targets

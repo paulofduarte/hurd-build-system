@@ -70,12 +70,12 @@ let
         ++ (with pkgs; [ texinfo perl pkg-config patchelf fakeroot ])
         ++ [ toolchain crossMig ];
 
-      # hurd predates gcc's -fno-common default (gcc 10+); -fcommon keeps
-      # its tentative-definition globals linking.  buildFlags.debugPrefixMap
-      # maps the cross-toolchain store paths out of DWARF for host-stable
-      # debug info (shared with flakes/gnumach + the in-tree dev shell).
-      CFLAGS = lib.concatStringsSep " "
-        ([ "-fcommon" "-g" "-O2" ] ++ buildFlags.debugPrefixMap toolchain);
+      # CFLAGS are passed via configureFlags (below), NOT as a derivation env var:
+      # an env CFLAGS is seen by BOTH configure (→ config.make) AND make, so the
+      # `-g/-O/-std` set lands in DW_AT_producer twice — diverging from the in-tree
+      # build, which passes CFLAGS through configure only.  The toolchain debug-
+      # prefix-map moves to NIX_CFLAGS_COMPILE (preBuild), the same channel the
+      # in-tree dev shell uses, so neither doubles.
 
       postPatch = ''
         sed -i.bak \
@@ -94,6 +94,17 @@ let
         export CC=${tp}-gcc
         export MIG=${tp}-mig
         export USER_MIG=${tp}-mig
+        # CFLAGS via configureFlagsArray (a bash array) so the embedded space
+        # survives — a plain configureFlags list element is word-split by nix.
+        configureFlagsArray+=("CFLAGS=-fcommon -g -O2")
+        # Build OUT-OF-TREE with an ABSOLUTE srcdir, mirroring the in-tree build
+        # (work/hurd/… ≠ src/hurd): an in-source build leaves unmapped relative
+        # `../` paths in DWARF, whereas absolute source paths map cleanly to
+        # ${buildFlags.hurdCanonBuild} (see preBuild) — matching the in-tree.
+        srcdir="$PWD"
+        mkdir -p "$NIX_BUILD_TOP/build"
+        cd "$NIX_BUILD_TOP/build"
+        configureScript="$srcdir/configure"
       '';
 
       # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive
@@ -109,7 +120,19 @@ let
       # Flag set is shared with the in-tree dev shell via hurd-config.nix
       # (the --without-* disables + the cross-configure cache seeds); see
       # that file for the rationale.  Only --host is per-derivation here.
-      configureFlags = [ "--host=${tp}" ] ++ hurdConfig.coreFlags;
+      # Deployable prefix (mirrors the in-tree build + glibc.nix's deployPrefix):
+      # configure --prefix=/ with root-relative dirs so baked paths — libps's
+      # DATADIR (=//share/msgids), the console server's module dir + .bdf font
+      # dir — are deployable and match the in-tree, NOT $out store paths (which
+      # also make the dist non-deployable).  dontAddPrefix stops stdenv adding
+      # --prefix=$out; install lands in $out via DESTDIR.  No --datarootdir, so
+      # datadir defaults to //share like the in-tree.
+      configureFlags = [
+        "--host=${tp}"
+        "--prefix=/" "--libexecdir=/libexec" "--bindir=/bin" "--sbindir=/sbin"
+        "--sysconfdir=/etc" "--localstatedir=/var" "--libdir=/lib" "--includedir=/include"
+      ] ++ hurdConfig.coreFlags;
+      dontAddPrefix = true;
 
       # Install under fakeroot: hurd's daemons/ + utils/ install some programs
       # `-o root -m 4755` (setuid), which the sandbox can't do (chown is
@@ -121,7 +144,7 @@ let
       # Makefiles, keeping the source unmutated.
       installPhase = ''
         runHook preInstall
-        fakeroot make install prefix=$out $makeFlags
+        fakeroot make install DESTDIR=$out $makeFlags
         runHook postInstall
       '';
 
@@ -147,11 +170,30 @@ let
       # ONLY the shrink hook — the audit-tmpdir check still runs.
       dontPatchELF = true;
 
+      # Keep the deployable `#!/bin/bash` shebangs in the installed hurd scripts
+      # (rc, runsystem, MAKEDEV, fakeroot, …).  nixpkgs' patchShebangs fixup
+      # rewrites them to `#!/nix/store/…/bash`, which (a) isn't deployable on a
+      # target Hurd and (b) diverges from the in-tree `make install` (no such
+      # rewrite).  The dist ships these to /libexec, /sbin, /bin root-relative.
+      dontPatchShebangs = true;
+
       # Keep the userland's `-g` DWARF (CFLAGS is `-fcommon -g -O2`); the
       # stdenv fixup strip hook would otherwise discard it.  hurd's own
       # install (INSTALL_PROGRAM) carries no -s, so this is the only stripper.
       # Want dist/ debuggable (gdb / addr2line on the servers + libs).
       dontStrip = true;
+
+      # Keep a REAL $out/sbin.  nixpkgs' move-sbin.sh fixup hook (native stdenv)
+      # otherwise moves $out/sbin/* into $out/bin and replaces sbin with a
+      # symlink -> bin.  That is NOT the GNU/Hurd layout: hurd installs sutils
+      # (fsck/halt/swapon/MAKEDEV) to a distinct $(sbindir) and even ships
+      # bin/MAKEDEV -> ../sbin/MAKEDEV — and Debian GNU/Hurd keeps /sbin real
+      # too.  The hook also (a) breaks that MAKEDEV link, (b) diverges from the
+      # in-tree `make install` (no such hook → real /sbin), and (c) collides on
+      # the shared dist tree with glibc's real sbin/ (sln/zic/iconvconfig) when
+      # dist-hurd + dist-glibc cp -a into it.  Disabling it keeps nix == in-tree
+      # == Debian and makes the dist merge order-independent.
+      dontMoveSbin = true;
 
       passthru = { inherit target; };
       meta = with lib; {
@@ -159,6 +201,23 @@ let
         platforms = platforms.all;
         license = licenses.gpl2Plus;
       };
-    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
+
+      # Determinism — make the nix userland BYTE-IDENTICAL to the in-tree build of
+      # the same source (mirrors flakes/cross-toolchain/glibc.nix + the in-tree
+      # Makefile recipe).  hurd builds OUT-OF-TREE here ($srcdir ≠ $PWD), both
+      # mapped to the SINGLE canonical the in-tree build also maps src+build to
+      # (build-flags.nix hurdCanonBuild), so DWARF paths agree.  Pin the shared
+      # -frandom-seed (stripping the reproducible-builds hook's $out-derived one).
+      # ALSO strip host build-tool `-isystem /nix/store/*` (+ their macro-prefix-
+      # maps): the native stdenv dumps every nativeBuildInput's include dir into
+      # NIX_CFLAGS_COMPILE, and on darwin the HOST libiconv-dev lands ahead of the
+      # target glibc, so console/pc_kbd/vga compile against the wrong iconv.h and
+      # leak the host store path into DWARF (Linux glibc has iconv built in → no
+      # leak).  A cross-compile must resolve system headers from its own sysroot
+      # only — the same strip the dev-shell does.  Replaces helpers.mkReproAttrs.
+      preBuild = ''
+        export NIX_CFLAGS_COMPILE="$(printf %s "$NIX_CFLAGS_COMPILE" | sed -E 's/-frandom-seed=[^ ]*//g; s#-isystem +/nix/store/[^ ]*##g; s#-fmacro-prefix-map=/nix/store/[^ ]*##g') ${buildFlags.debugPrefixMapStr toolchain} -ffile-prefix-map=$srcdir=${buildFlags.hurdCanonBuild} -ffile-prefix-map=$PWD=${buildFlags.hurdCanonBuild} -frandom-seed=${buildFlags.randomSeed}"
+      '';
+    });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-${name}" (mkOne name target)) hurdTargets
