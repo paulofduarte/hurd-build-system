@@ -141,14 +141,7 @@ let
         # CFLAGS via configureFlagsArray (a bash array) so the embedded space
         # survives — a plain configureFlags list element is word-split by nix.
         configureFlagsArray+=("CFLAGS=${buildFlags.baseCflags}")
-        # Build OUT-OF-TREE with an ABSOLUTE srcdir, mirroring the in-tree build
-        # (work/gnumach/… ≠ src/gnumach): an in-source build leaves unmapped
-        # relative `../` paths in DWARF; absolute source paths map cleanly to
-        # ${buildFlags.gnumachCanonBuild} (see preBuild) — matching the in-tree.
-        srcdir="$PWD"
-        mkdir -p "$NIX_BUILD_TOP/build"
-        cd "$NIX_BUILD_TOP/build"
-        configureScript="$srcdir/configure"
+        ${helpers.crossPkg.outOfTreePreConfigure}
       '';
 
       # Force the cross binutils into the recursive sub-makes.  configure's

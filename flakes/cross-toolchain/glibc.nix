@@ -40,7 +40,7 @@
 # from a unified GNU/Hurd installation.
 
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
-, srcInput, forkUrl, deployPrefix ? false
+, srcInput, forkUrl
   # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc
   # is referenced by absolute path for CC=/CXX=, so pass a derivation whose
   # bin/<tp>-gcc + bin/<tp>-g++ exist).  Default = the libc-free stage-1 nolibc
@@ -57,6 +57,8 @@ let
   # gnumach/hurd use) — fed through the wrapped cc's NIX_CFLAGS_COMPILE below so
   # the nix glibc comes out byte-identical cross-host, like the in-tree build.
   buildFlags = import ./build-flags.nix { inherit lib; };
+  glibcConfig = import ./glibc-config.nix;
+  toolchainPaths = import ./toolchain-paths.nix { inherit nixpkgs mkCrossPkgs; };
 
   # Patched (deterministic) install-info — the SAME one the dev-shell uses for the
   # in-tree build (texinfo-det.nix).  glibc's `make install` runs install-info to
@@ -96,7 +98,8 @@ let
       # nixpkgs' `meta.platforms = lib.platforms.linux` gate on the
       # Hurd target.  Using paths only sidesteps the meta probe.
       crossCC         = buildCC name target;
-      crossBinuRaw    = crossPkgs.buildPackages.binutils-unwrapped;
+      tcPaths         = toolchainPaths system target;
+      crossBinuRaw    = tcPaths.binutils;
       crossMig        = mig."mig-${name}";
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
       hurd-headers    = hurdHeaders."hurd-headers-${name}";
@@ -219,18 +222,12 @@ let
         # crt*.o ctor-section detection result rather than running a
         # link test (which would need a working libc to link).
         $src/configure \
-          --build=${pkgs.stdenv.hostPlatform.config} \
-          --host=${tp} \
-          --prefix=${if deployPrefix then "/" else "$out"} \
+          --build=${tcPaths.buildTriple} \
+          --host=${tcPaths.hostTriple} \
+          --prefix=/ \
           --with-headers=$TMPDIR/sysroot/include \
-          --with-binutils=${crossBinuRaw}/bin \
-          --enable-add-ons=libpthread \
-          --enable-obsolete-rpc \
-          --disable-profile \
-          --disable-nscd \
-          --disable-werror \
-          --disable-multilib \
-          libc_cv_ctors_header=yes${lib.optionalString deployPrefix " --libdir=/lib --sysconfdir=/etc --datarootdir=/share --localstatedir=/var --sbindir=/sbin --bindir=/bin --libexecdir=/libexec --includedir=/include libc_cv_slibdir=/lib libc_cv_rtlddir=/lib libc_cv_complocaledir=/lib/locale libc_cv_sysconfdir=/etc libc_cv_localstatedir=/var libc_cv_rootsbindir=/sbin"}
+          --with-binutils=${tcPaths.binutilsBin} \
+          ${lib.concatStringsSep " " glibcConfig.coreFlags} ${lib.concatStringsSep " " glibcConfig.deployFlags}
 
         runHook postConfigure
       '';
@@ -290,7 +287,7 @@ let
         # (Same step as Guix's augment-libc.so.)  Restrict the sed to
         # the GROUP line so OUTPUT_FORMAT(...) — which also ends in ')'
         # — is untouched.
-        sed -i "/^GROUP/ s|)\$|${if deployPrefix then " /lib/libmachuser.so /lib/libhurduser.so " else " $out/lib/libmachuser.so $out/lib/libhurduser.so "})|" \
+        sed -i "/^GROUP/ s|)\$| /lib/libmachuser.so /lib/libhurduser.so )|" \
           $out/lib/libc.so
 
         # i386: gcc's vanilla interpreter is /lib/ld.so (config/i386/gnu.h
@@ -315,7 +312,7 @@ let
         platforms = platforms.all;
         license = licenses.lgpl21Plus;
       };
-    } // lib.optionalAttrs deployPrefix {
+    } // {
       installFlags = [ "DESTDIR=${placeholder "out"}" ];
       dontMoveSbin = true;
       # No /nix/store DT_RUNPATH on the shipped sub-libraries.  glibc links

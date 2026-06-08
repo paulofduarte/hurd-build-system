@@ -27,6 +27,7 @@ let
     inherit lib selfMeta url;
   };
   repro        = import ./repro.nix         { inherit lib; };
+  crossPkg     = import ./cross-pkg.nix     { inherit lib; };
 in
 
-parseVersion // selfMeta // url // composeVer // repro
+parseVersion // selfMeta // url // composeVer // repro // { inherit crossPkg; }

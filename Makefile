@@ -1567,6 +1567,7 @@ glibc: $(GLIBC_BUILT)
 # touched only by gnumach-headers/hurd-headers, so a real Mach/Hurd header edit
 # still re-triggers glibc, but glibc's own install does not.
 $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(GNUMACH_HDR_STAMP) $(HURD_HDR_STAMP)
+	@$(call _req_env,GLIBC_CORE_FLAGS GLIBC_DEPLOY_FLAGS)
 	mkdir -p $(GLIBC_BUILDDIR)
 	@# Preflight: glibc emits objects differing only in case (e.g.
 	@# pthread_atfork.os vs .oS).  A case-INSENSITIVE filesystem collides them,
@@ -1591,23 +1592,10 @@ $(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(GNUMACH_HDR_STAMP) $(HURD_HDR_STAM
 	    --build=$(BUILD_TRIPLE) \
 	    --host=$(GNUMACH_HOST) \
 	    --prefix=/ \
-	    --libdir=/lib \
-	    --sysconfdir=/etc \
-	    --datarootdir=/share \
-	    --localstatedir=/var \
-	    --bindir=/bin \
-	    --sbindir=/sbin \
-	    --libexecdir=/libexec \
-	    --includedir=/include \
+	    $(GLIBC_DEPLOY_FLAGS) \
 	    --with-headers=$(SYSROOT)/include \
 	    --with-binutils=$(BINUTILS_BIN) \
-	    --enable-add-ons=libpthread \
-	    --enable-obsolete-rpc \
-	    --disable-profile --disable-nscd --disable-werror --disable-multilib \
-	    libc_cv_ctors_header=yes \
-	    libc_cv_slibdir=/lib libc_cv_rtlddir=/lib \
-	    libc_cv_complocaledir=/lib/locale libc_cv_sysconfdir=/etc \
-	    libc_cv_localstatedir=/var libc_cv_rootsbindir=/sbin
+	    $(GLIBC_CORE_FLAGS)
 	@# --prefix=/ leaves slibdir/rtlddir defaulting to $(exec_prefix)/lib = //lib
 	@# (DOUBLE slash, baked into PT_INTERP and the libc.so GROUP; a leading // is
 	@# POSIX implementation-defined).  Pin them to single-slash /lib via the
@@ -1987,15 +1975,14 @@ $(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
 	$(call _bake_version,hurd,hurd-$(_TC_ARCH),$(HURD_SRC))
 
 $(HURD_CONFIGURED): $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_SRC)/configure
-	@$(call _req_env,BASE_CFLAGS HURD_EXTRA_CFLAGS)
+	@$(call _req_env,BASE_CFLAGS HURD_EXTRA_CFLAGS HURD_DEPLOY_FLAGS)
 	mkdir -p $(HURD_BUILD)
 	cd $(HURD_BUILD) && \
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
 	    MIG=$(MIG) USER_MIG=$(MIG) \
 	    CFLAGS="$(HURD_EXTRA_CFLAGS) $(BASE_CFLAGS) $(_HURD_SYSROOT) $(call _macro_prefix_map,$(HURD_SRC))" \
 	    $(if $(GLIBC_IN_TREE),LDFLAGS="$(_HURD_LDFLAGS)") \
-	    --prefix=/ --libexecdir=/libexec --bindir=/bin --sbindir=/sbin \
-	    --sysconfdir=/etc --localstatedir=/var --libdir=/lib --includedir=/include
+	    $(HURD_DEPLOY_FLAGS)
 
 # In-tree install: `make install` the work/ userland into $(DIST_HURD) as a
 # self-contained tree.  `make hurd` is fast in-tree iteration; dist-hurd-tree

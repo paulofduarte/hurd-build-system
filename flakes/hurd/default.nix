@@ -97,14 +97,7 @@ let
         # CFLAGS via configureFlagsArray (a bash array) so the embedded space
         # survives — a plain configureFlags list element is word-split by nix.
         configureFlagsArray+=("CFLAGS=${buildFlags.hurdExtraCflags} ${buildFlags.baseCflags}")
-        # Build OUT-OF-TREE with an ABSOLUTE srcdir, mirroring the in-tree build
-        # (work/hurd/… ≠ src/hurd): an in-source build leaves unmapped relative
-        # `../` paths in DWARF, whereas absolute source paths map cleanly to
-        # ${buildFlags.hurdCanonBuild} (see preBuild) — matching the in-tree.
-        srcdir="$PWD"
-        mkdir -p "$NIX_BUILD_TOP/build"
-        cd "$NIX_BUILD_TOP/build"
-        configureScript="$srcdir/configure"
+        ${helpers.crossPkg.outOfTreePreConfigure}
       '';
 
       # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive
@@ -129,9 +122,7 @@ let
       # datadir defaults to //share like the in-tree.
       configureFlags = [
         "--host=${tp}"
-        "--prefix=/" "--libexecdir=/libexec" "--bindir=/bin" "--sbindir=/sbin"
-        "--sysconfdir=/etc" "--localstatedir=/var" "--libdir=/lib" "--includedir=/include"
-      ] ++ hurdConfig.coreFlags;
+      ] ++ hurdConfig.deployFlags ++ hurdConfig.coreFlags;
       dontAddPrefix = true;
 
       # Install under fakeroot: hurd's daemons/ + utils/ install some programs

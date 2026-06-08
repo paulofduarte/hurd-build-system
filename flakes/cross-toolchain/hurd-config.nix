@@ -2,6 +2,11 @@
 # (flakes/hurd) and the in-tree dev shell (dev-shell.nix) so the two
 # build paths stay in lockstep.  `--host=<tp>` is added by the caller.
 #
+# `deployFlags` — the root-relative install dirs (the Hurd ships to /libexec,
+# /sbin, /bin, … on a target Hurd; --prefix=/ makes the installed tree
+# relocatable, consumed via DESTDIR/--sysroot).  Same set glibc uses, minus
+# glibc's libc_cv_* (hurd has no slibdir/rtlddir to pin).
+#
 # Disables the optional external-dependency components (parted, rump,
 # nfs/libtirpc, lwip, console xkbcommon, libgcrypt, libdaemon, libcrypt)
 # so only the core ext2fs-bootable userland builds, and pre-seeds the
@@ -12,6 +17,17 @@
 # ac_cv_search_clnt_create=no dodges the libtirpc probe.
 
 {
+  deployFlags = [
+    "--prefix=/"
+    "--libexecdir=/libexec"
+    "--bindir=/bin"
+    "--sbindir=/sbin"
+    "--sysconfdir=/etc"
+    "--localstatedir=/var"
+    "--libdir=/lib"
+    "--includedir=/include"
+  ];
+
   coreFlags = [
     "--disable-profile"
     "--without-parted"

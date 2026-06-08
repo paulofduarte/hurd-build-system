@@ -31,6 +31,8 @@
 let
   lib = nixpkgs.lib;
   hurdConfig = import ./hurd-config.nix;
+  glibcConfig = import ./glibc-config.nix;
+  toolchainPaths = import ./toolchain-paths.nix { inherit nixpkgs mkCrossPkgs; };
   buildFlags = import ./build-flags.nix { inherit lib; };
 in
 
@@ -59,13 +61,17 @@ in
       # ld/ar/nm/ranlib/strip/objcopy.  The wrapped `toolchain` supplies
       # cc/c++; using the unwrapped binutils for the rest sidesteps any
       # ambiguity about what the cc-wrapper re-exports.
-      binu  = crossPkgs.buildPackages.binutils-unwrapped;
+      tcPaths = toolchainPaths system target;
+      binu  = tcPaths.binutils;
       # The wrapped cc's target prefix ("i686-gnu-") — drives both the
       # toolchain bin names and binu's (same crossSystem).
       tp    = toolchain.targetPrefix;
       # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
       salt  = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
+      hurdDeployFlags = lib.concatStringsSep " " hurdConfig.deployFlags;
+      deployFlags = lib.concatStringsSep " " glibcConfig.deployFlags;
+      glibcCoreFlags = lib.concatStringsSep " " glibcConfig.coreFlags;
       # DWARF store-path maps for every cc the in-tree build invokes: the
       # working-wrapped `toolchain` (mach + hurd) and the ref-wrapped `glibcCC`
       # (opt-in `make glibc`).  `toolchain.cc == glibcCC.cc` (both wrap the same
@@ -127,7 +133,7 @@ in
 
       shellHook = ''
         export ARCH=${name}
-        export GNUMACH_HOST=${target.crossTarget}
+        export GNUMACH_HOST=${tcPaths.hostTriple}
         export MIG_TARGET=${target.crossTarget}
         ${if target.platform != null
           then "export GNUMACH_PLATFORM=${target.platform}"
@@ -168,8 +174,8 @@ in
         export OBJDUMP=${binu}/bin/${tp}objdump
         export READELF=${binu}/bin/${tp}readelf
         export BUILD_CC=${pkgs.stdenv.cc}/bin/cc
-        export BINUTILS_BIN=${binu}/bin
-        export BUILD_TRIPLE=${pkgs.stdenv.hostPlatform.config}
+        export BINUTILS_BIN=${tcPaths.binutilsBin}
+        export BUILD_TRIPLE=${tcPaths.buildTriple}
 
         # Empty so hurd's optional PKG_CHECK probes find nothing (matches
         # the nix build).  No global CFLAGS: the kernel takes autoconf's
@@ -243,6 +249,12 @@ in
         [ -n "''${out:-}" ] && export NIX_LDFLAGS="$(printf '%s' "''${NIX_LDFLAGS:-}" | sed "s@-rpath $out/lib@@g")"
         # Same configure flag set as the nix Hurd build (hurd-config.nix).
         export HURD_CONFIGURE_FLAGS="--host=${target.crossTarget} ${coreFlags}"
+        # Root-relative install dirs the nix Hurd uses (hurd-config.deployFlags).
+        export HURD_DEPLOY_FLAGS="${hurdDeployFlags}"
+        # Deployable-prefix dirs + libc_cv_* the nix glibc uses (glibc-config.nix),
+        # so the in-tree glibc configure stays in lockstep (single source).
+        export GLIBC_DEPLOY_FLAGS="${deployFlags}"
+        export GLIBC_CORE_FLAGS="${glibcCoreFlags}"
       '';
     };
 }

@@ -111,7 +111,6 @@ in
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-ref-src;
         forkUrl  = glibcInfo.forkUrl;
-        deployPrefix = true;
       };
       # Expose the reference glibc as `glibc-ref-hurd-<arch>` (the working one
       # is `glibc-hurd-<arch>`) — for the ABI gate + `nix build` debugging.
@@ -135,7 +134,6 @@ in
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
         forkUrl  = glibcInfo.forkUrl;
-        deployPrefix = true;
         # Built by the COMPLETE final gcc wrapped around the reference glibc (its
         # own libc) — same reason as the ref glibc above (configure link-tests
         # need crt/libc).  work ≠ ref → no cycle.  This is also the gcc the
