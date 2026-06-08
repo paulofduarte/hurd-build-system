@@ -198,7 +198,7 @@ in
         #     -idirafter glibc) + the Makefile -I, never host `-isystem`, so strip
         #     them all; native `make mig` needs none of these lib headers.
         export NIX_CFLAGS_COMPILE="$(printf '%s' "''${NIX_CFLAGS_COMPILE:-}" \
-          | sed -E 's/-frandom-seed=[^ ]*//g; s#-isystem +/nix/store/[^ ]*##g; s#-fmacro-prefix-map=/nix/store/[^ ]*##g') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
+          | sed -E '${buildFlags.isystemStripSed}') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
 
         # Canonical glibc roots (build-flags.nix) for the in-tree glibc build to
         # -ffile-prefix-map its $(GLIBC_SRC)/$(GLIBC_BUILDDIR)/$(SYSROOT) to — the
@@ -212,6 +212,12 @@ in
         # nix build's $PWD to, so in-tree == nix for those modules too.
         export GNUMACH_CANON_BUILD=${buildFlags.gnumachCanonBuild}
         export HURD_CANON_BUILD=${buildFlags.hurdCanonBuild}
+
+        # Base compile flags (build-flags.nix) — the SAME -g -O2 (+ hurd's -fcommon)
+        # the nix derivations use.  The in-tree gnumach/hurd configure CFLAGS read
+        # these so the flags live in ONE place (nix), never duplicated in the Makefile.
+        export BASE_CFLAGS="${buildFlags.baseCflags}"
+        export HURD_EXTRA_CFLAGS="${buildFlags.hurdExtraCflags}"
 
         # No store RUNPATH leak in the shipped dist.  On Linux the cross
         # ld-wrapper bakes a DT_RUNPATH into EVERY in-tree binary; darwin's

@@ -43,6 +43,7 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
+  buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   # Upstream version parsed from configure.ac (`AC_INIT([GNU Hurd], …)`).
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
@@ -83,7 +84,7 @@ let
         ++ (with pkgs; [ texinfo perl ])
         ++ [ crossMig ];
 
-      CFLAGS = "-g -O2";
+      CFLAGS = buildFlags.baseCflags;
 
       # Splice the eval-time composed version into AC_INIT before
       # autoreconfHook regenerates configure.  Same pattern as

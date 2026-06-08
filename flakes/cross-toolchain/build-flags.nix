@@ -38,6 +38,32 @@ rec {
   # reproducible-builds hook derives from $out.
   randomSeed = "gnu-hurd-cross";
 
+  # Global compile flags — the SINGLE source of truth for every non-toolchain,
+  # non-deliverable-glibc cross build: gnumach, hurd, mig, the *-headers, AND the
+  # cross-gcc TARGET runtime libs (libgcc/libstdc++, via CFLAGS_FOR_TARGET — NOT the
+  # gcc compiler proper).  The deliverable glibc sets its own.  Consumed by the nix
+  # derivations and, via the dev-shell BASE_CFLAGS export, the in-tree Makefile.
+  baseCflags = "-g -O2";
+  # hurd predates gcc's -fno-common default (gcc 10+); it alone prepends -fcommon.
+  hurdExtraCflags = "-fcommon";
+
+  # Strip host build-tool `-isystem /nix/store/*` (+ their macro-prefix-maps) AND the
+  # reproducible-builds hook's $out-derived -frandom-seed from NIX_CFLAGS_COMPILE: a
+  # cross-compile must resolve system headers from its own sysroot only (on darwin the
+  # native stdenv / mkShell dumps every nativeBuildInput's include, leaking e.g. the
+  # host libiconv ahead of the target glibc).  Shared by dev-shell.nix and the hurd
+  # derivation's preBuild (sed -E program; sedSeedOnly drops just the seed).
+  sedSeedOnly     = "s/-frandom-seed=[^ ]*//g";
+  isystemStripSed = "${sedSeedOnly}; s#-isystem +/nix/store/[^ ]*##g; s#-fmacro-prefix-map=/nix/store/[^ ]*##g";
+
+  # The preBuild NIX_CFLAGS_COMPILE rewrite for an OUT-OF-TREE cross build: strip the
+  # hook's seed (+ optionally host -isystem leaks), add the toolchain debug-prefix-map,
+  # map the absolute srcdir AND build dir to one canonical root, then pin the seed.
+  # `$srcdir` is exported by the out-of-tree preConfigure; `$PWD` is the build dir.
+  # Returns the `export …` line; consumers (gnumach/hurd preBuild) compose around it.
+  detCflagsExport = { toolchain, canonBuild, stripIsystem ? false }:
+    ''export NIX_CFLAGS_COMPILE="$(printf %s "$NIX_CFLAGS_COMPILE" | sed -E '${if stripIsystem then isystemStripSed else sedSeedOnly}') ${debugPrefixMapStr toolchain} -ffile-prefix-map=$srcdir=${canonBuild} -ffile-prefix-map=$PWD=${canonBuild} -frandom-seed=${randomSeed}"'';
+
   # Canonical replacement roots for glibc's own paths, so the glibc build is
   # reproducible cross-host AND byte-identical whether built in-tree or via nix.
   # The real roots differ per method and some are host-VARYING:

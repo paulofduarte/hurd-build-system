@@ -27,22 +27,18 @@ let
 
   # `*-src` inputs that are NOT in-tree source projects: pinned in
   # flake.nix for reproducibility, never cloned into src/ by `make srcs`,
-  # and never `--override-input`-ed by `make`.  Two kinds today:
-  #   - the `*-ref-src` reference twins (frozen release tags that gcc's
-  #     libgcc_s/libstdc++ bind — see TOOLCHAIN-LIBC-DECOUPLING.md).  They
-  #     must stay un-overridable: --override-input is eval-global, so an
-  #     in-tree clone of one would drag the reference glibc, and thus gcc,
-  #     into every rebuild.  Bump them together via `make rebaseline-ref`.
-  #   - the `*-bootstrap-src` seeds (the throwaway bootstrap glibc + the
-  #     headers/mig it consumes, feeding the stage-2 gcc — see
-  #     PHASE-2-3STAGE-BOOTSTRAP.md).  Independently pinned so the cached
-  #     stage-2 gcc survives a reference bump; like the ref twins they are
-  #     bootstrap-only seeds with no in-tree working clone.
+  # and never `--override-input`-ed by `make`.  Today just the `*-ref-src`
+  # reference twins (frozen release tags that the reference glibc — and hence
+  # gcc's libgcc_s/libstdc++ — bind; see TOOLCHAIN-LIBC-DECOUPLING.md).  They
+  # must stay un-overridable: --override-input is eval-global, so an in-tree
+  # clone of one would drag the reference glibc, and thus gcc, into every
+  # rebuild.  Bump them together via `make rebaseline-ref`.  (The old
+  # `*-bootstrap-src` seeds were retired with the 2-pass bootstrap — the nolibc
+  # stage-1 cc now builds the reference glibc directly; no throwaway seed.)
   # glibc-src itself is NOT here — the working glibc is hackable in-tree
   # like gnumach/mig/hurd (`make srcs` clones it; `make` overrides it).
   toolchainOnly = [
     "gnumach-ref-src" "mig-ref-src" "hurd-ref-src" "glibc-ref-src"
-    "gnumach-bootstrap-src" "mig-bootstrap-src" "hurd-bootstrap-src" "glibc-bootstrap-src"
   ];
 in
 

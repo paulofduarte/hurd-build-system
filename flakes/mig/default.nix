@@ -60,6 +60,7 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
   helpers = import ../lib { inherit lib; };
+  buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   # CHECKED pass when a wrapped-cc attrset is threaded in (built downstream
   # of glibc-hurd in packages.nix); BOOTSTRAP pass otherwise.
@@ -143,7 +144,7 @@ let
         ++ (with pkgs; [ bison flex patchelf ])
         ++ [ cc ];
 
-      CFLAGS = "-g -O2";
+      CFLAGS = buildFlags.baseCflags;
 
       # Splice the eval-time-composed version into AC_INIT before the
       # autoreconfHook regenerates configure.  ${fullVersion} is composed

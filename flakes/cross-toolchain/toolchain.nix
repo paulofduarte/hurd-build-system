@@ -38,6 +38,7 @@
 
 let
   lib = nixpkgs.lib;
+  buildFlags = import ./build-flags.nix { inherit lib; };
 
   hurdTargets = targets:
     lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
@@ -47,14 +48,15 @@ let
   # shared libs on.  Reusing the stage-1 cc's `.override` keeps every nixpkgs
   # gcc patch/phase; only the libc-facing knobs flip.
   #
-  # `targetLibc` is the glibc libgcc_s / libstdc++ link against.  The 3-stage
-  # bootstrap (PHASE-2-3STAGE-BOOTSTRAP.md) calls this twice:
-  #   stage-2 gcc — targetLibc = the (throwaway) bootstrap glibc; the complete
-  #                 seed compiler that then builds the reference glibc.
-  #   final  gcc — targetLibc = the REFERENCE glibc; the userland cc, whose
-  #                 libgcc_s/libstdc++ are the ABI-stable runtime (POSIX wall,
-  #                 valid against the working glibc).  Rebuilds only on a
-  #                 deliberate ref bump, never on a working-glibc hack.
+  # `targetLibc` is the glibc libgcc_s / libstdc++ link against.  In the 2-pass
+  # bootstrap this builds ONE complete gcc:
+  #   final gcc — targetLibc = the REFERENCE glibc (itself built directly by the
+  #               nolibc stage-1 cc); the userland cc, whose libgcc_s/libstdc++
+  #               are the ABI-stable runtime (POSIX wall, valid against the
+  #               working glibc).  Rebuilds only on a deliberate ref bump, never
+  #               on a working-glibc hack.  (The old stage-2 gcc — a complete gcc
+  #               built against a throwaway bootstrap glibc just to rebuild glibc
+  #               — was retired: its libgcc/libstdc++ were never shipped.)
   mkGcc = system: target: targetLibc:
     let
       bp  = (mkCrossPkgs system target).buildPackages;
@@ -154,6 +156,13 @@ let
         EXTRA_LDFLAGS_FOR_TARGET = lib.replaceStrings
           [ " -Wl,-rpath,${targetLibc}/lib" ] [ "" ]
           (old.env.EXTRA_LDFLAGS_FOR_TARGET or "");
+        # The TARGET runtime libs (libgcc_s, libstdc++ — what dist-libgcc ships)
+        # get the shared baseCflags (build-flags.nix), the same -g -O2 the rest of
+        # the dist uses, so debug info + opt level are consistent and defined in ONE
+        # place.  This is CFLAGS_FOR_TARGET only — the gcc compiler proper keeps its
+        # own build flags.  (Pins what was gcc's implicit default explicitly.)
+        CFLAGS_FOR_TARGET   = buildFlags.baseCflags;
+        CXXFLAGS_FOR_TARGET = buildFlags.baseCflags;
       };
       # libstdc++'s gdb pretty-printer hook (libstdc++.so.*-gdb.py) records absolute
       # pythondir/libdir (gcc's @pythondir@ = $(datadir)/gcc-<ver>/python and
@@ -225,10 +234,10 @@ in
   inherit mkGcc wrappedToolchain hurdTargets;
 
   # Pre-libc components merged into packages.<system>: two outputs per
-  # hurd target (binutils + gcc-stage1).  The 3-stage gcc/glibc chain
-  # (bootstrap glibc -> stage-2 gcc -> ref glibc -> final gcc -> work glibc ->
-  # wrapped toolchain) is orchestrated in packages.nix, since it interleaves
-  # glibc.nix calls (which thread mig/headers) with `mkGcc`.
+  # hurd target (binutils + gcc-stage1).  The 2-pass gcc/glibc chain
+  # (stage-1 nolibc gcc -> ref glibc -> final gcc -> work glibc -> wrapped
+  # toolchain) is orchestrated in packages.nix, since it interleaves glibc.nix
+  # calls (which thread mig/headers) with `mkGcc`.
   mkAll = system: targets:
     let
       hts = hurdTargets targets;

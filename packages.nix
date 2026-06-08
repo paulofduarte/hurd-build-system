@@ -19,8 +19,7 @@
 #                            (pinned github fork rev; see flakes/sources).
 
 { nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src, hurd-src, glibc-src
-, gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src
-, glibc-bootstrap-src, gnumach-bootstrap-src, mig-bootstrap-src, hurd-bootstrap-src }:
+, gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src }:
 
 let
   inherit (nixpkgs) lib;
@@ -67,13 +66,16 @@ in
       toolchainStagePkgs = mkAll system targets;
 
       # ──────────────────────────────────────────────────────────────────────
-      # 3-stage bootstrap (PHASE-2-3STAGE-BOOTSTRAP.md).  The nolibc stage-1 cc
-      # is a bootstrap-only seed: it builds ONLY the throwaway bootstrap glibc,
-      # which produces a COMPLETE stage-2 gcc; that builds the reference glibc;
-      # which produces the final gcc; which builds the working glibc.  Every
-      # glibc is `--prefix=/` and built by a complete gcc except the bootstrap
-      # one (built by stage-1).  Chain is strictly linear:
-      #   bootstrap glibc → stage-2 gcc → ref glibc → final gcc → work glibc.
+      # 2-pass bootstrap.  The nolibc stage-1 cc builds the reference glibc
+      # directly — a nolibc gcc builds glibc fine (the canonical first pass; it
+      # also builds gnumach-headers/mig) — and the complete final gcc is then
+      # built against the ref glibc and builds the working glibc.  Chain:
+      #   stage-1 nolibc gcc → ref glibc → final gcc → work glibc.
+      # The old throwaway bootstrap-glibc + complete stage-2-gcc pass was dropped:
+      # stage-2's libgcc/libstdc++ were never shipped (the final gcc rebuilds its
+      # own against the ref glibc), and the ref glibc's ABI is source-determined,
+      # so building it with the nolibc cc yields the same ABI — and a byte-
+      # identical dist, since the final gcc binds the ref's ABI, not its bytes.
       # ──────────────────────────────────────────────────────────────────────
 
       # Reference toolchain inputs (Part 2): frozen release-tag headers/mig the
@@ -96,57 +98,11 @@ in
         forkUrl = hurdInfo.forkUrl;
       };
 
-      # Bootstrap toolchain inputs: the headers/mig the THROWAWAY bootstrap glibc
-      # consumes, on the `*-bootstrap-src` seeds — pinned independently of both
-      # the reference and the working trees.  Keeping the bootstrap chain on its
-      # own pins is what lets the cached stage-2 gcc (built against the bootstrap
-      # glibc, which uses these) survive a `*-ref-src` rebaseline untouched: a ref
-      # bump moves the reference glibc + final gcc, never the seed.  (The seeds
-      # are pinned equal to the reference today, so these resolve to the same
-      # store paths until the bootstrap seed is deliberately refreshed.)
-      gnumachHeadersBootstrap = import ./flakes/gnumach-headers {
-        inherit nixpkgs system targets mkCrossPkgs;
-        srcInput = gnumach-bootstrap-src;
-      };
-      migBootstrap = import ./flakes/mig {
-        inherit nixpkgs system targets mkCrossPkgs;
-        gnumachHeaders = gnumachHeadersBootstrap;
-        srcInput = mig-bootstrap-src;
-        forkUrl = migInfo.forkUrl;
-      };
-      hurdHeadersBootstrap = import ./flakes/hurd-headers {
-        inherit nixpkgs system targets;
-        mig = migBootstrap;
-        srcInput = hurd-bootstrap-src;
-        forkUrl = hurdInfo.forkUrl;
-      };
-
-      # Bootstrap glibc — THROWAWAY seed built by the nolibc stage-1 cc (the
-      # default buildCC) from the independently-pinned `glibc-bootstrap-src`,
-      # against the bootstrap headers/mig above.  Its only purpose is to give the
-      # stage-2 gcc a target libc; never shipped, never cached.
-      bootstrapGlibc = import ./flakes/cross-toolchain/glibc.nix {
-        inherit nixpkgs system targets;
-        mig = migBootstrap;
-        gnumachHeaders = gnumachHeadersBootstrap;
-        hurdHeaders = hurdHeadersBootstrap;
-        inherit (crossToolchain) mkCrossPkgs;
-        srcInput = glibc-bootstrap-src;
-        forkUrl  = glibcInfo.forkUrl;
-        deployPrefix = true;
-      };
-
-      # Stage-2 gcc — the COMPLETE seed compiler (libgcc_s/libstdc++ vs the
-      # bootstrap glibc).  Cached/pinned; rebuilds only on a bootstrap-pin or
-      # nixpkgs-gcc change, NOT on a `glibc-ref-src` bump.  Builds the ref glibc.
-      # Not a standalone output: `make push-cache` walks the toolchain's full
-      # build closure, so this (and every other bootstrap intermediate) is cached
-      # by store path without a dedicated `cross-gcc-stage2-<arch>` attribute.
-      stage2GccByName = lib.mapAttrs (name: target:
-        mkGcc system target (bootstrapGlibc."glibc-hurd-${name}")) hurdTargets;
-
-      # Reference glibc — the ABI baseline gcc's runtime binds.  Built by the
-      # complete stage-2 gcc (normal build conditions, not the nolibc cc).
+      # Reference glibc — the ABI baseline the final gcc's runtime binds against.
+      # Built directly by the nolibc stage-1 cc (glibc.nix's default buildCC): a
+      # nolibc gcc builds glibc with no prior libc (it also builds the headers/mig
+      # it consumes), and the ref glibc is the ABI reference — never shipped or run,
+      # so the final gcc binds its ABI/headers, not its bytes.
       glibcRefHurd = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
         mig = migRef;
@@ -156,15 +112,6 @@ in
         srcInput = glibc-ref-src;
         forkUrl  = glibcInfo.forkUrl;
         deployPrefix = true;
-        # Build with the COMPLETE stage-2 gcc wrapped around its own libc (the
-        # bootstrap glibc) — glibc's configure link-tests (e.g. "PDE load
-        # address") need crt1.o/libc on the path, which the raw complete cc
-        # lacks; the wrapper supplies them + mechanism #2 --sysroot so the
-        # bootstrap glibc's /lib GROUP resolves.  ref ≠ bootstrap → no cycle.
-        buildCC = name: target: wrappedToolchain system target {
-          cc      = stage2GccByName.${name};
-          working = bootstrapGlibc."glibc-hurd-${name}";
-        };
       };
       # Expose the reference glibc as `glibc-ref-hurd-<arch>` (the working one
       # is `glibc-hurd-<arch>`) — for the ABI gate + `nix build` debugging.

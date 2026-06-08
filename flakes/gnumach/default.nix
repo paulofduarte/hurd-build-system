@@ -140,7 +140,7 @@ let
         export CC=${tp}-gcc
         # CFLAGS via configureFlagsArray (a bash array) so the embedded space
         # survives — a plain configureFlags list element is word-split by nix.
-        configureFlagsArray+=("CFLAGS=-g -O2")
+        configureFlagsArray+=("CFLAGS=${buildFlags.baseCflags}")
         # Build OUT-OF-TREE with an ABSOLUTE srcdir, mirroring the in-tree build
         # (work/gnumach/… ≠ src/gnumach): an in-source build leaves unmapped
         # relative `../` paths in DWARF; absolute source paths map cleanly to
@@ -276,7 +276,7 @@ let
         # so it's a MEANINGFUL date that matches the in-tree build (which touches
         # the same from `git log %ct`), not the store mtime=1 (1 Jan 1970).
         touch -d @${toString srcInput.lastModified} "$srcdir"/doc/*.texi
-        export NIX_CFLAGS_COMPILE="$(printf %s "$NIX_CFLAGS_COMPILE" | sed -E 's/-frandom-seed=[^ ]*//g') ${buildFlags.debugPrefixMapStr toolchain} -ffile-prefix-map=$srcdir=${buildFlags.gnumachCanonBuild} -ffile-prefix-map=$PWD=${buildFlags.gnumachCanonBuild} -frandom-seed=${buildFlags.randomSeed}"
+        ${buildFlags.detCflagsExport { inherit toolchain; canonBuild = buildFlags.gnumachCanonBuild; }}
       '';
     });
 in

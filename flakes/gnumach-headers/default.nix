@@ -37,6 +37,7 @@
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
+  buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   mkOne = name: target:
     let
@@ -66,7 +67,7 @@ let
       # stubs MIG; awk comes from stdenv.
       nativeBuildInputs = [ pkgs.autoreconfHook pkgs.texinfo cc ];
 
-      CFLAGS = "-g -O2";
+      CFLAGS = buildFlags.baseCflags;
 
       # Native stdenv: pin CC to the stage-1 cross cc (host gcc would fail
       # the --host=<cpu>-gnu configure).  USER_MIG is read by gnumach's

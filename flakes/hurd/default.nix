@@ -96,7 +96,7 @@ let
         export USER_MIG=${tp}-mig
         # CFLAGS via configureFlagsArray (a bash array) so the embedded space
         # survives — a plain configureFlags list element is word-split by nix.
-        configureFlagsArray+=("CFLAGS=-fcommon -g -O2")
+        configureFlagsArray+=("CFLAGS=${buildFlags.hurdExtraCflags} ${buildFlags.baseCflags}")
         # Build OUT-OF-TREE with an ABSOLUTE srcdir, mirroring the in-tree build
         # (work/hurd/… ≠ src/hurd): an in-source build leaves unmapped relative
         # `../` paths in DWARF, whereas absolute source paths map cleanly to
@@ -216,7 +216,7 @@ let
       # leak).  A cross-compile must resolve system headers from its own sysroot
       # only — the same strip the dev-shell does.  Replaces helpers.mkReproAttrs.
       preBuild = ''
-        export NIX_CFLAGS_COMPILE="$(printf %s "$NIX_CFLAGS_COMPILE" | sed -E 's/-frandom-seed=[^ ]*//g; s#-isystem +/nix/store/[^ ]*##g; s#-fmacro-prefix-map=/nix/store/[^ ]*##g') ${buildFlags.debugPrefixMapStr toolchain} -ffile-prefix-map=$srcdir=${buildFlags.hurdCanonBuild} -ffile-prefix-map=$PWD=${buildFlags.hurdCanonBuild} -frandom-seed=${buildFlags.randomSeed}"
+        ${buildFlags.detCflagsExport { inherit toolchain; canonBuild = buildFlags.hurdCanonBuild; stripIsystem = true; }}
       '';
     });
 in

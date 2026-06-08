@@ -108,54 +108,11 @@
       flake = false;
     };
 
-    # Bootstrap-seed glibc for the 3-stage bootstrap (Phase 2): the nolibc
-    # stage-1 gcc builds this THROWAWAY glibc, which produces the complete
-    # stage-2 gcc that then builds the real reference glibc.  Pinned to a STABLE
-    # tag, deliberately independent of glibc-ref-src, so the cached stage-2 gcc
-    # survives a reference bump (a ref-src bump must NOT invalidate the seed).
-    # Not a reference version — advance only to refresh the bootstrap itself.
-    # Seeded equal to the reference today; the cache win materialises once the
-    # reference tag advances past this seed.
-    glibc-bootstrap-src = {
-      type  = "git";
-      url   = "https://sourceware.org/git/glibc.git";
-      ref   = "refs/tags/glibc-2.43";
-      flake = false;
-    };
-
-    # Bootstrap-seed headers/mig (Phase 2, full 3-stage): the bootstrap glibc +
-    # the headers/mig that feed it are built by the nolibc stage-1 cc and pinned
-    # independently of the reference, so a rebaseline (bumping the *-ref-src
-    # pins) leaves the bootstrap chain — and hence the cached stage-2 gcc —
-    # untouched.  Seeded equal to the reference pins today; they diverge only
-    # when the bootstrap seed is deliberately refreshed.
-    gnumach-bootstrap-src = {
-      type  = "git";
-      url   = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
-      ref   = "refs/tags/v1.8+git20260224";
-      rev   = "004116a3a862e872df005e8f6af0d4ea87d506fe";
-      flake = false;
-    };
-    mig-bootstrap-src = {
-      type  = "git";
-      url   = "https://git.savannah.gnu.org/git/hurd/mig.git";
-      ref   = "refs/tags/v1.8+git20231217";
-      rev   = "3b1fcb2b83bb26d43dc912884499345f561d0b6a";
-      flake = false;
-    };
-    hurd-bootstrap-src = {
-      type  = "git";
-      url   = "https://git.savannah.gnu.org/git/hurd/hurd.git";
-      ref   = "refs/tags/v0.9.git20260527";
-      rev   = "d6a94f56ef421ca92f3cd573262f6a096191b240";
-      flake = false;
-    };
   };
 
   outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src
                    , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src
-                   , glibc-bootstrap-src, gnumach-bootstrap-src, mig-bootstrap-src
-                   , hurd-bootstrap-src, ... }:
+                   , ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` — independent of host.
@@ -193,9 +150,7 @@
       pkgOutputs = import ./packages.nix {
         inherit nixpkgs self forAllSystems targets crossToolchain
                 gnumach-src mig-src hurd-src glibc-src
-                gnumach-ref-src mig-ref-src hurd-ref-src glibc-ref-src
-                glibc-bootstrap-src gnumach-bootstrap-src mig-bootstrap-src
-                hurd-bootstrap-src;
+                gnumach-ref-src mig-ref-src hurd-ref-src glibc-ref-src;
       };
     in
     {
