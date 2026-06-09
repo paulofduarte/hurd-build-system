@@ -382,8 +382,14 @@ _farm_nix_headers = rm -rf $(2); mkdir -p $(2); cp -a $(1)/include $(2)/; $(call
 # $ver, append `-dirty` when the in-tree chain has uncommitted src (nix can't see it -
 # flake inputs lock the committed rev), then guard non-empty.  Guard LAST so the helper
 # ends on a definite command; a trailing optional $(if) would leave `; ;` at the call site.
+#
+# buildRev splice: any `--override-input` unmatches the committed lock, so nix drops
+# `self.shortRev` and buildRev falls to `unknown` (version ends `+build.gunknown`).
+# buildRev is `self` metadata, independent of the source overrides - re-resolve it from a
+# no-override eval and splice it in so the in-tree rev token equals the all-nix build's.
 define _nix_version
 ver=$$($(NIX_FLAKE) eval --raw $(call _overrides,$(1)) $(PROJ)\#$(2).version 2>/dev/null); \
+$(if $(strip $(call _overrides,$(1))),btok=$$($(NIX_FLAKE) eval --raw $(PROJ)\#$(2).version 2>/dev/null | sed -n 's/.*+build\.\(.*\)$$/\1/p'); [ -n "$$btok" ] && ver=$$(printf %s "$$ver" | sed "s/+build\.gunknown$$/+build.$$btok/");) \
 $(if $(call _chain_dirty,$(1)),ver=$$(printf %s "$$ver" | sed -E 's/(-g[0-9a-f]+)(\+|$$)/\1-dirty\2/');) \
 [ -n "$$ver" ] || { echo "ERROR: cannot resolve nix $(2).version"; exit 1; }
 endef
