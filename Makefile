@@ -1398,11 +1398,11 @@ dist-libgcc: $(DIST_LIBGCC_STAMP)
 
 $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
 	@mkdir -p $(DIST)/lib $(DIST)/share/info $(DIST)/share/man $(dir $(DIST_LIBGCC_STAMP))
-	@echo "  DIST-LIBGCC  resolving nix cross-gcc-$(_TC_ARCH) {lib,info,man}..."
+	@echo "  DIST-LIBGCC  resolving nix cross-gcc-final-$(_TC_ARCH) {lib,info,man}..."
 	@set -e; \
-	gcclib=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-$(_TC_ARCH)^lib  --no-link --print-out-paths); \
-	gccinfo=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-$(_TC_ARCH)^info --no-link --print-out-paths); \
-	gccman=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-$(_TC_ARCH)^man  --no-link --print-out-paths); \
+	gcclib=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-final-$(_TC_ARCH)^lib  --no-link --print-out-paths); \
+	gccinfo=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-final-$(_TC_ARCH)^info --no-link --print-out-paths); \
+	gccman=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-final-$(_TC_ARCH)^man  --no-link --print-out-paths); \
 	stamp="$$gcclib $$gccinfo $$gccman"; \
 	if $(call _stamp_skip,$(DIST_LIBGCC_STAMP),$$stamp,$(DIST)/lib/libgcc_s.so.1); then \
 	  echo "  unchanged - skip copy"; \

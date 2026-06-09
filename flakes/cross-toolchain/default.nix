@@ -14,6 +14,8 @@
 #                     `mkGcc` (a complete cross-gcc vs a given target libc) /
 #                     `wrappedToolchain` / `hurdTargets` helpers.  The 2-pass
 #                     gcc/glibc chain is orchestrated in packages.nix.
+#   gcc-runtime.nix - `mkCompiler` (the nolibc cross-gcc) + `mkRuntime` (the target
+#                     runtime libs built from it, without rebuilding cc1).
 #   glibc.nix       - `glibc-hurd-<arch>` (imported directly by packages.nix).
 #   abi-check.nix   - `mkAbiChecked` (in-build ABI gate) + `mkAbiReport`
 #                     (`make check-glibc[-full]` back-end).
@@ -30,9 +32,10 @@ let
   inherit (pkgs) mkCrossPkgs;
 
   toolchain  = import ./toolchain.nix  { inherit nixpkgs mkCrossPkgs; };
+  gccRuntime = import ./gcc-runtime.nix { inherit nixpkgs mkCrossPkgs; inherit (toolchain) wrappedToolchain; };
   abiCheck   = import ./abi-check.nix  { inherit nixpkgs mkCrossPkgs; };
   devShell   = import ./dev-shell.nix  { inherit nixpkgs mkCrossPkgs; };
   target     = import ./target.nix     { inherit nixpkgs; };
 in
 
-pkgs // toolchain // abiCheck // devShell // target
+pkgs // toolchain // gccRuntime // abiCheck // devShell // target

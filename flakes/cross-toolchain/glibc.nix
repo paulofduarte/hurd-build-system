@@ -190,15 +190,10 @@ let
         # Keep it the very last map so nothing (incl. the inherited var) overrides it.
         export NIX_CFLAGS_COMPILE${salt}="${buildFlags.debugPrefixMapStr crossCC} -ffile-prefix-map=$PWD=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$src=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$TMPDIR/sysroot=${buildFlags.glibcCanonSysroot} -frandom-seed=${buildFlags.randomSeed} ''${NIX_CFLAGS_COMPILE${salt}:-} -ffile-prefix-map=$PWD/hurd/.=${buildFlags.glibcCanonBuild}/hurd"
 
-        # Configure.  Flag set verbatim from cross-hurd
-        # bootstrap-funcs.sh compile_first_glibc, plus --disable-werror
-        # (Guix carries the same) and --disable-multilib (cross hygiene).
-        # --enable-add-ons=libpthread is harmless in 2.40+ (htl is
-        # in-tree) and cross-hurd carries it; restored as belt-and-
-        # braces.  libc_cv_ctors_header=yes is an autoconf-cache
-        # override cross-hurd uses on the first pass - declares the
-        # crt*.o ctor-section detection result rather than running a
-        # link test (which would need a working libc to link).
+        # Configure.  --disable-werror: the Hurd port + this gcc trip warnings
+        # (glibc defaults to werror=on; Guix matches).  libc_cv_ctors_header=yes
+        # pre-declares the crt*.o ctor-section detection - the link test it
+        # replaces needs a working libc, unavailable on the first cross pass.
         $src/configure \
           --build=${tcPaths.buildTriple} \
           --host=${tcPaths.hostTriple} \

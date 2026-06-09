@@ -16,7 +16,7 @@
 
 let
   inherit (nixpkgs) lib;
-  inherit (crossToolchain) mkCrossPkgs mkAll mkGcc wrappedToolchain mkAbiChecked mkAbiReport mkAbiReportHost;
+  inherit (crossToolchain) mkCrossPkgs mkAll mkGcc mkCompiler mkRuntime wrappedToolchain mkAbiChecked mkAbiReport mkAbiReportHost;
   # Fork-id metadata (owner/repo/ref) from the `*-src` inputs via flake.lock;
   # feeds the version string's fork field.  See flakes/sources.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -149,11 +149,28 @@ in
            else mkAbiChecked system target ({ working = w; reference = r; glibcSrc = glibc-src; } // sidekickArgs)))
         hurdTargets;
 
-      # Final cross-gcc + wrapped toolchain per userland target.  `cross-gcc-
-      # <arch>` is the final gcc; `toolchain-<arch>` wraps it around the ABI-
-      # gated working glibc (THE toolchain - dev shell, kernel, userland, cache).
+      # The single nolibc C++ compiler (no target-glibc input) - the one
+      # `cross-gcc-<arch>` going forward.
+      newCompilerByName = lib.mapAttrs (name: target: mkCompiler system target) hurdTargets;
+      # SPIKE: the split-out target runtime libs, built against the WORKING glibc
+      # from that compiler (no xgcc rebuild).
+      gccRuntimeByName = lib.mapAttrs (name: target:
+        mkRuntime system target {
+          compiler = newCompilerByName.${name};
+          # The gated glibc's libc.so GROUP is bare-named (resolves via -L); the raw
+          # one's is absolute /lib/... and this ld has no --sysroot support.
+          working  = gatedGlibcHurd."glibc-hurd-${name}";
+        }) hurdTargets;
+
+      # `cross-gcc-<arch>` = the nolibc C++ compiler; `cross-gcc-runtime-<arch>` =
+      # the split-out target runtime; `toolchain-<arch>` wraps the (transitional)
+      # final gcc around the ABI-gated working glibc (THE toolchain - dev shell,
+      # kernel, userland, cache).  `cross-gcc-final-<arch>` keeps the old final gcc
+      # reachable for dist-libgcc until cross-gcc-runtime replaces it.
       hurdFinalPkgs = lib.listToAttrs (lib.concatLists (lib.mapAttrsToList (name: target: [
-        { name = "cross-gcc-${name}"; value = finalGccByName.${name}; }
+        { name = "cross-gcc-${name}";         value = newCompilerByName.${name}; }
+        { name = "cross-gcc-runtime-${name}"; value = gccRuntimeByName.${name}; }
+        { name = "cross-gcc-final-${name}";   value = finalGccByName.${name}; }
         { name = "toolchain-${name}"; value = wrappedToolchain system target {
             cc      = finalGccByName.${name};
             working = gatedGlibcHurd."glibc-hurd-${name}";

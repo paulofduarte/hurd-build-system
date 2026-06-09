@@ -7,15 +7,11 @@
 
 {
   # Always-on glibc-hurd configure flags (identical for nix + in-tree, independent
-  # of the deployable prefix): the libpthread add-on, obsolete-rpc, the disables,
-  # and the ctors-header cache var.
+  # of the deployable prefix): the ctors-header cache var pre-declares the crt*.o
+  # ctor-section detection (the link test it replaces needs a working libc).  NB:
+  # profile + nscd are vanilla-on, which currently diverges the nix vs in-tree
+  # build (l0 != l1).
   coreFlags = [
-    "--enable-add-ons=libpthread"
-    "--enable-obsolete-rpc"
-    "--disable-profile"
-    "--disable-nscd"
-    "--disable-werror"
-    "--disable-multilib"
     "libc_cv_ctors_header=yes"
   ];
 

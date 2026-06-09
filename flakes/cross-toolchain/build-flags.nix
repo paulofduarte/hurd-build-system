@@ -35,6 +35,13 @@ rec {
   # reproducible-builds hook derives from $out.
   randomSeed = "gnu-hurd-cross";
 
+  # Derivation attrs every cross build shares: parallel make, and keep the -g DWARF
+  # (the ABI gate / debugging need it).  Spread with `// commonAttrs`.
+  commonAttrs = {
+    enableParallelBuilding = true;
+    dontStrip = true;
+  };
+
   # Global compile flags - the SINGLE source of truth for every non-toolchain,
   # non-deliverable-glibc cross build: gnumach, hurd, mig, the *-headers, AND the
   # cross-gcc TARGET runtime libs (libgcc/libstdc++, via CFLAGS_FOR_TARGET - NOT the
