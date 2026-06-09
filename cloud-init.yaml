@@ -1,7 +1,7 @@
 #cloud-config
 #
-# Bootstrap a Linux VM (orbstack, AWS, GCP, libvirt, …) for nix-based
-# dev work on this project.  System-wide setup — every user gets the
+# Bootstrap a Linux VM (orbstack, AWS, GCP, libvirt, ...) for nix-based
+# dev work on this project.  System-wide setup - every user gets the
 # same tools and shell hooks.  Robust to platforms that provision
 # the host-matching user after cloud-init has run (orbstack does
 # this on some configurations).
@@ -53,7 +53,7 @@ write_files:
       #
       #   /etc/nix/nix.conf   Pre-existing file picked up by
       #   (pre-written)       nix-daemon when systemd first starts it
-      #                       — earlier than the installer's own
+      #                       - earlier than the installer's own
       #                       nix.conf write.  Use for settings that
       #                       must take effect *during* the install.
       #                       The installer overwrites this file with
@@ -71,7 +71,7 @@ write_files:
 
       # Emulated x86_64 VMs (orbstack on an aarch64 host via rosetta)
       # need `filter-syscalls = false` in the daemon's effective
-      # config from its very first start — the installer's bootstrap
+      # config from its very first start - the installer's bootstrap
       # step runs the daemon before writing its own nix.conf, and
       # rosetta can't honour seccomp BPF.  Pre-write nix.conf in that
       # case so the setting is live before the daemon starts.  Native
@@ -90,7 +90,7 @@ write_files:
         echo "build-users-group = nixbld" >> /etc/nix/nix.conf
       fi
 
-      # Process substitution `<(curl …)` rather than `curl … | sh`:
+      # Process substitution `<(curl ...)` rather than `curl ... | sh`:
       # the pipe form would clobber sh's stdin (the script body) with
       # /dev/null and curl would fail.  HOME because the installer
       # bails out without it.
@@ -111,7 +111,7 @@ write_files:
           nixpkgs#gnumake \
           nixpkgs#starship
 
-      # ---- 3. /etc/profile.d entry — PATH + TERM + starship hook ----
+      # ---- 3. /etc/profile.d entry - PATH + TERM + starship hook ----
       # /etc/profile sources /etc/profile.d/* for every login shell.
       # Ubuntu's /etc/bash.bashrc only covers non-login interactive
       # shells, so login shells (e.g. `orb -m vm`) would miss hooks
@@ -121,7 +121,7 @@ write_files:
       if [ -d /nix/var/nix/profiles/system-tools/bin ]; then
         export PATH="/nix/var/nix/profiles/system-tools/bin:$PATH"
       fi
-      # Nix pure shells default TERM to "dumb" — force a sane default.
+      # Nix pure shells default TERM to "dumb" - force a sane default.
       export TERM="${TERM:-xterm-256color}"
 
       case $- in

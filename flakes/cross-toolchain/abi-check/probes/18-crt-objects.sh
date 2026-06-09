@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # abi-level: auto
-# Probe 18 — C-runtime startup objects (crt1/crti/crtn/Scrt1).  Their
+# Probe 18 - C-runtime startup objects (crt1/crti/crtn/Scrt1).  Their
 # symbols and section set are the startup ABI every executable links;
 # drift here (a renamed _start helper, a dropped .init_array handling)
 # breaks binaries without touching libc.so's symbol table.
@@ -22,12 +22,12 @@ fingerprint() {
 }
 fingerprint "$REF"  > "$td/ref"
 fingerprint "$WORK" > "$td/wrk"
-[ -s "$td/ref" ] || { echo "SKIP 18-crt-objects — no crt objects found"; exit 0; }
+[ -s "$td/ref" ] || { echo "SKIP 18-crt-objects - no crt objects found"; exit 0; }
 
 delta="$(diff "$td/ref" "$td/wrk")"
 if [ -n "$delta" ]; then
-  echo "FAIL 18-crt-objects — startup object symbols/sections changed (< ref, > working):"
+  echo "FAIL 18-crt-objects - startup object symbols/sections changed (< ref, > working):"
   printf '%s\n' "$delta" | grep -E '^[<>]' | sed 's/^/       /' | head -25
   exit 1
 fi
-echo "PASS 18-crt-objects — crt startup objects unchanged"
+echo "PASS 18-crt-objects - crt startup objects unchanged"

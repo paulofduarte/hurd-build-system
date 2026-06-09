@@ -1,13 +1,13 @@
-# URL → dotted-identifier short form, for the fork/remote section of the
+# URL -> dotted-identifier short form, for the fork/remote section of the
 # composed version string (see compose-version.nix):
 #
-#   github URLs → "github.<owner>.<repo>"
-#   gitlab URLs → "gitlab.<owner>.<repo>"
-#   codeberg    → "codeberg.<owner>.<repo>"
-#   savannah    → "savannah.<project>.<repo>"
-#   sourceware  → "sourceware.<repo>"  (no owner — sourceware hosts
+#   github URLs -> "github.<owner>.<repo>"
+#   gitlab URLs -> "gitlab.<owner>.<repo>"
+#   codeberg    -> "codeberg.<owner>.<repo>"
+#   savannah    -> "savannah.<project>.<repo>"
+#   sourceware  -> "sourceware.<repo>"  (no owner - sourceware hosts
 #                                       projects flat under git/)
-#   any other   → "unknown"  (hostnames never leak)
+#   any other   -> "unknown"  (hostnames never leak)
 #
 # Each `.`-separated piece is one semver build-metadata identifier
 # (`[0-9A-Za-z-]`).
@@ -23,7 +23,7 @@ let
         { type = "gitlab";     re = "https?://gitlab[.]com/([^/]+)/([^/]+)"; }
         { type = "codeberg";   re = "https?://codeberg[.]org/([^/]+)/([^/]+)"; }
         { type = "savannah";   re = "https?://git[.]savannah[.]gnu[.]org/git/([^/]+)/([^/]+)"; }
-        # sourceware.org has flat layout — no owner segment.
+        # sourceware.org has flat layout - no owner segment.
         { type = "sourceware"; re = "https?://sourceware[.]org/git/([^/]+)"; ownerless = true; }
       ];
       tryOne = acc: p:

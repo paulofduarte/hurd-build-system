@@ -9,7 +9,7 @@ them.  The actual glibc-hurd, hurd-headers, and hurd userland packages
 live in this flake under flakes/{cross-toolchain,hurd-headers,hurd}/.
 
 Triplet choice: `i686-gnu` / `x86_64-gnu` is the canonical user-facing
-form across the entire gnumach/MIG/Hurd ecosystem — upstream gnumach
+form across the entire gnumach/MIG/Hurd ecosystem - upstream gnumach
 building.html, upstream MIG building.html, cross-hurd's CROSS_HURD_TARGET,
 Debian's DEB_HOST_GNU_TYPE for hurd-i386/hurd-amd64, Sergey Bugaev's
 upstream glibc submissions, and Guix's %hurd-systems all use the 2-tuple
@@ -27,7 +27,7 @@ Changes:
     [... "gnu" ...]` (the gnu ABI) would otherwise capture Hurd's `gnu` as
     the abi with kernel=<vendor> and fail with "Unknown kernel: pc".
     Special-case `tripleFromSystem` to emit the canonical 2-tuple
-    `<cpu>-gnu` for Hurd targets — drives cc.targetPrefix -> `i686-gnu-gcc`.
+    `<cpu>-gnu` for Hurd targets - drives cc.targetPrefix -> `i686-gnu-gcc`.
   - lib/systems/inspect.nix: add `isHurd` predicate; include it in `isUnix`.
   - lib/systems/default.nix: `isHurd -> libc = "glibc"` in the libc
     cascade; `|| isHurd` in `hasSharedLibraries`; uname.system entry
@@ -35,7 +35,7 @@ Changes:
 
 Rebased onto nixpkgs nixos-26.05, whose parse.nix split the old single
 cpu-kernel-environment allow-list into two branches and moved the `gnu`
-ABI into the first one — so the Hurd 3-tuple branch now leads the "3"
+ABI into the first one - so the Hurd 3-tuple branch now leads the "3"
 case (the old "add gnu/hurd to the list" hunk is obsolete).  Expect a
 one-line fuzz on next minor bumps.
 
@@ -50,8 +50,8 @@ one-line fuzz on next minor bumps.
 +      # Debian's DEB_HOST_GNU_TYPE for hurd-i386 / hurd-amd64, Sergey
 +      # Bugaev's glibc upstream submissions, and Guix's %hurd-systems.
 +      # The kernel attribute is still named `hurd` (so `kernels.hurd` and
-+      # the `isHurd` predicate read naturally) but `.name` — which feeds
-+      # tripleFromSystem -> config -> cc.targetPrefix — is "gnu" so
++      # the `isHurd` predicate read naturally) but `.name` - which feeds
++      # tripleFromSystem -> config -> cc.targetPrefix - is "gnu" so
 +      # cross-binaries land as `i686-gnu-gcc` (not `i686-hurd-gcc`).
 +      hurd = {
 +        execFormat = elf;
@@ -65,7 +65,7 @@ one-line fuzz on next minor bumps.
        watchos = kernels.ios;
        tvos = kernels.ios;
        win32 = kernels.windows;
-+      # `gnu` resolves to the Hurd kernel — used by 2-tuple parsing of
++      # `gnu` resolves to the Hurd kernel - used by 2-tuple parsing of
 +      # `i686-gnu`, the form upstream gnumach/MIG/Hurd documentation
 +      # uses on its configure invocations.
 +      gnu = kernels.hurd;
@@ -78,7 +78,7 @@ one-line fuzz on next minor bumps.
        "3" =
 -        # cpu-kernel-environment
 +        # GNU Hurd: `<cpu>-<vendor>-gnu` (i686-pc-gnu / i686-unknown-gnu).
-+        # Must be checked BEFORE the cpu-kernel-environment branch below —
++        # Must be checked BEFORE the cpu-kernel-environment branch below -
 +        # that branch's `elem (elemAt l 2) [... "gnu" ...]` (the gnu ABI)
 +        # would otherwise mis-match Hurd's `gnu` as the abi field with
 +        # kernel=<vendor>, which then fails with "Unknown kernel: pc".
@@ -107,7 +107,7 @@ one-line fuzz on next minor bumps.
 +    # Bugaev's upstream submissions, Guix manifests).  config.sub
 +    # canonicalises `i686-gnu` -> `i686-pc-gnu` internally for autotools,
 +    # but the user-facing prefix (driving cc.targetPrefix) stays as the
-+    # 2-tuple — so cross-binaries are named `i686-gnu-gcc`, matching
++    # 2-tuple - so cross-binaries are named `i686-gnu-gcc`, matching
 +    # what every other Hurd consumer expects.
 +    if kernel == kernels.hurd then
 +      "${cpuName}-${kernel.name}"

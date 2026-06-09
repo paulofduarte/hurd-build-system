@@ -1,19 +1,19 @@
-# GNU Mach kernel — per-target derivations (autoreconf + configure + make +
+# GNU Mach kernel - per-target derivations (autoreconf + configure + make +
 # make install), one `gnumach-<name>` per entry in `targets`.
 #
 # Output layout:
-#   $out/boot/gnumach              bootable kernel — raw binary (objcopy -O
+#   $out/boot/gnumach              bootable kernel - raw binary (objcopy -O
 #                                  binary) on aarch64 so qemu's -kernel accepts
 #                                  it, ELF with debug info on i386/x86_64.
-#   $out/boot/gnumach.elf          unstripped ELF with DWARF — aarch64 only
+#   $out/boot/gnumach.elf          unstripped ELF with DWARF - aarch64 only
 #                                  (paired with the raw binary for gdb).
 #   $out/include/mach/...          public headers.
 #   $out/share/...                 .defs + .msgids.
 #
 # Per-target attrset fields (see target-archs.nix + flake.nix):
-#   crossTarget : nixpkgs cross-system config (`<cpu>-gnu`) — drives the
+#   crossTarget : nixpkgs cross-system config (`<cpu>-gnu`) - drives the
 #                 wrapped cross toolchain, the pname, and the cross-MIG lookup.
-#   platform    : "at" / "xen" — fed to gnumach's --enable-platform= flag.
+#   platform    : "at" / "xen" - fed to gnumach's --enable-platform= flag.
 #
 # Source comes from the pinned `gnumach-src` flake input, NOT the local
 # src/gnumach working clone (a `make srcs` dev convenience).
@@ -39,7 +39,7 @@ let
   # Upstream version parsed from version.m4 (AC_PACKAGE_VERSION).
   upstreamVersion = helpers.parseM4Version (srcInput + "/version.m4");
 
-  # PACKAGE_VERSION composed at eval time — see flakes/lib (composeVersion).
+  # PACKAGE_VERSION composed at eval time - see flakes/lib (composeVersion).
   fullVersion = helpers.composeVersion {
     inherit upstreamVersion srcInput self forkUrl;
   };
@@ -48,7 +48,7 @@ let
     let
       crossMig  = mig."mig-${name}";
       tp        = target.crossTarget;                 # e.g. i686-gnu
-      # The wrapped cross-cc — the SAME `toolchain-<arch>` the userland + dev
+      # The wrapped cross-cc - the SAME `toolchain-<arch>` the userland + dev
       # shell use.  The kernel builds freestanding (configure.ac forces
       # -ffreestanding -nostdlib) so glibc-hurd is never linked, but the wrapped
       # cc keeps the kernel on the one toolchain.  Native stdenv: the `<cpu>-gnu`
@@ -61,7 +61,7 @@ let
       inherit pname;
 
       # Drives both the store path suffix and (via the sed below) the
-      # binary's PACKAGE_VERSION — same string, traceable on both sides.
+      # binary's PACKAGE_VERSION - same string, traceable on both sides.
       version = fullVersion;
 
       # The pinned `gnumach-src` input, never the local src/gnumach clone, so the
@@ -83,7 +83,7 @@ let
         ++ [ toolchain crossMig ];
 
       # CFLAGS go via configureFlags (below), NOT a derivation env var: an env
-      # CFLAGS is seen by configure (→ config.make) AND make, so `-g/-O/-std`
+      # CFLAGS is seen by configure (-> config.make) AND make, so `-g/-O/-std`
       # land in DW_AT_producer twice vs the in-tree build (configure-only).  The
       # toolchain debug-prefix-map moves to NIX_CFLAGS_COMPILE (preBuild).
 
@@ -102,17 +102,17 @@ let
       preConfigure = ''
         export CC=${tp}-gcc
         # CFLAGS via configureFlagsArray (a bash array) so the embedded space
-        # survives — a plain configureFlags list element is word-split by nix.
+        # survives - a plain configureFlags list element is word-split by nix.
         configureFlagsArray+=("CFLAGS=${buildFlags.baseCflags}")
         ${helpers.crossPkg.outOfTreePreConfigure}
       '';
 
-      # Force the cross binutils into the recursive sub-makes — configure's
+      # Force the cross binutils into the recursive sub-makes - configure's
       # AC_CHECK_TOOL result doesn't always reach them, so on a non-Linux host
       # the host tools get used instead:
-      #   AR/RANLIB/NM  host ar/ranlib can't index `<cpu>-gnu` ELF → empty
+      #   AR/RANLIB/NM  host ar/ranlib can't index `<cpu>-gnu` ELF -> empty
       #                 archives.
-      #   LD            the relocatable link `$(LD) -u _start -r -o gnumach.o …`
+      #   LD            the relocatable link `$(LD) -u _start -r -o gnumach.o ...`
       #                 otherwise runs darwin's cctools ld on i686-gnu .a files.
       #   STRIP         host strip can't read the ELF.
       # Command-line make vars override the built-ins and propagate down.
@@ -123,8 +123,8 @@ let
 
       # --host is ours (the kernel is cross-compiled).  --enable-dependency-
       # tracking: gnumach ships no explicit BUILT_SOURCES, so automake's
-      # per-object .Po files are the only thing teaching make the .defs →
-      # .server.h → .o cascade (compile mach_port.c only after MIG generates
+      # per-object .Po files are the only thing teaching make the .defs ->
+      # .server.h -> .o cascade (compile mach_port.c only after MIG generates
       # mach_port.server.h).
       configureFlags =
         [ "--host=${tp}" "--enable-dependency-tracking" ]
@@ -147,8 +147,8 @@ let
       dontStrip = true;
 
       # Disable nixpkgs' userland hardening on the freestanding kernel.  The
-      # default (relro/bindnow/pie/…) makes ld page-align the RW PT_LOAD, whereas
-      # the in-tree dev-shell build packs it right after the RO segment — a
+      # default (relro/bindnow/pie/...) makes ld page-align the RW PT_LOAD, whereas
+      # the in-tree dev-shell build packs it right after the RO segment - a
       # +0x1000-class layout shift that relocates every absolute address
       # (identical code, divergent bytes).  The flags are inert for a -nostdlib
       # -ffreestanding kernel; off here (+ NIX_HARDENING_ENABLE= in-tree) makes
@@ -163,7 +163,7 @@ let
         runHook postInstall
       '';
 
-      # On aarch64, `make install` ships only $out/boot/gnumach — a raw binary
+      # On aarch64, `make install` ships only $out/boot/gnumach - a raw binary
       # (objcopy -O binary, no ELF header) so qemu's -kernel accepts it.  The
       # link intermediate `gnumach.elf` (unstripped ELF with DWARF) sits in the
       # build dir un-installed; copy it alongside so gdb/addr2line work AND the
@@ -177,7 +177,7 @@ let
       '';
 
       # `make check-mach` needs qemu + grub-mkrescue + u-boot and runs the kernel
-      # under qemu — neither fits the sandbox.  Tests run under the parent
+      # under qemu - neither fits the sandbox.  Tests run under the parent
       # Makefile's check-mach target instead.
       doCheck = false;
 
@@ -188,15 +188,15 @@ let
         platforms = platforms.all;
       };
 
-      # Determinism — make the nix kernel BYTE-IDENTICAL to the in-tree build.
+      # Determinism - make the nix kernel BYTE-IDENTICAL to the in-tree build.
       # gnumach builds IN-SOURCE, so $PWD holds both source + generated files;
       # map it to the SINGLE canonical the in-tree build maps its src+build dirs
       # to (build-flags.nix gnumachCanonBuild) so DWARF paths agree.  Pin the
       # shared -frandom-seed (stripping the reproducible-builds hook's
       # $out-derived, host-varying one first).
       preBuild = ''
-        # mach.info's "last updated …" comes from the doc .texi FILE MTIME via
-        # mdate-sh (which ignores SOURCE_DATE_EPOCH, despite its comment — true of
+        # mach.info's "last updated ..." comes from the doc .texi FILE MTIME via
+        # mdate-sh (which ignores SOURCE_DATE_EPOCH, despite its comment - true of
         # automake 1.18's mdate-sh too).  Set the mtime to the source commit date
         # so it's a MEANINGFUL date that matches the in-tree build (which touches
         # the same from `git log %ct`), not the store mtime=1 (1 Jan 1970).

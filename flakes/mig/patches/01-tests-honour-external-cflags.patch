@@ -11,7 +11,7 @@ any externally-supplied CFLAGS. That works on a Hurd development box
 (or any host with Mach userland headers installed under standard
 search paths) but breaks `make check` on every other host: the
 generated stubs `#include <mach/boolean.h>` etc., and the test
-includes/ tree only ships `mach/mig_support.h` — the rest were
+includes/ tree only ships `mach/mig_support.h` - the rest were
 implicitly expected to come from the system's installed Mach
 headers.
 
@@ -25,7 +25,7 @@ include path), so any test relying on a stub definition is
 unaffected.
 
 Verified by running `make check` on macOS aarch64 with a freshly
-installed gnumach header tree — all 7 tests in tests/good/ now
+installed gnumach header tree - all 7 tests in tests/good/ now
 pass; bad/ and generate-only/ behaviour unchanged.
 Message-ID: <20260524020736.70776-1-paulofernandobd@gmail.com>
 ---

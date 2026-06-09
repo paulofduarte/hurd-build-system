@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dispatch one command to the warm sidekick (control dir = $SK_CTL), relay
 # its stdout/stderr, and exit with its return code.  This is the canonical
-# send used by the transparent tool shims (abidiff/pahole/…): each shim is
+# send used by the transparent tool shims (abidiff/pahole/...): each shim is
 #   #!/bin/sh
 #   exec /path/sidekick-send <tool> "$@"
 # so callers run the tool natively while it actually executes in the VM,

@@ -2,7 +2,7 @@
 # by the root flake to expose `devShells.<system>.default` and by the run
 # apps to pick a default arch.
 #
-# Target NAMES are never hard-coded here — they come from the `targets`
+# Target NAMES are never hard-coded here - they come from the `targets`
 # attrset (target-archs.nix), so adding/removing a target is a one-file
 # edit there.  We pick by matching the host CPU against each target's
 # `crossTarget` CPU, preferring a "primary" target (a non-xen userland

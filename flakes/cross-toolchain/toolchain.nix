@@ -1,10 +1,10 @@
-# Cross-toolchain components — per-target derivations, built against the
+# Cross-toolchain components - per-target derivations, built against the
 # patched `<cpu>-gnu` nixpkgs from pkgs.nix.
 #
 # Outputs (per non-xen userland target):
-#   cross-binutils-<arch>     cross-binutils, target-prefixed (`i686-gnu-as`, …).
+#   cross-binutils-<arch>     cross-binutils, target-prefixed (`i686-gnu-as`, ...).
 #                             No libc dep; safe to build first.
-#   cross-gcc-stage1-<arch>   gccWithoutTargetLibc — bare driver + cc1 + libgcc.a
+#   cross-gcc-stage1-<arch>   gccWithoutTargetLibc - bare driver + cc1 + libgcc.a
 #                             (no libgcc_s/libstdc++/libc).  The libc-free cc that
 #                             compiles gnumach-headers, mig, and glibc-hurd
 #                             (gnumach's configure forces -ffreestanding -nostdlib,
@@ -69,9 +69,9 @@ let
     # mechanism #2: gcc builds libgcc_s/libstdc++ by linking `-lc` against the
     # --prefix=/ reference glibc, whose libc.so is a GNU ld GROUP script with
     # absolute /lib members.  ld resolves those only with `--sysroot=${ref}`, but
-    # the nix ld-wrapper strips a command-line `--sysroot` under sandbox purity —
+    # the nix ld-wrapper strips a command-line `--sysroot` under sandbox purity -
     # so gcc's own --with-sysroot/SYSROOT_SPEC never reaches the raw ld.  Same
-    # wall the userland link hits; same fix — feed the wrapper `--sysroot=${ref}`
+    # wall the userland link hits; same fix - feed the wrapper `--sysroot=${ref}`
     # via NIX_LDFLAGS_BEFORE_<salt>, which add-flags.sh keeps and applies to the
     # raw ld AFTER the strip.  (The wrapper gcc links through is the cross-stdenv's,
     # not one we can wrap; the env var is the channel that reaches it.)
@@ -87,11 +87,11 @@ let
     # enables `--whole-archive` for convenience libs when `$CC -print-prog-name=ld
     # --help` advertises `no-whole-archive`.  gcc records no absolute ld, returns
     # the bare name `ld`, and libtool runs the BUILD host's native ld: GNU on Linux
-    # (→ --whole-archive, archive order) vs macOS cctools on darwin (→ libtool
-    # EXTRACTS each archive and lists objects via `find … | sort`, ALPHABETICAL).
-    # The two orders give different .text/.cold layouts → non-reproducible
+    # (-> --whole-archive, archive order) vs macOS cctools on darwin (-> libtool
+    # EXTRACTS each archive and lists objects via `find ... | sort`, ALPHABETICAL).
+    # The two orders give different .text/.cold layouts -> non-reproducible
     # libstdc++.so.  Pinning gcc's ld to the GNU cross ld makes the probe succeed
-    # everywhere → --whole-archive → byte-identical.  Points at the WRAPPED bintools
+    # everywhere -> --whole-archive -> byte-identical.  Points at the WRAPPED bintools
     # ld (the one the build already links through), so mechanism #2's --sysroot is
     # preserved.
     gcc.overrideAttrs (old: {
@@ -104,13 +104,13 @@ let
       # Drop nixpkgs' `enableLibGccOutput`: it splits libgcc_s.so into a separate
       # `libgcc` output and runs `patchelf --set-rpath ""` on it.  It's gated
       # `&& !hostPlatform.isDarwin`, so a Linux-built gcc WIPES libgcc_s's RUNPATH
-      # while a darwin-built one keeps mechanism #2's `/lib` — cross-host divergence
+      # while a darwin-built one keeps mechanism #2's `/lib` - cross-host divergence
       # in the shipped libgcc_s.so.1.  The patchelf wipe also reshuffles sections,
       # so no post-hoc `--set-rpath /lib` reconstructs the pristine layout; fix at
       # the source.  Filtering the output + phase off makes EVERY host emit the
       # pristine `/lib` libgcc_s.  Safe: our standalone glibc-hurd never consumes
       # gcc's `libgcc` output / `passthru.libgcc`.  No-op on darwin.  (Names are
-      # nixpkgs-internal — gcc/common/libgcc.nix.)
+      # nixpkgs-internal - gcc/common/libgcc.nix.)
       outputs        = lib.filter (o: o != "libgcc") (old.outputs or [ "out" ]);
       preFixupPhases = lib.filter (p: p != "preFixupLibGccPhase") (old.preFixupPhases or []);
       env               = old.env // {
@@ -118,29 +118,29 @@ let
         # resolves at the libgcc_s/libstdc++ link.  Rides NIX_LDFLAGS_BEFORE so it
         # survives the ld-wrapper's purity strip.  No `-rpath`: the shipped
         # libgcc_s/libstdc++ carry NO DT_RUNPATH, matching Debian GNU/Hurd and the
-        # rest of our dist — they resolve libc from /lib via the loader's default
+        # rest of our dist - they resolve libc from /lib via the loader's default
         # search path (glibc's default-rpath=/lib + /etc/ld.so.cache).
         "NIX_LDFLAGS_BEFORE${salt}" =
           (old.env."NIX_LDFLAGS_BEFORE${salt}" or "") + " --sysroot=${targetLibc}";
         # Stop the wrapper auto-deriving -rpath from the -L dirs, and drop
         # nixpkgs' explicit store -rpath (keep -L + -rpath-link for build-time
-        # resolution) — else `${targetLibc}/lib` would be baked.
+        # resolution) - else `${targetLibc}/lib` would be baked.
         "NIX_DONT_SET_RPATH${salt}" = "1";
         EXTRA_LDFLAGS_FOR_TARGET = lib.replaceStrings
           [ " -Wl,-rpath,${targetLibc}/lib" ] [ "" ]
           (old.env.EXTRA_LDFLAGS_FOR_TARGET or "");
-        # The TARGET runtime libs (libgcc_s, libstdc++ — what dist-libgcc ships)
+        # The TARGET runtime libs (libgcc_s, libstdc++ - what dist-libgcc ships)
         # get the shared baseCflags (build-flags.nix), the same -g -O2 as the rest
-        # of the dist, defined in ONE place.  CFLAGS_FOR_TARGET only — the gcc
+        # of the dist, defined in ONE place.  CFLAGS_FOR_TARGET only - the gcc
         # compiler proper keeps its own build flags.
         CFLAGS_FOR_TARGET   = buildFlags.baseCflags;
         CXXFLAGS_FOR_TARGET = buildFlags.baseCflags;
       };
       # libstdc++'s gdb pretty-printer hook (libstdc++.so.*-gdb.py) records absolute
       # pythondir/libdir and derives a RELATIVE offset from them at load time to stay
-      # relocatable.  nixpkgs bakes the build-host store prefix into them → host-
-      # varying.  Rewrite them to the paths our --prefix=/ dist deploys to — /lib and
-      # /share/gcc-<ver>/python — so the hook is host-independent AND correct on the
+      # relocatable.  nixpkgs bakes the build-host store prefix into them -> host-
+      # varying.  Rewrite them to the paths our --prefix=/ dist deploys to - /lib and
+      # /share/gcc-<ver>/python - so the hook is host-independent AND correct on the
       # target (matching glibc's deployPrefix layout).  `$d` is the .py's own dir (the
       # store libdir), so this is target-triple-agnostic.  No `sed -i` (portable sed).
       postFixup = (old.postFixup or "") + ''
@@ -154,7 +154,7 @@ let
 
   # The wrapped cross-cc.  `cc` is the reference-built gcc; the cc-wrapper and
   # bintools-wrapper point at the WORKING glibc (headers / crt / ld.so / augmented
-  # libc.so GROUP).  Re-pointing `working` is a wrapper rebuild (seconds) —
+  # libc.so GROUP).  Re-pointing `working` is a wrapper rebuild (seconds) -
   # wrapCCWith never recompiles `cc`, so hacking the working glibc doesn't rebuild
   # gcc.  We wrap binutils-unwrapped rather than the default cross binutils wrapper
   # to avoid dragging in nixpkgs' own glibc, whose meta.platforms gate refuses the
@@ -174,14 +174,14 @@ let
         # at link depends on which `working` we wrap:
         #  - The gated re-export farm (abi-check.nix mkAbiChecked) the userland
         #    toolchain links against rewrites the GROUP to BARE NAMES (libc.so.0.3,
-        #    libmachuser.so, …).  ld resolves them via the -L"${working}/lib" the
-        #    wrapper already adds — no --sysroot, never doubled, host-uniform.
+        #    libmachuser.so, ...).  ld resolves them via the -L"${working}/lib" the
+        #    wrapper already adds - no --sysroot, never doubled, host-uniform.
         #  - A RAW deployable glibc used as a glibc buildCC's prior libc keeps its
         #    /lib GROUP, but the nix ld-wrapper strips a CLI --sysroot under purity
         #    (so it never reached ld in a Linux sandbox anyway), and the glibc build's
         #    configure link tests don't bind the prior libc's full GROUP, so they pass
         #    without it.  On darwin --sysroot WAS honoured and doubled an already-
-        #    absolute GROUP member ("cannot find … inside …").  So bare names need no
+        #    absolute GROUP member ("cannot find ... inside ...").  So bare names need no
         #    sysroot at all.
         #
         # NIX_DONT_SET_RPATH: stop the ld-wrapper auto-baking a /nix/store rpath to

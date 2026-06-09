@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# SCENARIO=hurd-guix — Guix childhurd, kernel-overlay approach.
+# SCENARIO=hurd-guix - Guix childhurd, kernel-overlay approach.
 # Needs -M q35 to boot (Guix qcow2 won't come up on i440fx).
 #
 # Kernel path inside the disk is a Guix store path like
-# /gnu/store/<hash>-gnumach-<ver>/boot/gnumach — different on every
+# /gnu/store/<hash>-gnumach-<ver>/boot/gnumach - different on every
 # upstream build.  The sidekick auto-discovers it from the disk's
 # grub.cfg multiboot line, so no host-side path guessing.
 #
@@ -21,7 +21,7 @@ set -euo pipefail
 
 scenario_check_target "hurd-guix" "x86_64 i686"
 arch_qemu_for_target "$ARCH"
-QEMU_MACHINE="-M q35"            # Guix qcow2 hangs on i440fx — even with our
+QEMU_MACHINE="-M q35"            # Guix qcow2 hangs on i440fx - even with our
                                   # minimal regenerated grub.cfg (verified
                                   # 2026-05-25 on Linux).  q35 is required;
                                   # the cost is gnumach's in-kernel SATA driver

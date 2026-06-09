@@ -1,20 +1,20 @@
 # Per-source information derived from a `*-src` flake input + its
 # matching flake.lock node.  Returns an attrset of:
 #
-#   ref          — declared branch (from flake.nix); falls back to the
+#   ref          - declared branch (from flake.nix); falls back to the
 #                  locked ref if the input didn't pin one explicitly.
-#   rev          — the locked commit nix actually builds.
-#   date         — locked commit date (YYYY-MM-DD) from
+#   rev          - the locked commit nix actually builds.
+#   date         - locked commit date (YYYY-MM-DD) from
 #                  input.lastModifiedDate.
-#   url          — clone url for `make srcs` to feed `git clone`.
-#   forkUrl      — fork URL fed into shortUrl for the version fork-id
+#   url          - clone url for `make srcs` to feed `git clone`.
+#   forkUrl      - fork URL fed into shortUrl for the version fork-id
 #                  (no .git suffix).
-#   name         — stable host-named remote (e.g. `github.<owner>.<repo>`,
+#   name         - stable host-named remote (e.g. `github.<owner>.<repo>`,
 #                  `savannah.<project>.<repo>`).  What `make srcs` calls
 #                  the pin's remote, consistent across environments and
 #                  matching the PACKAGE_VERSION fork field.
 #
-# No URL parsing of our own — we just consume the fields nix has already
+# No URL parsing of our own - we just consume the fields nix has already
 # parsed into `original`; only the git type defers to flakes/lib's
 # shortUrl to turn a raw url into a dotted host.owner.repo.
 

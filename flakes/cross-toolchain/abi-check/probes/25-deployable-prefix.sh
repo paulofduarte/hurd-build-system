@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # abi-level: auto
-# Probe 25 — deployable-prefix (C-full) static acceptance.
+# Probe 25 - deployable-prefix (C-full) static acceptance.
 # When the working glibc is built --prefix=/ (deployPrefix), a DEPLOYED Hurd
 # has no /nix/store: every allocated section of every shipped ELF must be
 # /nix/store-clean, no DT_RUNPATH/RPATH may point into the store, no FHS path
-# may be double-slashed (the dir-knob regression — a missed --sysconfdir bakes
+# may be double-slashed (the dir-knob regression - a missed --sysconfdir bakes
 # //etc, etc.), and the augmented libc.so GROUP must be /-rooted.  This is the
 # STATIC complement to the e2e boot gate.
 #
 # readelf (not strings/strip): the Hurd EI_OSABI ELF defeats the host BFD's
 # strip, so strings-after-strip false-fails; readelf -p is format-agnostic.
-# ALWAYS one file per readelf invocation — multiple files make readelf emit
+# ALWAYS one file per readelf invocation - multiple files make readelf emit
 # `File: <path>` headers, and that path is itself under /nix/store, which would
 # false-trigger the store grep.
 #
@@ -22,9 +22,9 @@ set -u
 W="$WORK/lib"
 gso="$W/libc.so"
 [ -f "$gso" ] && grep -q '^GROUP' "$gso" 2>/dev/null \
-  || { echo "SKIP 25-deployable-prefix — $W/libc.so is not the Hurd GROUP ld-script"; exit 0; }
+  || { echo "SKIP 25-deployable-prefix - $W/libc.so is not the Hurd GROUP ld-script"; exit 0; }
 if grep '^GROUP' "$gso" | grep -q '/nix/store'; then
-  echo "SKIP 25-deployable-prefix — libc.so GROUP is store-rooted (\$out-prefix glibc, not a deployable --prefix=/ build)"
+  echo "SKIP 25-deployable-prefix - libc.so GROUP is store-rooted (\$out-prefix glibc, not a deployable --prefix=/ build)"
   exit 0
 fi
 
@@ -57,7 +57,7 @@ loader="$(ls "$W"/ld*.so.* 2>/dev/null | head -1)"
   || bad="$bad loader(no-/etc/ld.so.cache)"
 
 if [ -n "$bad" ]; then
-  echo "FAIL 25-deployable-prefix — store/non-/-rooted paths in shipped glibc:$bad"
+  echo "FAIL 25-deployable-prefix - store/non-/-rooted paths in shipped glibc:$bad"
   exit 1
 fi
-echo "PASS 25-deployable-prefix — shipped glibc ELFs /-clean (0 /nix/store, no store RUNPATH, no // FHS, GROUP /-rooted, /etc/ld.so.cache baked)"
+echo "PASS 25-deployable-prefix - shipped glibc ELFs /-clean (0 /nix/store, no store RUNPATH, no // FHS, GROUP /-rooted, /etc/ld.so.cache baked)"

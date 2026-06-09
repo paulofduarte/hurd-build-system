@@ -13,10 +13,10 @@
 #     `pentium3-v1` (i686) and `core2duo-v1` (x86_64) against every
 #     gnumach test cycle.
 #   - Memory caps are kernel-determined, not arbitrary:
-#       i686/x86_64 → 2047 MB (upper bound of the 32-bit signed
+#       i686/x86_64 -> 2047 MB (upper bound of the 32-bit signed
 #                              "low" range gnumach's bootstrap pmap
 #                              manages directly)
-#       aarch64     →  512 MB (aarch64 pmap_bootstrap maps a single
+#       aarch64     ->  512 MB (aarch64 pmap_bootstrap maps a single
 #                              1 GB L1 block in TTBR1; vm_page's
 #                              allocator faults beyond that until
 #                              AARCH64-PMAP-HEAP-DESIGN.md lands)
@@ -42,7 +42,7 @@ arch_qemu_for_target() {
 #   (pentium3-v1 / core2duo-v1 / cortex-a72), exposing the full host
 #   CPU feature set to gnumach. gnumach has NOT been tested against
 #   arbitrary modern CPU features (newer SSE/AVX, MTE on Apple
-#   Silicon, etc.) — it may panic on unrecognized CPUID flags or hit
+#   Silicon, etc.) - it may panic on unrecognized CPUID flags or hit
 #   untested code paths. Use at your own risk.
 #
 #   Call AFTER arch_qemu_for_target and AFTER any scenario-specific
@@ -62,7 +62,7 @@ arch_apply_accel_if_requested() {
     *)             host_arch="$(uname -m)" ;;
   esac
 
-  # Compat matrix — which guests can each host accelerate?
+  # Compat matrix - which guests can each host accelerate?
   #   x86_64 host:  x86_64 + i686 (32-bit is a subset; same /dev/kvm)
   #   i686   host:  i686 only (32-bit host can't run 64-bit guests)
   #   aarch64 host: aarch64 only (different ISA family from x86)
@@ -87,5 +87,5 @@ arch_apply_accel_if_requested() {
   # Defensive ${VAR:-} in case arch_qemu_for_target wasn't called first
   # (would error under `set -u` otherwise).
   QEMU_MACHINE="${QEMU_MACHINE:-} -accel $accel"
-  echo "RUN_ACCEL=1: using -accel $accel + -cpu host (upstream-pinned CPU model overridden — gnumach may panic on untested CPUID features)" >&2
+  echo "RUN_ACCEL=1: using -accel $accel + -cpu host (upstream-pinned CPU model overridden - gnumach may panic on untested CPUID features)" >&2
 }

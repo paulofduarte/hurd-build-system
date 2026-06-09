@@ -1,13 +1,13 @@
-# The single per-(host, target) development shell — `nix develop .#<arch>`.
+# The single per-(host, target) development shell - `nix develop .#<arch>`.
 #
 # One shell drives every in-tree build: `make mach` (freestanding gnumach
 # kernel), `make mig` (host-side MIG codegen tool), `make hurd` (userland
-# servers).  All use the SAME wrapped `<cpu>-gnu` cross-cc (toolchain.nix →
+# servers).  All use the SAME wrapped `<cpu>-gnu` cross-cc (toolchain.nix ->
 # `toolchain-<arch>`): the kernel builds freestanding (gnumach's configure forces
 # `-ffreestanding -nostdlib`), the userland hosted against glibc-hurd.
 #
-# Build TOOLS (autoreconf, bison/flex, perl, texinfo, …) are INFERRED from this
-# target's own derivations (gnumach + mig + gnumach-headers) — add a tool to a
+# Build TOOLS (autoreconf, bison/flex, perl, texinfo, ...) are INFERRED from this
+# target's own derivations (gnumach + mig + gnumach-headers) - add a tool to a
 # package's nativeBuildInputs and the shell picks it up.  The nix-built working
 # mig is added + exported as $MIG / $USER_MIG so mig is always available without a
 # `make mig`; `make src-mig` opts into an in-tree mig the Makefile builds instead.
@@ -15,11 +15,11 @@
 # wrapped cc on PATH.
 #
 # The cross compiler + binutils are wired by ABSOLUTE path in the shellHook
-# (CC/CXX from the wrapped toolchain; LD/AR/NM/… from the unwrapped cross
+# (CC/CXX from the wrapped toolchain; LD/AR/NM/... from the unwrapped cross
 # binutils) so configure + sub-makes resolve to exactly these regardless of PATH
 # ordering.  HURD_CONFIGURE_FLAGS carries the same flag set the nix Hurd build
 # uses (hurd-config.nix); the Makefile's hurd recipe adds `CFLAGS=-fcommon` at
-# configure time, scoping -fcommon to the userland — the kernel never sees it.
+# configure time, scoping -fcommon to the userland - the kernel never sees it.
 
 { nixpkgs, mkCrossPkgs }:
 
@@ -36,7 +36,7 @@ in
   #              headers } -> shell.  `toolchain` is the wrapped cc (toolchain-<arch>,
   #              or the CPU sibling's for a xen variant); `glibcCC` is the COMPLETE
   #              final gcc wrapped against the REFERENCE glibc (the cc the nix working
-  #              glibc is built with) — what the opt-in `make glibc` uses, so in-tree
+  #              glibc is built with) - what the opt-in `make glibc` uses, so in-tree
   #              and nix work-glibc are built by the same compiler.  gnumach/mig/
   #              headers are this target's derivations, for build-tool inference (and
   #              subtraction).
@@ -45,19 +45,19 @@ in
       pkgs      = nixpkgs.legacyPackages.${system};
       crossPkgs = mkCrossPkgs system target;
 
-      # Patched install-info (deterministic dir), shared with glibc.nix — see
+      # Patched install-info (deterministic dir), shared with glibc.nix - see
       # texinfo-det.nix.  Replaces EVERY texinfo on PATH below so whichever
-      # install-info glibc/hurd's `make install` picks is deterministic — no
+      # install-info glibc/hurd's `make install` picks is deterministic - no
       # post-dist dir regen.
       texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
-      # Unwrapped cross binutils — absolute source of the prefixed
+      # Unwrapped cross binutils - absolute source of the prefixed
       # ld/ar/nm/ranlib/strip/objcopy.  The wrapped `toolchain` supplies cc/c++;
       # the unwrapped binutils for the rest sidesteps any ambiguity about what the
       # cc-wrapper re-exports.
       tcPaths = toolchainPaths system target;
       binu  = tcPaths.binutils;
-      # The wrapped cc's target prefix ("i686-gnu-") — drives both the toolchain
+      # The wrapped cc's target prefix ("i686-gnu-") - drives both the toolchain
       # bin names and binu's (same crossSystem).
       tp    = toolchain.targetPrefix;
       # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
@@ -79,7 +79,7 @@ in
       # in via gnumach's build inputs doesn't sneak onto PATH through inference (the
       # shell's mig is the `mig` arg, added + exported below).  The stage-1 cc comes
       # in via gnumach-headers' nativeBuildInputs but isn't the build cc here, and
-      # its prefixed gcc must not shadow the wrapped cc on PATH — so subtracted.
+      # its prefixed gcc must not shadow the wrapped cc on PATH - so subtracted.
       stage1 = crossPkgs.buildPackages.gccWithoutTargetLibc;
       ownDrvs = [ gnumach mig headers toolchain stage1 ];
       inferredBuildInputs = lib.subtractLists ownDrvs
@@ -100,7 +100,7 @@ in
       #              opt-in `make glibc` (mirrors glibc.nix); the dedup handles the
       #              overlap with inferredBuildInputs.
       # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo` strips
-      # the unpatched texinfo wherever it appears, then texinfoDet is added once — so
+      # the unpatched texinfo wherever it appears, then texinfoDet is added once - so
       # the only install-info on PATH is the deterministic one.
       nativeBuildInputs =
         lib.remove pkgs.texinfo (
@@ -140,7 +140,7 @@ in
         export STRIP=${binu}/bin/${tp}strip
         export OBJCOPY=${binu}/bin/${tp}objcopy
 
-        # The nix-built working mig — always available so mach/hurd build with
+        # The nix-built working mig - always available so mach/hurd build with
         # no `make mig`.  The Makefile uses $MIG unless an in-tree src/mig opts
         # in (`make src-mig`), in which case it builds + uses that instead.
         export MIG=${mig}/bin/${tp}mig
@@ -148,10 +148,10 @@ in
 
         # Build env for the opt-in raw in-tree `make glibc` (mirrors glibc.nix).
         # GLIBC_CC is the COMPLETE final gcc wrapped against the REFERENCE glibc
-        # — the SAME cc the nix working glibc is built with, so in-tree-work and
+        # - the SAME cc the nix working glibc is built with, so in-tree-work and
         # nix-work glibc are byte-comparable.  NOT the nolibc stage-1 cc (it's a
         # bootstrap-only seed) and NOT the wrapped `toolchain` cc above (which
-        # embeds the WORKING glibc → circular).  The ref wrapper supplies
+        # embeds the WORKING glibc -> circular).  The ref wrapper supplies
         # crt/libc + mechanism-#2 --sysroot for glibc's configure link-tests.
         # The extra binutils tools (as/objdump/readelf) + native BUILD_CC + the
         # build triple + binutils bin dir are what glibc's configure consumes.
@@ -172,7 +172,7 @@ in
 
         # Cross-host determinism for the in-tree build (mach/hurd/glibc),
         # applied through NIX_CFLAGS_COMPILE so EVERY in-tree compile inherits
-        # it — the Makefile recipes need not redefine it.  Three host-varying
+        # it - the Makefile recipes need not redefine it.  Three host-varying
         # inputs would otherwise leak (see build-flags.nix):
         #   - gcc's -frandom-seed: nixpkgs' reproducible-builds setup hook
         #     derives it from $out, which differs per host for this dev shell
@@ -185,7 +185,7 @@ in
         #     which the cross-cc also reads.  On darwin that puts the HOST libiconv
         #     (propagated by gettext) ahead of the target glibc, so console/pc_kbd
         #     compile against the wrong iconv.h (host `__tag_iconv_t`, not glibc's
-        #     `iconv_t`) and leak the host store path into DWARF — diverging from
+        #     `iconv_t`) and leak the host store path into DWARF - diverging from
         #     Linux (glibc has iconv built-in, no host libiconv).  A cross-compile
         #     must resolve system headers only from its own sysroot (the wrapper's
         #     -idirafter glibc) + the Makefile -I, never host `-isystem`, so strip
@@ -194,19 +194,19 @@ in
           | sed -E '${buildFlags.isystemStripSed}') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
 
         # Canonical glibc roots (build-flags.nix) for the in-tree glibc build to
-        # -ffile-prefix-map its $(GLIBC_SRC)/$(GLIBC_BUILDDIR)/$(SYSROOT) to — the
+        # -ffile-prefix-map its $(GLIBC_SRC)/$(GLIBC_BUILDDIR)/$(SYSROOT) to - the
         # SAME names glibc.nix maps the nix build's roots to, so the in-tree and nix
         # glibc come out byte-identical.  Passed via env so the Makefile stays DRY.
         export GLIBC_CANON_SRC=${buildFlags.glibcCanonSrc}
         export GLIBC_CANON_BUILD=${buildFlags.glibcCanonBuild}
         export GLIBC_CANON_SYSROOT=${buildFlags.glibcCanonSysroot}
-        # Same for the in-tree gnumach + hurd builds (see build-flags.nix) — the
+        # Same for the in-tree gnumach + hurd builds (see build-flags.nix) - the
         # SAME single canonical gnumach/default.nix + hurd/default.nix map their
         # nix build's $PWD to, so in-tree == nix for those modules too.
         export GNUMACH_CANON_BUILD=${buildFlags.gnumachCanonBuild}
         export HURD_CANON_BUILD=${buildFlags.hurdCanonBuild}
 
-        # Base compile flags (build-flags.nix) — the SAME -g -O2 (+ hurd's -fcommon)
+        # Base compile flags (build-flags.nix) - the SAME -g -O2 (+ hurd's -fcommon)
         # the nix derivations use.  The in-tree gnumach/hurd configure CFLAGS read
         # these so the flags live in ONE place (nix), never duplicated in the Makefile.
         export BASE_CFLAGS="${buildFlags.baseCflags}"
@@ -217,7 +217,7 @@ in
         # stdenv never does.  The extra RUNPATH string enlarges .dynstr and
         # shifts every address (.text/.symtab/.dynsym cascade), so the dist
         # diverges cross-host AND leaks a build path.  Two distinct sources, two
-        # mechanisms — make every host match darwin (deployable dist resolves via
+        # mechanisms - make every host match darwin (deployable dist resolves via
         # the target's own /lib + DT_NEEDED, no rpath wanted):
         #
         #  (a) auto-derived rpath from the wrapped cc's OWN -L<store> dirs (the
@@ -225,7 +225,7 @@ in
         #      NIX_DONT_SET_RPATH gates exactly this.  It must be a REAL env var,
         #      not the wrapped bintools' add-local-ldflags-before.sh: gcc links
         #      through its --with-ld bintools (the stage-1 wrapper), which never
-        #      sources the working wrapper's suppression — same trap glibc.nix /
+        #      sources the working wrapper's suppression - same trap glibc.nix /
         #      mkGcc hit, fixed the same way (a salted env var the real ld honours).
         export NIX_DONT_SET_RPATH${salt}=1
         #

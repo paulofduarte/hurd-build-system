@@ -1,5 +1,5 @@
 #!/bin/busybox sh
-# Generic sidekick dispatcher — PID 1 in the Debian helper VM.  The VM is
+# Generic sidekick dispatcher - PID 1 in the Debian helper VM.  The VM is
 # dumb: it runs host-supplied commands/scripts; all logic lives host-side
 # (flakes/run + the ABI gate).  See .claude/docs/build/SIDEKICK-DISPATCHER.md.
 #
@@ -8,11 +8,11 @@
 #            rc to /shared/run.rc, power off.  Used by overlay-kernel/mkiso.
 #   serve    warm command loop: execute queued requests from /shared/q and
 #            self-power-off after `keepalive` seconds of inactivity.  Used by
-#            the ABI tools (abidiff/pahole) — one boot, many fast dispatches.
+#            the ABI tools (abidiff/pahole) - one boot, many fast dispatches.
 bb() { /bin/busybox "$@"; }
 
-# Install busybox applet symlinks (uname, head, awk, mount, insmod, …) into
-# /bin — Debian's busybox .deb ships no postinst, so we do it ourselves.
+# Install busybox applet symlinks (uname, head, awk, mount, insmod, ...) into
+# /bin - Debian's busybox .deb ships no postinst, so we do it ourselves.
 # Must come first; host-supplied scripts expect the usual coreutils names.
 /bin/busybox --install -s /bin 2>/dev/null
 
@@ -27,8 +27,8 @@ bb mount -t 9p -o trans=virtio,version=9p2000.L shared /shared 2>/dev/null \
   || { echo "FATAL: 9p mount failed" >&2; bb poweroff -f; }
 
 # Optional read-only /nix/store mount (mount_tag=nixstore) so tool
-# arguments that are store paths resolve verbatim in the VM — the host
-# shim ships `abidiff /nix/store/…/libc.so.0.3 …` unchanged.  Absent for
+# arguments that are store paths resolve verbatim in the VM - the host
+# shim ships `abidiff /nix/store/.../libc.so.0.3 ...` unchanged.  Absent for
 # ops that don't need it (overlay-kernel/mkiso stage their inputs in /shared).
 if bb grep -q nixstore /proc/mounts 2>/dev/null; then :; else
   bb mkdir -p /nix/store 2>/dev/null

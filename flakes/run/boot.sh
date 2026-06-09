@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SCENARIO=boot — bare kernel smoke test.  Universal across all
+# SCENARIO=boot - bare kernel smoke test.  Universal across all
 # supported ARCHs; for x86_64 we route through a tiny GRUB ISO
 # (built by sidekick) because qemu's -kernel rejects 64-bit ELFs.
 set -euo pipefail

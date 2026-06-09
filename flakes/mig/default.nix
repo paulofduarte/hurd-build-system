@@ -1,20 +1,20 @@
-# GNU MIG — per-target cross-compiler derivations (autoreconf + configure +
+# GNU MIG - per-target cross-compiler derivations (autoreconf + configure +
 # make + make install), producing the per-target MIG binary + migcom under
 # $out/{bin,libexec}.
 #
 # Two build modes, selected by the optional `checkToolchains` arg:
 #
-#   BOOTSTRAP (checkToolchains == null) — `mig-<name>`, built with the libc-free
+#   BOOTSTRAP (checkToolchains == null) - `mig-<name>`, built with the libc-free
 #     stage-1 cross cc, `doCheck = false`.  This is the mig that builds the
 #     toolchain itself (hurd-headers, glibc-hurd), so it MUST precede any libc
 #     and can't run its tests (they compile stubs that #include <string.h>, a
 #     hosted-libc header the nolibc cc lacks).
 #
-#   CHECKED (checkToolchains = the wrapped-cc attrset) — built with the wrapped
+#   CHECKED (checkToolchains = the wrapped-cc attrset) - built with the wrapped
 #     cc (toolchain-<name>), whose glibc-hurd sysroot provides <string.h>, so
 #     `doCheck = true` can compile the test stubs.  migcom is native-host-cc and
 #     cpu.h an -ffreestanding TARGET_CC compile in BOTH modes, so the installed
-#     bytes are identical to the bootstrap mig — a byte-identical revalidation
+#     bytes are identical to the bootstrap mig - a byte-identical revalidation
 #     that the mig which built glibc is sound, not a different artifact.  It sits
 #     downstream of glibc-hurd; packages.nix wires it in after the final
 #     toolchain (no cycle) and routes glibc's consumers at it.
@@ -24,7 +24,7 @@
 # is target-aware.
 #
 # Per-target attrset fields (see target-archs.nix + flake.nix):
-#   crossTarget : nixpkgs cross-system config (`<cpu>-gnu`) — drives TARGET_CC
+#   crossTarget : nixpkgs cross-system config (`<cpu>-gnu`) - drives TARGET_CC
 #                 (cpu.symc + test stubs), ./configure --target=, and the binary
 #                 name (<crossTarget>-mig + <crossTarget>-migcom).
 #   platform    : unused by MIG (a gnumach-side concern).
@@ -60,7 +60,7 @@ let
     let
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
       crossPkgs = mkCrossPkgs system target;
-      # BOOTSTRAP: the libc-free stage-1 cc (gccWithoutTargetLibc) — the
+      # BOOTSTRAP: the libc-free stage-1 cc (gccWithoutTargetLibc) - the
       # `<cpu>-gnu` cross stdenv's own `.cc` would pull nixpkgs' meta-gated glibc
       # and break eval.  CHECKED: the wrapped cc, whose glibc-hurd sysroot gives
       # the test stubs their <string.h>.  Both share the same `<cpu>-gnu-`
@@ -82,13 +82,13 @@ let
 
       # The locked flake input, never the local src/mig clone, so the built bytes
       # match the rev the version string advertises (use `make mig` for iterative
-      # dev — that path bypasses nix).
+      # dev - that path bypasses nix).
       src = srcInput;
 
       # Cross-build fixes that landed upstream after the v1.8+git20231217 release
       # tag but before our baseline, needed to build the older reference mig:
       #   00  accept a TARGET_CC whose name isn't <target>-gcc (we supply
-      #       i686-unknown-none-elf-gcc) — else configure aborts "could not find
+      #       i686-unknown-none-elf-gcc) - else configure aborts "could not find
       #       a compiler".
       #   01  test harness honours external CFLAGS (our gnumach-headers -I).
       #   02  test harness preprocesses .defs with the target compiler.
@@ -108,8 +108,8 @@ let
       # autoreconfHook supplies autoconf/automake/libtool/m4.  bison/flex are
       # MIG's own needs (parser.y + lexxer.l).  The cross cc is for TARGET_CC
       # (cpu.symc) + the test stubs.  patchelf: matches the other derivations so
-      # the stdenv audit-tmpdir fixup can run — on a Linux builder migcom is an
-      # ELF and the audit runs (shrink hook would fire — see dontPatchELF); on
+      # the stdenv audit-tmpdir fixup can run - on a Linux builder migcom is an
+      # ELF and the audit runs (shrink hook would fire - see dontPatchELF); on
       # darwin migcom is Mach-O and patchelf is a no-op.  Carried unconditionally
       # for uniform behaviour across hosts.
       nativeBuildInputs =
@@ -144,8 +144,8 @@ let
       ];
 
       # mig is autotools/automake, which declares the codegen ordering
-      # (bison/flex → parser.h/lexxer; cpu.sym → cpu.h before migcom.c), so
-      # the build is parallel-safe — confirmed by long use at `make -j12`.
+      # (bison/flex -> parser.h/lexxer; cpu.sym -> cpu.h before migcom.c), so
+      # the build is parallel-safe - confirmed by long use at `make -j12`.
       enableParallelBuilding = true;
 
       # Only the CHECKED variant self-tests (see file header): its wrapped cc has
@@ -174,7 +174,7 @@ let
     }
     // lib.optionalAttrs checked {
       # test_lib.sh compiles the stubs with `$CC $CFLAGS`; pass the
-      # gnumach-headers include via an exported CFLAGS (NOT -ffreestanding — the
+      # gnumach-headers include via an exported CFLAGS (NOT -ffreestanding - the
       # stubs genuinely need the wrapped cc's hosted <string.h>).
       preCheck = ''
         export CFLAGS="-I${gnumach-headers}/include"

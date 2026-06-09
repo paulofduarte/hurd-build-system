@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # abi-level: deep
-# Probe 21 — the public, standalone headers still self-include (C and
+# Probe 21 - the public, standalone headers still self-include (C and
 # C++).  A header that stops compiling alone (a moved declaration, a
 # dropped transitive include) breaks consumers even with libc.so intact.
 #
 # Scope: the curated set of headers that are *meant* to be included
 # directly (ISO C + POSIX + common XSI).  We deliberately do NOT walk the
-# whole include/ tree — glibc's Hurd port installs many internal
-# server/implementation headers (hurd/diskfs.h, mach/boot.h, …) that are
+# whole include/ tree - glibc's Hurd port installs many internal
+# server/implementation headers (hurd/diskfs.h, mach/boot.h, ...) that are
 # not standalone-includable by contract, exactly as glibc's own
 # scripts/check-installed-headers.sh excludes them.  When the working
 # glibc source is reachable ($GLIBC_SRC) we note its exhaustive checker.
 set -u
-[ -n "${CROSS_CC:-}" ] && [ -x "$CROSS_CC" ] || { echo "SKIP 21-check-installed-headers — no cross cc"; exit 0; }
-[ -d "$WORK/include" ] || { echo "SKIP 21-check-installed-headers — no include tree"; exit 0; }
+[ -n "${CROSS_CC:-}" ] && [ -x "$CROSS_CC" ] || { echo "SKIP 21-check-installed-headers - no cross cc"; exit 0; }
+[ -d "$WORK/include" ] || { echo "SKIP 21-check-installed-headers - no include tree"; exit 0; }
 td="$PROBE_TMP/21"; mkdir -p "$td"
 cxx="${CROSS_CC%gcc}g++"
 
@@ -57,8 +57,8 @@ note=""
   && note=" (exhaustive checker at \$GLIBC_SRC/scripts/check-installed-headers.sh)"
 
 if [ "${#fails[@]}" -ne 0 ]; then
-  echo "FAIL 21-check-installed-headers — public header(s) no longer self-include:"
+  echo "FAIL 21-check-installed-headers - public header(s) no longer self-include:"
   printf '       - %s\n' "${fails[@]}" | head -30
   exit 1
 fi
-echo "PASS 21-check-installed-headers — $n_c public headers self-include (C${n_cxx:+, $n_cxx C++})$note"
+echo "PASS 21-check-installed-headers - $n_c public headers self-include (C${n_cxx:+, $n_cxx C++})$note"

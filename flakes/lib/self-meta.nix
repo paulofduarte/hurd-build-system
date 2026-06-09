@@ -1,10 +1,10 @@
-# Metadata derived from the flake's `self` — the build-system repo's
+# Metadata derived from the flake's `self` - the build-system repo's
 # short rev and commit date, in a form composeVersion expects.
 
 { lib }:
 
 {
-  # Build-system rev — `<short>` when clean, `<short>-dirty` when dirty.
+  # Build-system rev - `<short>` when clean, `<short>-dirty` when dirty.
   # Nix already appends `-dirty` itself, so this is just an `or` chain.
   buildRev = self:
     self.shortRev or self.dirtyShortRev or "unknown";

@@ -1,10 +1,10 @@
-# GNU Hurd public headers — per-target derivations, one `hurd-headers-<name>`
+# GNU Hurd public headers - per-target derivations, one `hurd-headers-<name>`
 # per entry in `targets`.  Outputs the include tree downstream consumers
 # (glibc-hurd, the hurd userland) need:
 #
 #   $out/include/hurd/...        (Hurd-side type/RPC headers + .defs)
 #   $out/include/hurd_types.h    (the AC_CONFIG_SRCDIR sentinel)
-#   $out/share/msgids/...        (debugger msgid tables — only if MIG
+#   $out/share/msgids/...        (debugger msgid tables - only if MIG
 #                                 generation succeeds at configure time)
 #
 # Uses the **native** host stdenv, NOT a Hurd cross-toolchain: `make
@@ -13,11 +13,11 @@
 # --build=<host-tuple>` is enough, and its false-positive HAVE_* defines don't
 # matter because no .c is compiled.  (Hurd's configure.ac rejects any --host
 # whose OS isn't `gnu*`, so the bare-metal `i686-elf` toolchain won't work here
-# — which is why this diverges from flakes/gnumach-headers.)
+# - which is why this diverges from flakes/gnumach-headers.)
 #
 # MIG is required by `AC_CHECK_TOOL([MIG], [mig])`; we pull in the cross-flavor
 # mig-<crossTarget> so autoconf's host-prefixed search finds it via PATH.  It's
-# never invoked (no .defs → .h codegen happens), just needs to be discoverable.
+# never invoked (no .defs -> .h codegen happens), just needs to be discoverable.
 #
 # Source comes from the pinned `hurd-src` flake input.
 
@@ -29,14 +29,14 @@ let
   helpers = import ../lib { inherit lib; };
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
-  # Upstream version parsed from configure.ac (`AC_INIT([GNU Hurd], …)`).
+  # Upstream version parsed from configure.ac (`AC_INIT([GNU Hurd], ...)`).
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
 
   fullVersion = helpers.composeToolchainVersion {
     inherit upstreamVersion srcInput forkUrl;
   };
 
-  # Hurd userland targets — the non-xen ones.  The xen variants share their CPU
+  # Hurd userland targets - the non-xen ones.  The xen variants share their CPU
   # sibling's userland ABI (only gnumach differs by platform), so excluded.
   hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
 
@@ -90,7 +90,7 @@ let
         "ac_cv_search_clnt_create=no"  # would otherwise pull in libtirpc
       ];
 
-      # Headers-only — skip the kernel-and-userland compile entirely.
+      # Headers-only - skip the kernel-and-userland compile entirely.
       dontBuild = true;
 
       installPhase = ''

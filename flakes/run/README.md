@@ -13,20 +13,20 @@ you touch any of it.
 
 ```
 flakes/run/
-├── default.nix             # nix-app wrapper (per-arch writeShellApplication)
-├── dispatch.sh             # entry point — validates env, exec's scenario
-├── boot.sh                 # SCENARIO=boot: bare kernel (direct -kernel,
-│                           #   or GRUB-on-ISO via sidekick for x86_64)
-├── hurd-debian.sh          # SCENARIO=hurd-debian: kernel-overlay inject
-├── hurd-gentoo.sh          # SCENARIO=hurd-gentoo: kernel-overlay inject
-├── hurd-guix.sh            # SCENARIO=hurd-guix: kernel-overlay inject
-├── README.md               # this file
-└── lib/
-    ├── common.sh           # die(), scenario_check_target(), print_qemu_hint()
-    ├── arch-flags.sh       # arch_qemu_for_target(), arch_apply_accel_if_requested()
-    ├── distro-urls.sh      # HURD_*_URL definitions (sourced by Makefile + nix-app)
-    ├── hurd-common.sh      # fetch/overlay/vanilla helpers (no exec — see below)
-    └── sidekick.sh         # host-side sidekick-VM orchestrator
+|-- default.nix             # nix-app wrapper (per-arch writeShellApplication)
+|-- dispatch.sh             # entry point - validates env, exec's scenario
+|-- boot.sh                 # SCENARIO=boot: bare kernel (direct -kernel,
+|                           #   or GRUB-on-ISO via sidekick for x86_64)
+|-- hurd-debian.sh          # SCENARIO=hurd-debian: kernel-overlay inject
+|-- hurd-gentoo.sh          # SCENARIO=hurd-gentoo: kernel-overlay inject
+|-- hurd-guix.sh            # SCENARIO=hurd-guix: kernel-overlay inject
+|-- README.md               # this file
+`-- lib/
+    |-- common.sh           # die(), scenario_check_target(), print_qemu_hint()
+    |-- arch-flags.sh       # arch_qemu_for_target(), arch_apply_accel_if_requested()
+    |-- distro-urls.sh      # HURD_*_URL definitions (sourced by Makefile + nix-app)
+    |-- hurd-common.sh      # fetch/overlay/vanilla helpers (no exec - see below)
+    `-- sidekick.sh         # host-side sidekick-VM orchestrator
                             #   (overlay_kernel + prepare_grub + make_iso)
 ```
 
@@ -36,7 +36,7 @@ serial-clean grub.cfg from the disk's existing recipe), then boot it
 with plain `qemu -drive`.  No more host-side `-kernel`/`-initrd`
 construction or per-distro module-chain reverse engineering.
 
-The sidekick helper VM itself lives in `flakes/sidekick/` — see the
+The sidekick helper VM itself lives in `flakes/sidekick/` - see the
 [Sidekick helper VM](#sidekick-helper-vm) section below.
 
 ## How a scenario script is shaped
@@ -74,7 +74,7 @@ exec "$QEMU" ... "${extra_qemu_args[@]}"
 
 1. Drop `flakes/run/<scenario>.sh` following the template above.
 2. `chmod +x` it.
-3. That's it — `dispatch.sh` discovers scenarios by `find`'ing executable
+3. That's it - `dispatch.sh` discovers scenarios by `find`'ing executable
    `*.sh` files in its own directory.  `make run SCENARIO=<scenario>`
    works immediately.  `--help` and "unknown scenario" listings update
    automatically.
@@ -89,27 +89,27 @@ name to the `sidekick` prereq filter in the parent Makefile's
 1. Add the URL to the parent Makefile (alongside the existing `HURD_*_URL`
    block).
 2. Export it from the `run:` recipe (add a line to the env-vars block).
-3. Add a case branch to the scenario script's `case "$ARCH" in …` block.
+3. Add a case branch to the scenario script's `case "$ARCH" in ...` block.
 4. If the scenario supports a new ARCH, add it to the `supported_targets`
    string in the `scenario_check_target` call.
 
 ## Modifier flags
 
-All opt-in.  Either env-form (`RUN_VANILLA=1 make run …`) or make
-command-line form (`make run RUN_VANILLA=1 …`) works — see *Dispatch
+All opt-in.  Either env-form (`RUN_VANILLA=1 make run ...`) or make
+command-line form (`make run RUN_VANILLA=1 ...`) works - see *Dispatch
 passthrough* below for why.
 
 | Flag | Effect |
 |---|---|
-| `RUN_VANILLA=1` | Boot the distro's bundled kernel via internal GRUB (Hurd scenarios only — boot scenario ignores the flag) |
+| `RUN_VANILLA=1` | Boot the distro's bundled kernel via internal GRUB (Hurd scenarios only - boot scenario ignores the flag) |
 | `RUN_ACCEL=1` | Append `-accel hvf` (darwin) or `-accel kvm` (linux); requires host arch == `ARCH`, falls back to TCG with a warning otherwise |
-| `RUN_KEEP_OVERLAY=N` | Keep + reuse overlay slot `N` across runs so state persists (integer ≥ 1, default 1 → `overlay-N.qcow2`); without it each run discards a fresh `overlay.qcow2`. Invalid `N` aborts. `nix run` flag: `--keep-overlay[=N]` |
+| `RUN_KEEP_OVERLAY=N` | Keep + reuse overlay slot `N` across runs so state persists (integer >= 1, default 1 -> `overlay-N.qcow2`); without it each run discards a fresh `overlay.qcow2`. Invalid `N` aborts. `nix run` flag: `--keep-overlay[=N]` |
 | `RUN_ARGS="..."` | Extra flags appended to the qemu cmdline (e.g., `-s -S`, `-monitor stdio`, `-d int,cpu_reset`) |
 
-### Dispatch passthrough — adding a new env knob
+### Dispatch passthrough - adding a new env knob
 
 `make run` dispatches through `nix develop -i .#$(ARCH)` to enter
-the per-arch nix dev shell.  The `-i` flag means "isolated" — the
+the per-arch nix dev shell.  The `-i` flag means "isolated" - the
 inner shell starts with a clean env, so arbitrary env vars set by
 the caller are wiped on the way in.
 
@@ -117,11 +117,11 @@ Two things survive:
 
 1. **The dev-shell shellHook's exports.**  Per-target nix shells
    re-export `ARCH`, `TARGET_CC`, `MIG_TARGET`, `CFLAGS`, etc.  That's why `ARCH=i686 make run` works without
-   needing explicit forwarding — the outer make parses `.#$(ARCH)`
+   needing explicit forwarding - the outer make parses `.#$(ARCH)`
    to select the shell, and the shell rebuilds the env.
 
 2. **Variables explicitly forwarded by the dispatch recipe.**  See
-   `_RUN_PASSTHROUGH` in the parent `Makefile` — currently
+   `_RUN_PASSTHROUGH` in the parent `Makefile` - currently
    `SCENARIO`, `RUN_VANILLA`, `RUN_ACCEL`, `RUN_KEEP_OVERLAY`,
    `RUN_ARGS`.  Outer-make expansion captures the value (env or
    command line) and re-injects it as a command-line override into
@@ -129,32 +129,32 @@ Two things survive:
 
 **If you add a new env knob that the scenario script reads, add it
 to `_RUN_PASSTHROUGH` too.**  Otherwise env-form invocations
-(`MY_FLAG=1 make run …`) will silently drop your flag and the
-scenario gets defaults — exactly the bug pattern that demoted
+(`MY_FLAG=1 make run ...`) will silently drop your flag and the
+scenario gets defaults - exactly the bug pattern that demoted
 vanilla mode to inject mode for a few weeks before this comment
 existed.
 
-### `RUN_ACCEL=1` — risks and compat matrix
+### `RUN_ACCEL=1` - risks and compat matrix
 
 This flag overrides the upstream-vetted pinned CPU model
 (`pentium3-v1` / `core2duo-v1` / `cortex-a72`) with `-cpu host`,
 exposing the full host CPU feature set to gnumach. **gnumach has
 not been tested against arbitrary modern CPU features** (newer
-SSE/AVX, MTE on Apple Silicon, etc.) — it may panic on unrecognized
+SSE/AVX, MTE on Apple Silicon, etc.) - it may panic on unrecognized
 CPUID flags or hit untested code paths. The safe upstream-aligned
 TCG path is the default contract; acceleration is a "I want this to
 go fast" override at your own risk.
 
 If `RUN_ACCEL=1` produces a fresh gnumach panic that doesn't repro
-under TCG, that's useful upstream-bug data — worth filing.
+under TCG, that's useful upstream-bug data - worth filing.
 
-Compatibility matrix (host → accelerated targets):
+Compatibility matrix (host -> accelerated targets):
 
 | host    | i686 | x86_64 | aarch64 |
 |---------|------|--------|---------|
-| x86_64  | ✓    | ✓      | ✗       |
-| i686    | ✓    | ✗      | ✗       |
-| aarch64 | ✗    | ✗      | ✓       |
+| x86_64  | yes  | yes    | no      |
+| i686    | yes  | no     | no      |
+| aarch64 | no   | no     | yes     |
 
 KVM/HVF on an x86_64 host accelerates both x86_64 and i686 guests
 (32-bit is a subset of 64-bit, same `/dev/kvm`).  All other cross-ISA
@@ -168,8 +168,8 @@ qcow2, running `grub-mkrescue`). Two operations today:
 
 - **`overlay-kernel`**: mount the attached qcow2 read-write,
   regenerate `/boot/grub/grub.cfg` from the distro's existing
-  recipe (serial-clean, minimal, with our `console=com0`), and —
-  if `/shared/kernel.bin` is present — overwrite the kernel file
+  recipe (serial-clean, minimal, with our `console=com0`), and -
+  if `/shared/kernel.bin` is present - overwrite the kernel file
   at the path discovered from grub.cfg's first multiboot line.
   Used by every Hurd scenario, in two modes:
   - **inject** (`sidekick_overlay_kernel`): kernel.bin is our
@@ -194,7 +194,7 @@ joins backslash-continued module lines (Debian).
 `packages.<system>.sidekick` in the root flake) that:
 
 1. `fetchurl`s pinned Alpine 3.21 x86_64 APKs (listed with sha256s
-   in `flakes/sidekick/packages.nix`) — kernel + busybox + kmod +
+   in `flakes/sidekick/packages.nix`) - kernel + busybox + kmod +
    e2fsprogs + grub + grub-bios + xorriso + mtools + their deps.
 2. `tar` + `cpio` + `gzip` (POSIX-only tools, work on darwin) to
    unpack APKs into a rootfs, lay in our `/init` dispatcher, and
@@ -204,7 +204,7 @@ joins backslash-continued module lines (Debian).
 **No compilation happens during the build.** Every byte of the
 output is either a pre-built Alpine binary or our `/init` script.
 That's why the sidekick builds identically on darwin, linux,
-aarch64, x86_64 — same Alpine APKs, same POSIX tools, same output.
+aarch64, x86_64 - same Alpine APKs, same POSIX tools, same output.
 
 Output paths after `make sidekick`:
 
@@ -237,13 +237,13 @@ The sidekick is always x86_64 Linux regardless of host arch (per
 design D13). The `qemu-system-x86_64` invocation hard-codes that.
 Rationale:
 
-- For `overlay-kernel`: busybox/awk/gzip + ext2/4 read+write —
+- For `overlay-kernel`: busybox/awk/gzip + ext2/4 read+write -
   pure file ops, arch-agnostic.
-- For `mkiso`: `grub-mkrescue` manipulates files — also arch-agnostic.
+- For `mkiso`: `grub-mkrescue` manipulates files - also arch-agnostic.
   The ISO it produces boots an x86/x86_64 gnumach (the only arches
   Hurd userland exists for today), so an x86 grub-bios is what we need.
 
-Running qemu-system-x86_64 under TCG on aarch64 is ~5× slower than
+Running qemu-system-x86_64 under TCG on aarch64 is ~5x slower than
 native, but each op runs once per overlay and the result is cached
 via per-overlay stamps. Acceptable.
 
@@ -267,11 +267,11 @@ make sidekick          # rebuilds + caches
 
 `Ctrl-A X` quits. `Ctrl-A C` switches to the QEMU monitor; `Ctrl-A H`
 prints the full escape-prefix cheat sheet. Plain `Ctrl-C` is forwarded
-to the guest, not to qemu — that's why it doesn't terminate the VM.
+to the guest, not to qemu - that's why it doesn't terminate the VM.
 
 The harness prints a one-line hint to stderr right before exec'ing
 qemu (via `print_qemu_hint` in `lib/common.sh`) and ALSO sets the
-terminal title to "qemu · <scenario> · ARCH=<arch> · Ctrl-A X to
+terminal title to "qemu | <scenario> | ARCH=<arch> | Ctrl-A X to
 quit" using an OSC 0 escape sequence. The stderr hint scrolls away
 quickly under heavy kernel output (a panic loop on `boot` floods in
 sub-second); the title bar persists no matter how much the guest
@@ -286,7 +286,7 @@ downloading the body.
 
 `--max-filesize 1` makes curl always exit 63 once it sees the
 response body. Under `set -e` the caller would die before it could
-inspect the resolved URL — `hurd_resolve_latest_target` ends in
+inspect the resolved URL - `hurd_resolve_latest_target` ends in
 `|| :` to eat that exit and lets the caller's case statement
 classify the result.
 
@@ -294,7 +294,7 @@ classify the result.
 
 Guix CI aggressively garbage-collects 64-bit `hurd64-barebones.qcow2`
 artefacts. As of mid-2026, none of the 10 most recent successful
-builds typically have a fetchable `/download/<id>` — the
+builds typically have a fetchable `/download/<id>` - the
 `/search/latest/image` endpoint correctly returns 500.
 
 The `hurd-guix.sh` script passes the GC-explanation hint as the 4th
@@ -308,7 +308,7 @@ The `ARCH=i686` 32-bit path is reliably available.
 
 Gentoo publishes `hurd-i686-preview.qcow2` (and amd64 equivalent)
 at a single rolling URL. If upstream publishes new content at the
-same URL we silently keep the cached file — there's no
+same URL we silently keep the cached file - there's no
 checksum-delta auto-refresh. To force a re-fetch:
 
 ```sh
@@ -324,13 +324,13 @@ implementation.
 qemu's `-kernel` consumes the stripped boot image
 (`$(WORK)/gnumach/<target>/gnumach`), not the un-stripped ELF
 (`gnumach.elf` in the same dir, aarch64 only). On aarch64, giving
-qemu the ELF causes a silent hang — qemu can't parse it as a boot
+qemu the ELF causes a silent hang - qemu can't parse it as a boot
 image. `GNUMACH_KERNEL` always points at the stripped `gnumach`;
 the harness never references `gnumach.elf`.
 
 ### Vanilla mode + boot scenario
 
-`RUN_VANILLA=1 SCENARIO=boot` is meaningless — there's no distro
+`RUN_VANILLA=1 SCENARIO=boot` is meaningless - there's no distro
 kernel to fall back to. The `_RUN_PREREQS` expression in the parent
 Makefile only drops the `mach` dependency for `RUN_VANILLA=1` +
 Hurd scenarios, so boot still works in this case (just ignores the
@@ -341,7 +341,7 @@ kernel image" error from the alternative interpretation.
 
 - **`hurd-gentoo` + `ARCH=x86_64`** hangs in openrc's `servers`
   service after rumpdisk's rump kernel fails to attach the qemu
-  e1000 NIC (`wm0`) — Gentoo's own wiki flags amd64 as "less stable
+  e1000 NIC (`wm0`) - Gentoo's own wiki flags amd64 as "less stable
   so far than x86".  i686 boots cleanly.  Image bug, not a harness
   bug.  Comment in `hurd-gentoo.sh` for the full diagnosis.
 - **`hurd-guix` + `-M q35`** boots correctly but the visible serial

@@ -1,10 +1,10 @@
-# Shared determinism build flags for the cross builds — consumed by the nix
+# Shared determinism build flags for the cross builds - consumed by the nix
 # kernel/userland builds (flakes/gnumach, flakes/hurd) AND the in-tree dev
 # shell (dev-shell.nix), so gnumach/hurd/glibc come out byte-identical on
 # every host.  Two host-varying inputs otherwise leak into the output:
 #
 #   1. The cross-toolchain's own /nix/store paths (gcc's internal include /
-#      sys-include dirs) recorded in DWARF — the store hash is per-host, so the
+#      sys-include dirs) recorded in DWARF - the store hash is per-host, so the
 #      same source yields different DWARF.  `debugPrefixMap` rewrites each to a
 #      stable name (values arbitrary; only stability matters, paths stay usable).
 #
@@ -33,9 +33,9 @@ rec {
   # reproducible-builds hook derives from $out.
   randomSeed = "gnu-hurd-cross";
 
-  # Global compile flags — the SINGLE source of truth for every non-toolchain,
+  # Global compile flags - the SINGLE source of truth for every non-toolchain,
   # non-deliverable-glibc cross build: gnumach, hurd, mig, the *-headers, AND the
-  # cross-gcc TARGET runtime libs (libgcc/libstdc++, via CFLAGS_FOR_TARGET — NOT the
+  # cross-gcc TARGET runtime libs (libgcc/libstdc++, via CFLAGS_FOR_TARGET - NOT the
   # gcc compiler proper).  The deliverable glibc sets its own.  Consumed by the nix
   # derivations and, via the dev-shell BASE_CFLAGS export, the in-tree Makefile.
   baseCflags = "-g -O2";
@@ -54,7 +54,7 @@ rec {
   # hook's seed (+ optionally host -isystem leaks), add the toolchain debug-prefix-map,
   # map the absolute srcdir AND build dir to one canonical root, then pin the seed.
   # `$srcdir` from the out-of-tree preConfigure; `$PWD` is the build dir.  Returns the
-  # `export …` line; consumers (gnumach/hurd preBuild) compose around it.
+  # `export ...` line; consumers (gnumach/hurd preBuild) compose around it.
   detCflagsExport = { toolchain, canonBuild, stripIsystem ? false }:
     ''export NIX_CFLAGS_COMPILE="$(printf %s "$NIX_CFLAGS_COMPILE" | sed -E '${if stripIsystem then isystemStripSed else sedSeedOnly}') ${debugPrefixMapStr toolchain} -ffile-prefix-map=$srcdir=${canonBuild} -ffile-prefix-map=$PWD=${canonBuild} -frandom-seed=${randomSeed}"'';
 
@@ -65,7 +65,7 @@ rec {
   #   build  : in-tree $(GLIBC_BUILDDIR)                    | nix the SANDBOX build dir
   #   sysroot: in-tree $(SYSROOT)                           | nix $TMPDIR/sysroot
   # The nix build/sysroot live in the sandbox temp, host-varying (linux /build vs
-  # darwin /builds/nix-<pid>-<rand>) — so without these maps the nix glibc diverges
+  # darwin /builds/nix-<pid>-<rand>) - so without these maps the nix glibc diverges
   # cross-host even with the gcc map.  Each build -ffile-prefix-map's its real roots
   # to these names; consumed by glibc.nix and the in-tree Makefile (dev-shell env).
   glibcCanonSrc     = "/glibc-src";

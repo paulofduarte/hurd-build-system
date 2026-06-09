@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# SCENARIO=hurd-debian — boot Debian Hurd userland on our gnumach.
+# SCENARIO=hurd-debian - boot Debian Hurd userland on our gnumach.
 # Approach: overlay our kernel onto the distro's bundled kernel path
 # inside the per-run qcow2 overlay, then let the disk's own GRUB
 # config handle the multiboot + module + cmdline work.  Reuses
-# Debian's verified boot recipe verbatim — no per-arch module-chain
+# Debian's verified boot recipe verbatim - no per-arch module-chain
 # reverse-engineering on our side.
 set -euo pipefail
 . "$(dirname "$0")/lib/common.sh"
@@ -46,14 +46,14 @@ hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$Q
   "${extra_qemu_args[@]}"
 
 # Our-kernel path: replace the distro's kernel inside the overlay
-# with ours, then boot the disk normally — Debian's GRUB picks up
+# with ours, then boot the disk normally - Debian's GRUB picks up
 # our binary at its known path and feeds it to multiboot.  Sidekick
 # auto-discovers the target path from the disk's grub.cfg (works
 # uniformly across i686 / x86_64 / Guix store-hash paths).
 sidekick_overlay_kernel "$overlay" "$GNUMACH_KERNEL"
 
 print_qemu_hint
-# -no-reboot halts qemu on guest reboot instead of cycling — lets us
+# -no-reboot halts qemu on guest reboot instead of cycling - lets us
 # see what actually happened (panic? init reboot?) instead of GRUB
 # popping back up with stale state.  If you genuinely want reboot
 # loops (e.g., a kernel-stability test), pass RUN_ARGS="-no-shutdown".

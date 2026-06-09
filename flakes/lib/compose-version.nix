@@ -5,7 +5,7 @@
 #   v<upstream>+git<date>-g<src>+<short-url>[+build.g<build>[-dirty]]
 #
 # `-` stays inside the describe-style core; the fork and build sections are each
-# `+`-fenced.  Branch is omitted from the fork section — `<src>` already pins the
+# `+`-fenced.  Branch is omitted from the fork section - `<src>` already pins the
 # commit, branches move, detached pins have none.  The `+build.g<build>` field is
 # keyed on ARTIFACT ROLE: shipped artifacts (gnumach kernel, hurd userland) carry
 # it; toolchain blocks omit it, so a build-system commit doesn't rehash them.
@@ -13,17 +13,17 @@
 #
 # Three entry points:
 #
-#   composeFromParts — the raw string template; takes resolved parts (srcShort,
-#     srcDate, forkId, optional buildShort — omitted ⇒ no `+build.g…` field).
+#   composeFromParts - the raw string template; takes resolved parts (srcShort,
+#     srcDate, forkId, optional buildShort - omitted => no `+build.g...` field).
 #
-#   composeVersion — pure-eval wrapper for the SHIPPED derivations.  Resolves the
+#   composeVersion - pure-eval wrapper for the SHIPPED derivations.  Resolves the
 #     parts from a source flake input + `self`.  Caveat: pure eval can't run git,
 #     so <date> is the HEAD commit date (describe-SHAPED, not a true tag).  A
 #     dirty `src/<repo>` tree is invisible (inputs lock to the committed rev);
 #     only the build-system tree's dirtiness shows, as `-dirty` on `+build.`.
 #
-#   composeToolchainVersion — the same for TOOLCHAIN blocks: no `self`, no
-#     `+build.g…` field.
+#   composeToolchainVersion - the same for TOOLCHAIN blocks: no `self`, no
+#     `+build.g...` field.
 
 { lib, selfMeta, url }:
 
@@ -45,8 +45,8 @@ in
 {
   inherit composeFromParts;
 
-  # Args: upstreamVersion (from the parsers), srcInput (→ .shortRev +
-  # .lastModifiedDate), forkUrl (owner/repo from flakes/sources), self (→ buildRev).
+  # Args: upstreamVersion (from the parsers), srcInput (-> .shortRev +
+  # .lastModifiedDate), forkUrl (owner/repo from flakes/sources), self (-> buildRev).
   composeVersion = {
     upstreamVersion,
     srcInput,
@@ -61,10 +61,10 @@ in
       buildShort = buildRev self;
     };
 
-  # Toolchain-block variant — composeVersion with no build-rev (and no `self`).
+  # Toolchain-block variant - composeVersion with no build-rev (and no `self`).
   # The toolchain building blocks' identity is upstream version + source rev, so
   # a build-system commit must not rehash them; omitting buildShort drops the
-  # `+build.g…` field.
+  # `+build.g...` field.
   composeToolchainVersion = {
     upstreamVersion,
     srcInput,

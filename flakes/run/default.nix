@@ -1,17 +1,17 @@
-# `nix run` apps — one per cross-arch.
+# `nix run` apps - one per cross-arch.
 #
 # Returned API: an attrset suitable for `flake.apps.<system>`:
 #
-#   default       → boot scenario for the host's best-matching cross
+#   default       -> boot scenario for the host's best-matching cross
 #                    arch (via crossToolchain.defaultTargetName)
-#   aarch64       → boot scenario for aarch64
-#   i686          → boot scenario for i686
-#   x86_64        → boot scenario for x86_64
+#   aarch64       -> boot scenario for aarch64
+#   i686          -> boot scenario for i686
+#   x86_64        -> boot scenario for x86_64
 #
 # Each app is a wrapper that parses scenario + flags, sets the env the
 # harness expects, and exec's ./dispatch.sh (sibling file).  Same dispatch
-# code path that `make run` uses — same scenario scripts, same behaviour
-# — just the kernel comes from the nix-built `gnumach-<arch>` package
+# code path that `make run` uses - same scenario scripts, same behaviour
+# - just the kernel comes from the nix-built `gnumach-<arch>` package
 # instead of the in-tree work/ build.
 #
 # Cache for distro images lives at
@@ -53,7 +53,7 @@ let
           gnused gnugrep gawk
           gnutar gzip
         ];
-        # Tiny nix-interpolated prelude — sets the env vars + paths
+        # Tiny nix-interpolated prelude - sets the env vars + paths
         # ./app.sh references; the body itself stays pure shell.
         text = ''
           export ARCH=${arch}

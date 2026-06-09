@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bump the *-src flake input pins to their tracked refs' current HEAD on the
-# remote, then print a concise before→after summary of what moved (so PR
+# remote, then print a concise before->after summary of what moved (so PR
 # reviewers see the rev change in stdout, not just in the flake.lock diff).
 #
 # Discovers which inputs to update from .#srcs (every `*-src` flake input
@@ -38,7 +38,7 @@ wanted_src() {
   case "$wanted" in *" $1 "*) return 0;; *) return 1;; esac
 }
 
-# Derive *-src input names from .#srcs keys (e.g. gnumach → gnumach-src),
+# Derive *-src input names from .#srcs keys (e.g. gnumach -> gnumach-src),
 # restricted to the requested source(s).
 src_inputs=()
 while IFS=$'\t' read -r src _; do
@@ -53,7 +53,7 @@ after=$(pins)
 
 # Print the move (or "unchanged") for each source, matched by name.
 fmt_unchanged='%-10s  %-32s  %-7s  %s   unchanged\n'
-fmt_moved='%-10s  %-32s  %-7s (%s)  →  %s (%s)\n'
+fmt_moved='%-10s  %-32s  %-7s (%s)  ->  %s (%s)\n'
 echo
 while IFS=$'\t' read -r src remote b_rev b_date; do
   [ -n "${src:-}" ] || continue

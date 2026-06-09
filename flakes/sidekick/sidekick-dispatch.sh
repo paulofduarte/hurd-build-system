@@ -1,12 +1,12 @@
-# Host-side dispatch to the sidekick VM — sourced by the ABI gate (warm
+# Host-side dispatch to the sidekick VM - sourced by the ABI gate (warm
 # `serve`) and the run apps (`oneshot`).  See SIDEKICK-DISPATCHER.md.
 # Needs in env: SIDEKICK_KERNEL, SIDEKICK_INITRD; qemu-system-x86_64 on PATH.
 #
 # Two ways in:
-#   warm:   sk_serve_start <ctl> [keepalive]; sk_send <ctl> argv…; sk_serve_stop <ctl>
+#   warm:   sk_serve_start <ctl> [keepalive]; sk_send <ctl> argv...; sk_serve_stop <ctl>
 #           one boot, many fast dispatches; /nix/store is 9p-mounted ro in
 #           the VM so store-path args resolve verbatim (transparent shims).
-#   oneshot: sk_oneshot <ctl> [extra qemu args…]   (runs <ctl>/run.sh once)
+#   oneshot: sk_oneshot <ctl> [extra qemu args...]   (runs <ctl>/run.sh once)
 
 _sk_qemu() {
   qemu-system-x86_64 -nographic -m 512 -no-reboot \
@@ -35,7 +35,7 @@ sk_serve_start() {  # $1 ctldir  $2 keepalive(s)
   return 0    # the loop's last body cmd is the -gt test (rc 1); say success explicitly
 }
 
-sk_send() {  # $1 ctldir ; rest: argv — run in VM, relay stdout/stderr, return its rc
+sk_send() {  # $1 ctldir ; rest: argv - run in VM, relay stdout/stderr, return its rc
   local ctl="$1"; shift
   local seq; seq=$(( $(cat "$ctl/.seq" 2>/dev/null || echo 0) + 1 )); echo "$seq" > "$ctl/.seq"
   local cmd="" a; for a in "$@"; do cmd="$cmd $(_sk_q "$a")"; done
@@ -58,7 +58,7 @@ sk_serve_stop() {  # $1 ctldir
 }
 
 # ---- oneshot -----------------------------------------------------------
-sk_oneshot() {  # $1 ctldir (must contain run.sh) ; rest: extra qemu args (e.g. -drive …)
+sk_oneshot() {  # $1 ctldir (must contain run.sh) ; rest: extra qemu args (e.g. -drive ...)
   local ctl="$1"; shift
   rm -f "$ctl/run.rc" "$ctl/run.out"
   _sk_qemu -append "console=ttyS0 loglevel=3 SIDEKICK_MODE=oneshot" \

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # abi-level: auto
-# Probe 12 — default (@@VER) vs non-default (@VER) version *flips*.
+# Probe 12 - default (@@VER) vs non-default (@VER) version *flips*.
 # Tier-1's abilist-style extraction normalizes both away, so a symbol
-# silently switching which version is the default — which changes what a
-# fresh link binds — would slip past it.  Keep the @@/@ marker and diff.
+# silently switching which version is the default - which changes what a
+# fresh link binds - would slip past it.  Keep the @@/@ marker and diff.
 set -u
 ref_so="$REF/lib/libc.so.0.3"; wrk_so="$WORK/lib/libc.so.0.3"
-[ -f "$ref_so" ] && [ -f "$wrk_so" ] || { echo "SKIP 12-sym-default-version — libc.so.0.3 not found"; exit 0; }
+[ -f "$ref_so" ] && [ -f "$wrk_so" ] || { echo "SKIP 12-sym-default-version - libc.so.0.3 not found"; exit 0; }
 td="$PROBE_TMP/12"; mkdir -p "$td"
 
 # "NAME VERSION default|nondefault" for every defined, versioned symbol.
@@ -27,8 +27,8 @@ flips="$(awk 'NR==FNR { m[$1" "$2] = $3; next }
          "$td/ref" "$td/wrk")"
 
 if [ -n "$flips" ]; then
-  echo "FAIL 12-sym-default-version — default/non-default version flip(s):"
+  echo "FAIL 12-sym-default-version - default/non-default version flip(s):"
   printf '       - %s\n' $(printf '%s\n' "$flips" | head -20)
   exit 1
 fi
-echo "PASS 12-sym-default-version — no @@/@ default-version flips"
+echo "PASS 12-sym-default-version - no @@/@ default-version flips"

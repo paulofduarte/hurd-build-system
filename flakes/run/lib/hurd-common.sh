@@ -1,14 +1,14 @@
-# Hurd-specific helpers — fetch, overlay, vanilla-vs-inject branch, exec.
+# Hurd-specific helpers - fetch, overlay, vanilla-vs-inject branch, exec.
 #
 # Reads $WORK, $ARCH, $GNUMACH_KERNEL, $QEMU*, $RUN_* from env.
 
 # hurd_cache_dir <distro> <target>
 #   Echoes $WORK/test-images/<distro>/<target>/, creating it as a side
-#   effect.  Idempotent.  Callers use $(hurd_cache_dir …) — be aware
+#   effect.  Idempotent.  Callers use $(hurd_cache_dir ...) - be aware
 #   that the mkdir runs as part of the call even when the dir already
 #   exists.
 #
-#   RUN_REFRESH=1 wipes the dir before recreating it — forces every
+#   RUN_REFRESH=1 wipes the dir before recreating it - forces every
 #   downstream fetch_once / fetch_via_resolve to re-download.  Scoped
 #   per (distro, target) so unrelated cached images stay put.  Useful
 #   when upstream rotated the image (Debian / Gentoo / Guix all
@@ -18,7 +18,7 @@
 hurd_cache_dir() {
   local dir="$WORK/test-images/$1/$2"
   if [ "${RUN_REFRESH:-}" = "1" ] && [ -d "$dir" ]; then
-    echo "RUN_REFRESH=1 — wiping cached $1/$2 images" >&2
+    echo "RUN_REFRESH=1 - wiping cached $1/$2 images" >&2
     rm -rf "$dir"
   fi
   mkdir -p "$dir"
@@ -30,7 +30,7 @@ hurd_cache_dir() {
 hurd_fetch_once() {
   local url="$1" dest="$2"
   [ -s "$dest" ] && return 0
-  echo "fetching $(basename "$dest") …" >&2
+  echo "fetching $(basename "$dest") ..." >&2
   curl -fLo "$dest.tmp" "$url"
   mv "$dest.tmp" "$dest"
 }
@@ -45,14 +45,14 @@ hurd_fetch_once_verified() {
     || die "checksum mismatch for $dest"
 }
 
-# hurd_resolve_latest_target <url> — Cuirass-specific
+# hurd_resolve_latest_target <url> - Cuirass-specific
 #   Echoes the current /download/<id> resolution of an auto-latest URL.
 #   Cuirass quirk: HEAD returns 404; GET --max-filesize 1 follows the
 #   redirect without downloading the body.
 #
 #   IMPORTANT: --max-filesize 1 makes curl always exit 63 once it sees
-#   the response body (both for the success path — qcow2 binary >> 1
-#   byte — and the 500-error path — JSON body ~50 bytes). Under set -e
+#   the response body (both for the success path - qcow2 binary >> 1
+#   byte - and the 500-error path - JSON body ~50 bytes). Under set -e
 #   the caller would die before checking $target. The trailing `|| :`
 #   eats that exit code; the caller's case statement validates that
 #   $target looks like a /download/<id> URL (success) or something
@@ -97,7 +97,7 @@ $hint"
 # hurd_overlay_path <cache>
 #   Resolve this run's overlay file path from RUN_KEEP_OVERLAY:
 #     unset / empty -> "<cache>/overlay.qcow2"        (fresh: recreated
-#                      every run — the ephemeral scratch overlay)
+#                      every run - the ephemeral scratch overlay)
 #     <slot>        -> "<cache>/overlay-<slot>.qcow2" (a kept slot,
 #                      reused across runs so guest state persists)
 #   <slot> must be an integer >= 1; leading zeros are stripped (007 == 7).
@@ -124,7 +124,7 @@ hurd_overlay_path() {
 #
 #   Fresh mode (RUN_KEEP_OVERLAY unset): the overlay is recreated every
 #   run, discarding state.  Keep mode (a slot is set, so <overlay> is a
-#   slotted overlay-<slot>.qcow2): reused across runs — recreated only
+#   slotted overlay-<slot>.qcow2): reused across runs - recreated only
 #   when missing or when <base> is newer than the existing overlay.
 hurd_make_overlay() {
   local base="$1" overlay="$2" base_fmt="$3"
@@ -140,7 +140,7 @@ hurd_make_overlay() {
 #   our-kernel exec path).
 hurd_maybe_vanilla_exec() {
   [ "${RUN_VANILLA:-}" = "1" ] || return 0
-  echo "RUN_VANILLA=1 — booting distro's bundled kernel" >&2
+  echo "RUN_VANILLA=1 - booting distro's bundled kernel" >&2
   print_qemu_hint
   exec "$@"
 }
@@ -149,5 +149,5 @@ hurd_maybe_vanilla_exec() {
 # 2026-05-25 along with the module-injection-via-host approach.  All
 # three Hurd scenarios now overlay our kernel into the distro's
 # qcow2 via the sidekick (sidekick_overlay_kernel in lib/sidekick.sh)
-# and let the disk's own GRUB drive multiboot — no need for the
+# and let the disk's own GRUB drive multiboot - no need for the
 # host-side -kernel/-initrd plumbing or GRUB-on-ISO assembly.

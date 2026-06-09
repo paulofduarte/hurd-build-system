@@ -4,19 +4,19 @@
 # The pins come from the flake's `.#srcs` output (derived from flake.lock via
 # flakes/sources), so this always tracks exactly what nix builds.  Per source:
 #
-#   absent          → clone the pin's url, then RENAME git's default `origin`
+#   absent          -> clone the pin's url, then RENAME git's default `origin`
 #                     to a stable host-named remote (e.g. github.<owner>.<repo>,
 #                     savannah.<project>.<repo>) so the canonical source is
-#                     named after what it IS — and so `origin` is free for the
+#                     named after what it IS - and so `origin` is free for the
 #                     dev's own fork to fill later.  Check out the pinned rev.
-#   present + clean → find a remote already pointing at the pin (ssh/https-
+#   present + clean -> find a remote already pointing at the pin (ssh/https-
 #                     insensitive) for the fetch; AND always ensure the stable
 #                     host-named remote exists pointing at the pin (added
-#                     alongside the matched one if missing — never touches the
+#                     alongside the matched one if missing - never touches the
 #                     matched remote).  REFUSE if a remote with the stable
 #                     name already exists for a different url.  The dev's
 #                     other remotes are untouched.
-#   present + dirty → REFUSE everything (we never touch uncommitted work)
+#   present + dirty -> REFUSE everything (we never touch uncommitted work)
 #
 # When the pin's ref is a branch, the checkout lands on a local branch of that
 # name at the pinned rev (so you can commit/push) rather than a detached HEAD;
@@ -61,14 +61,14 @@ fi
 run() { if [ "${SRCS_DRY_RUN:-}" = "1" ]; then echo "  + $*"; else "$@"; fi; }
 
 # Normalise a git URL to host/owner/repo so ssh vs https and a trailing .git
-# compare equal (git@github.com:o/r.git and https://github.com/o/r → github.com/o/r).
+# compare equal (git@github.com:o/r.git and https://github.com/o/r -> github.com/o/r).
 norm_url() {
   printf '%s' "$1" | sed -E 's#^git@([^:]+):#\1/#; s#^[a-z]+://([^@]+@)?##; s#\.git$##; s#/+$##'
 }
 
 # Land $dir on the pin.  If the pinned ref is a branch on the remote, check out
 # a local branch <ref> (so you can commit/push) instead of a detached HEAD; an
-# existing local <ref> is switched to but never moved (your commits stay put —
+# existing local <ref> is switched to but never moved (your commits stay put -
 # reset/rebase yourself if you want it at the pin).  Tags / bare commits detach.
 checkout_pinned() {
   local dir="$1" remote="$2" url="$3" ref="$4" rev="$5" on_branch=""
@@ -93,17 +93,17 @@ checkout_pinned() {
   fi
 }
 
-# Pass 1 — refuse if any existing working tree is dirty (before touching any).
+# Pass 1 - refuse if any existing working tree is dirty (before touching any).
 while IFS=$'\t' read -r name url rev ref remote_name; do
   [ -n "${name:-}" ] || continue
   dir="src/$name"
   if [ -e "$dir/.git" ] && [ -n "$(git -C "$dir" status --porcelain)" ]; then
-    echo "srcs: REFUSING — $dir has uncommitted changes; commit or stash first." >&2
+    echo "srcs: REFUSING - $dir has uncommitted changes; commit or stash first." >&2
     exit 1
   fi
 done < <(printf '%s\n' "$lines")
 
-# Pass 2 — clone / reconcile / checkout the pinned rev.
+# Pass 2 - clone / reconcile / checkout the pinned rev.
 while IFS=$'\t' read -r name url rev ref remote_name; do
   [ -n "${name:-}" ] || continue
   dir="src/$name"
@@ -120,7 +120,7 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
     # exist on a fresh clone, but guards re-runs after a prior abort).
     if [ "${SRCS_DRY_RUN:-}" != "1" ] \
         && git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
-      echo "srcs: REFUSING — $dir already has a remote '$remote_name'." >&2
+      echo "srcs: REFUSING - $dir already has a remote '$remote_name'." >&2
       exit 1
     fi
     run git -C "$dir" remote rename origin "$remote_name"
@@ -130,7 +130,7 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
 
   # Existing tree: find a remote whose url already matches the pin
   # (ssh/https-insensitive).  If none, add one under the stable host-named
-  # name — but REFUSE if a remote with that name already exists for a
+  # name - but REFUSE if a remote with that name already exists for a
   # different url; we never silently overwrite the dev's setup.
   nurl=$(norm_url "$url")
   remote=""
@@ -139,7 +139,7 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
   done < <(git -C "$dir" remote -v | awk '$3 == "(fetch)"')
   if [ -z "$remote" ]; then
     if git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
-      echo "srcs: REFUSING — $dir already has a remote '$remote_name' pointing" >&2
+      echo "srcs: REFUSING - $dir already has a remote '$remote_name' pointing" >&2
       echo "        at $(git -C "$dir" remote get-url "$remote_name")," >&2
       echo "        but the pin wants $url." >&2
       echo "        Rename/fix that remote and re-run." >&2
@@ -158,12 +158,12 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
     existing_stable=$(git -C "$dir" remote get-url "$remote_name" 2>/dev/null || true)
     if [ -n "$existing_stable" ]; then
       if [ "$(norm_url "$existing_stable")" != "$nurl" ]; then
-        echo "srcs: REFUSING — $dir has a remote '$remote_name' pointing at" >&2
+        echo "srcs: REFUSING - $dir has a remote '$remote_name' pointing at" >&2
         echo "        $existing_stable, but the pin wants $url." >&2
         echo "        Rename/fix that remote and re-run." >&2
         exit 1
       fi
-      # Stable already configured correctly — nothing to do.
+      # Stable already configured correctly - nothing to do.
     else
       run git -C "$dir" remote add "$remote_name" "$url"
       echo "==> $name: also added '$remote_name' -> $url (cross-env consistency)"

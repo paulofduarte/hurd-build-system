@@ -1,4 +1,4 @@
-# GNU Mach public headers — per-target derivations (autoreconf + configure +
+# GNU Mach public headers - per-target derivations (autoreconf + configure +
 # make install-data), one `gnumach-headers-<name>` per entry in `targets`.
 # Output ($out/include/...) is what downstream consumers (MIG cpu.sym, the
 # kernel build) include.
@@ -9,9 +9,9 @@
 #   $out/share/...               (.defs files MIG can import, .msgids)
 #
 # Per-target attrset fields (see target-archs.nix + flake.nix):
-#   crossTarget : nixpkgs cross-system config ("i686-gnu" etc.) — drives the
+#   crossTarget : nixpkgs cross-system config ("i686-gnu" etc.) - drives the
 #                 cross-toolchain selection and the pname.
-#   platform    : "at" / "xen" — fed to gnumach's --enable-platform= flag.
+#   platform    : "at" / "xen" - fed to gnumach's --enable-platform= flag.
 #
 # Source comes from the pinned `gnumach-src` flake input, NOT the local
 # src/gnumach clone.
@@ -31,7 +31,7 @@ let
   mkOne = name: target:
     let
       crossPkgs = mkCrossPkgs system target;
-      # The libc-free stage-1 cc (gccWithoutTargetLibc) — the `<cpu>-gnu` cross
+      # The libc-free stage-1 cc (gccWithoutTargetLibc) - the `<cpu>-gnu` cross
       # stdenv's own `.cc` would pull nixpkgs' meta-gated glibc.  install-data
       # compiles nothing; configure's AC_PROG_CC link test passes because
       # gnumach's configure.ac forces `-ffreestanding -nostdlib`, so no crt0/libc
@@ -48,7 +48,7 @@ let
 
       # autoreconfHook supplies autoconf/automake/libtool/m4.  texinfo: `make
       # install-data` builds doc/mach.info (makeinfo).  The stage-1 cc provides
-      # ${tp}-gcc for configure's checks.  No bison/flex/perl — install-data
+      # ${tp}-gcc for configure's checks.  No bison/flex/perl - install-data
       # compiles nothing and stubs MIG.
       nativeBuildInputs = [ pkgs.autoreconfHook pkgs.texinfo cc ];
 
@@ -67,7 +67,7 @@ let
         [ "--host=${tp}" ]
         ++ lib.optional (target.platform != null) "--enable-platform=${target.platform}";
 
-      # We only want the headers — skip the kernel build entirely.
+      # We only want the headers - skip the kernel build entirely.
       dontBuild = true;
 
       installPhase = ''

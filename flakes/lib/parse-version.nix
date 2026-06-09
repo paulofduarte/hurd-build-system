@@ -1,6 +1,6 @@
-# Parse the upstream version string out of an autoconf input file — version.m4
+# Parse the upstream version string out of an autoconf input file - version.m4
 # (gnumach: `m4_define([AC_PACKAGE_VERSION], [X])`) or configure.ac (mig:
-# `AC_INIT([Name], [X], …)`).  Pure-eval (readFile + match).  Returns "unknown"
+# `AC_INIT([Name], [X], ...)`).  Pure-eval (readFile + match).  Returns "unknown"
 # on no match.
 #
 # NB: nix's `builtins.match` uses POSIX ERE, which rejects `\(` / `\[`.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# overlay-kernel op — runs INSIDE the sidekick (dispatcher oneshot mode, so
+# overlay-kernel op - runs INSIDE the sidekick (dispatcher oneshot mode, so
 # /shared is already 9p-mounted and busybox applets are installed; the
 # target qcow2 is attached via -drive).  Host-staged into /shared/run.sh by
 # flakes/run/lib/sidekick.sh.  Moved out of the VM image (was the Alpine
@@ -15,7 +15,7 @@
 set +e
 
 # Block + ext drivers to reach the qcow2's ext partition (busybox modprobe
-# resolves deps from the Alpine kernel's modules.dep: ext4→jbd2/mbcache/…).
+# resolves deps from the Alpine kernel's modules.dep: ext4->jbd2/mbcache/...).
 for mod in virtio_pci virtio_blk sd_mod ext2 ext4; do
   modprobe "$mod" 2>/dev/null
 done

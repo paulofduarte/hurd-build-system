@@ -1,10 +1,10 @@
 # Shared GNU Hurd configure flags (nix build + in-tree dev shell, kept in lockstep);
 # `--host=<tp>` is added by the caller.
 #
-# deployFlags — root-relative install dirs; --prefix=/ makes the tree relocatable.
+# deployFlags - root-relative install dirs; --prefix=/ makes the tree relocatable.
 # Same set as glibc, minus its libc_cv_*.
 #
-# coreFlags — disables the optional external-dependency components (parted, rump,
+# coreFlags - disables the optional external-dependency components (parted, rump,
 # nfs/libtirpc, lwip, xkbcommon, libgcrypt, libdaemon, libcrypt) so only the core
 # ext2fs-bootable userland builds.  The ac_cv_* vars are pre-seeded because hurd's
 # cross AC_NO_EXECUTABLES makes autoconf reject the AC_CHECK_FUNCS link tests; the

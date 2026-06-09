@@ -19,8 +19,8 @@
     # Source repos for the kernel + MIG.  These pin exactly what nix builds
     # (locked in flake.lock); their `.rev` / `.shortRev` / `.lastModifiedDate`
     # also feed PACKAGE_VERSION.  The local clones under src/ are a separate dev
-    # convenience populated by `make srcs` — nix never reads them.  `make
-    # pin-srcs` bumps the pin (flake.lock only — your format here is preserved).
+    # convenience populated by `make srcs` - nix never reads them.  `make
+    # pin-srcs` bumps the pin (flake.lock only - your format here is preserved).
     gnumach-src = {
       type  = "git";
       url   = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
@@ -40,7 +40,7 @@
       flake = false;
     };
     # GNU libc for the Hurd cross-toolchain.  Pinned to the release/2.43/master
-    # branch (stable tip with all backports) — x86_64-gnu support landed in 2.40
+    # branch (stable tip with all backports) - x86_64-gnu support landed in 2.40
     # and the active hurd-amd64 patch set lives in 2.40+.  Sourced from upstream
     # sourceware (authoritative for glibc).
     glibc-src = {
@@ -98,7 +98,7 @@
                    , ... }:
     let
       # Host systems this flake supports. The build target is cross-compiled
-      # and chosen via `nix develop .#<target>` — independent of host.
+      # and chosen via `nix develop .#<target>` - independent of host.
       supportedSystems = [
         "aarch64-darwin"
         "x86_64-darwin"
@@ -116,12 +116,12 @@
       targets = import ./target-archs.nix;
 
       # The lib/systems patch that teaches nixpkgs to PARSE the `<cpu>-gnu`
-      # Hurd triplet — consumed by the cross-toolchain's mkCrossPkgs.
+      # Hurd triplet - consumed by the cross-toolchain's mkCrossPkgs.
       libHurd = import ./flakes/lib-systems-hurd { inherit nixpkgs; };
 
       # The cross-toolchain: THE `<cpu>-gnu` Hurd toolchain that builds the
-      # gnumach kernel, MIG, glibc-hurd, and the Hurd userland — plus the dev
-      # shell, the ABI gate, the gas-determinism patch, and the host-system →
+      # gnumach kernel, MIG, glibc-hurd, and the Hurd userland - plus the dev
+      # shell, the ABI gate, the gas-determinism patch, and the host-system ->
       # default-target map.  See flakes/cross-toolchain.
       crossToolchain = import ./flakes/cross-toolchain { inherit nixpkgs libHurd; };
 
@@ -172,12 +172,12 @@
         shells // { default = shells.${crossToolchain.defaultTargetName system targets}; }
       );
 
-      # packages.<system> and apps.<system> (`nix run .#<arch>`) — both defined
+      # packages.<system> and apps.<system> (`nix run .#<arch>`) - both defined
       # in ./packages.nix.
       inherit (pkgOutputs) packages apps;
 
       # Source pins (owner/repo/ref/rev/url) from the `*-src` inputs via
-      # flake.lock — consumed by `make srcs` to populate the src/ clones.  See
+      # flake.lock - consumed by `make srcs` to populate the src/ clones.  See
       # flakes/sources.
       srcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).all self inputs;
     };

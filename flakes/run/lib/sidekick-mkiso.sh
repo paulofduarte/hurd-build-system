@@ -1,5 +1,5 @@
 #!/bin/sh
-# mkiso op — runs INSIDE the sidekick (dispatcher oneshot mode; /shared
+# mkiso op - runs INSIDE the sidekick (dispatcher oneshot mode; /shared
 # already mounted, busybox installed).  Host-staged into /shared/run.sh by
 # flakes/run/lib/sidekick.sh, with /shared/iso-staging/ (kernel + multiboot
 # modules) and /shared/iso-grub.cfg prepared host-side.  Wraps them in a

@@ -1,23 +1,23 @@
-# glibc ABI gate — the run-once check that the WORKING glibc keeps the
+# glibc ABI gate - the run-once check that the WORKING glibc keeps the
 # exported ABI gcc's prebuilt libgcc_s/libstdc++ (and all userland) bind
 # to, relative to the REFERENCE glibc.  See TOOLCHAIN-LIBC-DECOUPLING.md
 # (the gate's tiers/probes) and SIDEKICK-DISPATCHER.md (how the Linux-only
 # analysers run).
 #
 # The DWARF-free probes (Tier-1 + cheap/Hurd Tier-3) run host-side with the cross
-# binutils/gcc — uniform on every host.  The DWARF analysers (abidiff, pahole) are
+# binutils/gcc - uniform on every host.  The DWARF analysers (abidiff, pahole) are
 # Linux-only in nixpkgs, so the gate dispatches them into the Debian **sidekick**
 # VM: boot the sidekick once (warm `serve`), put transparent `abidiff`/`pahole`
 # shims on PATH that ship the call into the VM (with /nix/store 9p-mounted so the
 # glibc .so path args resolve verbatim), run the FULL probe suite, tear it down.
-# So the full gate runs on EVERY host — no darwin skip, no nixpkgs libabigail/
+# So the full gate runs on EVERY host - no darwin skip, no nixpkgs libabigail/
 # pahole dependency.
 #
 # Entry points (both take the sidekick image + dispatch scripts, threaded from
 # packages.nix):
-#   mkAbiChecked … { working, reference, … }   the in-build gate wired into
+#   mkAbiChecked ... { working, reference, ... }   the in-build gate wired into
 #     provider.working; on pass re-exports the real working glibc (the gated sysroot).
-#   mkAbiReport  … { working, reference, level } the explicit `make
+#   mkAbiReport  ... { working, reference, level } the explicit `make
 #     check-glibc[-full]` report; same dispatch, emits a report at $out.
 
 { nixpkgs, mkCrossPkgs }:
@@ -32,7 +32,7 @@ let
   # Env + inputs shared by both entry points.  No libabigail/pahole here (they
   # live in the sidekick); add qemu to boot it + the cross tools the host-side
   # probes use.  REF/WORK are the real glibcs (built dontStrip, so they carry the
-  # DWARF abidiff/pahole need — no unstripped twins).
+  # DWARF abidiff/pahole need - no unstripped twins).
   mkGateEnv = system: target: { working, reference, sidekick, glibcSrc ? null }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
@@ -72,12 +72,12 @@ let
     export SK_CTL="$TMPDIR/sk"; mkdir -p "$SK_CTL/q"
     cp ${sendScript} "$TMPDIR/sidekick-send"; chmod +x "$TMPDIR/sidekick-send"
     . ${dispatchLib}
-    # Tear the sidekick VM down on ANY exit — pass, probe fail, or an error
+    # Tear the sidekick VM down on ANY exit - pass, probe fail, or an error
     # that trips the builder's `set -e` mid-run.  Without this, a non-clean
     # exit skips the explicit sk_serve_stop below and the builder blocks
     # until the VM's keepalive timer fires (the ~1-min idle hang before a
     # gate failure surfaces); the trap makes teardown immediate and
-    # unconditional.  sk_serve_stop is idempotent (kill … || true), so the
+    # unconditional.  sk_serve_stop is idempotent (kill ... || true), so the
     # explicit call below is harmless.  Registered AFTER the dispatch lib is
     # sourced so sk_serve_stop is defined; guarded so it no-ops before the
     # VM starts.
@@ -98,7 +98,7 @@ let
     # 9p mount).  SK_CTL is inherited from the env above.  Invoke sidekick-send
     # through `bash` explicitly (it is on PATH via nativeBuildInputs) rather than
     # letting its `#!/usr/bin/env bash` shebang resolve: a real (Linux) nix
-    # sandbox provides only /bin/sh=busybox — no /usr/bin/env — so an exec of the
+    # sandbox provides only /bin/sh=busybox - no /usr/bin/env - so an exec of the
     # script direct would fail "not found" on the missing interpreter (darwin's
     # sandbox=false hides this, resolving env from the host FS).
     mkdir -p "$TMPDIR/bin"
@@ -111,11 +111,11 @@ let
 
     # Bare-name GROUP for the LINK probes (16/19).  The deployable working
     # glibc's libc.so GROUP lists /lib/... members ld resolves only via --sysroot
-    # — which the nix ld-wrapper strips under purity, so the gate's cc-driven probe
+    # - which the nix ld-wrapper strips under purity, so the gate's cc-driven probe
     # link works on darwin but NOT in a Linux sandbox.  Materialize a probe-only
-    # libc.so whose members are BARE NAMES (libc.so.0.3, libmachuser.so, …): ld
+    # libc.so whose members are BARE NAMES (libc.so.0.3, libmachuser.so, ...): ld
     # resolves them via the -L search path (-L"$WORK/lib"), so the link needs no
-    # --sysroot and is --sysroot-indifferent — host-uniform, never doubled.  The
+    # --sysroot and is --sysroot-indifferent - host-uniform, never doubled.  The
     # analysis probes (25 etc.) keep reading the real /lib-rooted $WORK/lib/libc.so.
     # Only libc.so is rewritten; the named members live in $WORK/lib already.
     export WORK_LINK="$TMPDIR/linkroot"
@@ -142,19 +142,19 @@ in
       ''
         ${sidekickRun { inherit dispatchLib sendScript; level = "full"; }}
         [ "$_abi_rc" -eq 0 ] || { echo "ABI gate FAILED (rc=$_abi_rc)"; exit "$_abi_rc"; }
-        # Gate passed — re-export the real working glibc as the gated sysroot the
+        # Gate passed - re-export the real working glibc as the gated sysroot the
         # wrapped toolchain links the userland against.  The deployable working
         # glibc's libc.so GROUP lists /lib/... members ld resolves only via
-        # --sysroot — which the nix ld-wrapper strips under purity, so the
+        # --sysroot - which the nix ld-wrapper strips under purity, so the
         # wrapped-cc userland link FAILS in a Linux sandbox (works on darwin only).
         # Fix (b-split, bare edition): materialize each GROUP script as a real file
-        # in the farm with BARE-NAME members (libc.so.0.3, libmachuser.so, …); ld
+        # in the farm with BARE-NAME members (libc.so.0.3, libmachuser.so, ...); ld
         # resolves them via the wrapper's -L"$out/lib" search path, so the link
-        # needs NO --sysroot — host-uniform and never doubled (a bare name has no
+        # needs NO --sysroot - host-uniform and never doubled (a bare name has no
         # path to prepend a sysroot to).  This is the CROSS-LINK sysroot only: the
         # SHIPPED glibc (glibc-hurd-<arch> = the raw glibcHurd) keeps its absolute
         # /lib GROUP (standard, link-time-secure native form), and userland binaries
-        # record NEEDED sonames (libc.so.0.3 …), not these GROUP paths — so neither
+        # record NEEDED sonames (libc.so.0.3 ...), not these GROUP paths - so neither
         # the bare names nor any store path reach a shipped artifact.
         mkdir -p "$out"
         cp -as "${working}"/. "$out"/
@@ -178,7 +178,7 @@ in
         [ "$_abi_rc" -eq 0 ] || { echo "ABI report FAILED (rc=$_abi_rc)"; exit "$_abi_rc"; }
       '';
 
-  # The HOST-SIDE report — `make check-glibc[-full]` for the IN-TREE glibc.  Same
+  # The HOST-SIDE report - `make check-glibc[-full]` for the IN-TREE glibc.  Same
   # sidekick dispatch + probes as mkAbiReport, but WORK is a RUNTIME arg (the
   # in-tree build sysroot, a host path NOT in the nix store); the reference + all
   # tooling are baked.  Lets a hacker compare their in-tree glibc against the
@@ -202,13 +202,13 @@ in
       set -uo pipefail
       WORK_SRC="''${1:?usage: abi-report-host-${tp} <in-tree-sysroot-dir> [deep|full]}"
       ABI_LEVEL="''${2:-deep}"
-      [ -e "$WORK_SRC/lib/libc.so.0.3" ] || { echo "abi-report-host: $WORK_SRC/lib/libc.so.0.3 not found — run 'make work-glibc' first" >&2; exit 1; }
+      [ -e "$WORK_SRC/lib/libc.so.0.3" ] || { echo "abi-report-host: $WORK_SRC/lib/libc.so.0.3 not found - run 'make work-glibc' first" >&2; exit 1; }
       export PATH="${lib.makeBinPath (with pkgs; [ bash gawk gnused gnugrep diffutils coreutils qemu cc binu ])}:$PATH"
-      # Own scratch dir — the inherited TMPDIR may be a sandbox dir we can't write.
+      # Own scratch dir - the inherited TMPDIR may be a sandbox dir we can't write.
       TMPDIR="$(mktemp -d /tmp/abi-report-host.XXXXXX)"; export TMPDIR
       trap 'rm -rf "$TMPDIR"' EXIT
-      # Stage the in-tree sysroot into /nix/store so the sidekick VM — which only
-      # 9p-mounts /nix/store — can read it for the abidiff/pahole probes that run
+      # Stage the in-tree sysroot into /nix/store so the sidekick VM - which only
+      # 9p-mounts /nix/store - can read it for the abidiff/pahole probes that run
       # INSIDE the VM (a host path outside /nix/store is invisible there).  This
       # copies the exact in-tree bytes (NOT a rebuild) into the store.
       WORK="$(nix-store --add "$WORK_SRC")"

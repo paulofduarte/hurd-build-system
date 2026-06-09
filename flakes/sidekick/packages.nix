@@ -1,5 +1,5 @@
 # Pinned Alpine linux-virt KERNEL for the sidekick VM (kernel + modules
-# only — the userland tools come from Debian; see debian-packages.nix).
+# only - the userland tools come from Debian; see debian-packages.nix).
 #
 # The kernel is libc-agnostic, so the Alpine bzImage boots the Debian
 # glibc rootfs fine; we keep it because linux-virt is small, 9p/virtio-

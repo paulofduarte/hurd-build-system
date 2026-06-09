@@ -1,4 +1,4 @@
-# Reproducibility attrs for `mkDerivation` — merge in with `//`.  The
+# Reproducibility attrs for `mkDerivation` - merge in with `//`.  The
 # host-independence knobs not tied to the source layout (the caller still owns
 # `preConfigure`, the autoconf-flavor-specific version splice).
 
@@ -21,7 +21,7 @@
       };
 
     # Normalise the build-dir path embedded in DWARF: Linux nix uses /build,
-    # Darwin /nix/var/nix/builds/…; rewrite both to /build so DWARF
+    # Darwin /nix/var/nix/builds/...; rewrite both to /build so DWARF
     # .debug_str / .debug_line_str are byte-identical across hosts.
     preBuild = ''
       export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -fdebug-prefix-map=$NIX_BUILD_TOP=/build"

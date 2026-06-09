@@ -3,7 +3,7 @@
 /dist/
 /.sidekick/
 
-# Source working clones under src/ — populated by `make srcs`.
+# Source working clones under src/ - populated by `make srcs`.
 # No longer git submodules: nix builds from the pinned `*-src` flake inputs
 # (see flake.nix + flakes/sources), so src/ is a dev convenience, not tracked.
 /src/
@@ -14,7 +14,7 @@
 /flakes/**/result*
 /flakes/**/.*-installed
 
-# Claude Code per-project state — keep it out of the repo
+# Claude Code per-project state - keep it out of the repo
 /.claude/
 
 # We don't ship .envrc, but be defensive: if a developer keeps a
@@ -32,6 +32,6 @@
 *.swp
 *~
 
-# `nix build` gc-root symlinks at the repo root (result, result-man, result-lib…)
+# `nix build` gc-root symlinks at the repo root (result, result-man, result-lib...)
 /result
 /result-*

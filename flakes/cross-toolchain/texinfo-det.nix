@@ -5,8 +5,8 @@
 # share/info/dir non-reproducible cross-host.  The patch breaks the tie
 # case-sensitively (a total order).  (makeinfo is unaffected.)
 #
-# Shared (DRY) by the dev-shell — the in-tree install-info — AND glibc.nix — the
-# nix glibc's OWN `make install` install-info — so whichever build produces
+# Shared (DRY) by the dev-shell - the in-tree install-info - AND glibc.nix - the
+# nix glibc's OWN `make install` install-info - so whichever build produces
 # share/info/dir, it is deterministic cross-host AND byte-identical between the
 # in-tree and nix glibc.  Without it in glibc.nix the nix glibc ships a `dir` built
 # by the buggy upstream install-info (wrong default header + a host-dependent sort),

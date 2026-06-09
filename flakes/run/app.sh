@@ -1,4 +1,4 @@
-# Body of the `nix run .#<arch>` app — wrapped by writeShellApplication in
+# Body of the `nix run .#<arch>` app - wrapped by writeShellApplication in
 # flakes/run/default.nix.  That file prepends a tiny nix-interpolated
 # prelude (ARCH, GNUMACH_KERNEL, SIDEKICK_*, DISTRO_URLS_FILE,
 # DISPATCH_SCRIPT) so this file stays pure shell, editable + diffable on
@@ -82,16 +82,16 @@ done
 
 SCENARIO="${SCENARIO:-boot}"
 
-# ARCH / GNUMACH_KERNEL / SIDEKICK_* exported by the prelude — make sure
+# ARCH / GNUMACH_KERNEL / SIDEKICK_* exported by the prelude - make sure
 # they reach dispatch.sh's environment.
 export ARCH GNUMACH_KERNEL SIDEKICK_KERNEL SIDEKICK_INITRD
 
-# Cache for distro images — XDG-friendly default, overridable via $WORK
+# Cache for distro images - XDG-friendly default, overridable via $WORK
 # (matches the Makefile knob).
 export WORK="${WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/hurd-build-system}"
 mkdir -p "$WORK"
 
-# Distro URLs from the shared source-of-truth — same file the Makefile's
+# Distro URLs from the shared source-of-truth - same file the Makefile's
 # `run:` recipe sources.
 # shellcheck source=/dev/null
 . "$DISTRO_URLS_FILE"

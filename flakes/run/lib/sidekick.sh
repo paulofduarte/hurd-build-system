@@ -4,7 +4,7 @@
 # Makefile / the nix-run app).  Drives the generic Debian sidekick via the
 # dispatcher (sidekick-dispatch.sh): each op stages a small run.sh + its
 # inputs into a work dir (which is the VM's 9p /shared) and runs it once
-# via sk_oneshot.  The op logic lives in lib/sidekick-{overlay,mkiso}.sh —
+# via sk_oneshot.  The op logic lives in lib/sidekick-{overlay,mkiso}.sh -
 # moved out of the VM image so the VM stays a generic dispatcher.  See
 # .claude/docs/build/SIDEKICK-DISPATCHER.md.
 #
@@ -25,12 +25,12 @@ _SK_OPLIB="$(dirname "$0")/lib"
 
 _sidekick_check_artefacts() {
   [ -f "${SIDEKICK_KERNEL:-}" ] || die "sidekick kernel missing: ${SIDEKICK_KERNEL:-<unset>}
-  → build it: 'make sidekick' (normally automatic for hurd-* scenarios)"
+  -> build it: 'make sidekick' (normally automatic for hurd-* scenarios)"
   [ -f "${SIDEKICK_INITRD:-}" ] || die "sidekick initramfs missing: ${SIDEKICK_INITRD:-<unset>}
-  → build it: 'make sidekick'"
+  -> build it: 'make sidekick'"
 }
 
-# _sidekick_op <work> <op-script> [extra qemu args…]
+# _sidekick_op <work> <op-script> [extra qemu args...]
 #   Stage <op-script> as the work dir's run.sh (the work dir is the VM's
 #   9p /shared) and run it once.  Dumps the VM log on failure.
 _sidekick_op() {
@@ -58,13 +58,13 @@ sidekick_overlay_kernel() {
   local work; work="$(dirname "$overlay")/sidekick-work"
   rm -rf "$work"; mkdir -p "$work"
   cp -L "$kernel" "$work/kernel.bin"
-  echo "sidekick: overlaying kernel into $(basename "$overlay") …" >&2
+  echo "sidekick: overlaying kernel into $(basename "$overlay") ..." >&2
   _sidekick_op "$work" "$_SK_OPLIB/sidekick-overlay.sh" -drive "file=$overlay,if=virtio" || { rm -rf "$work"; return 1; }
   rm -rf "$work"; touch "$stamp"
 }
 
 # sidekick_prepare_grub <overlay>
-#   Same op without a kernel (grub.cfg regen only — the overlay script
+#   Same op without a kernel (grub.cfg regen only - the overlay script
 #   skips the kernel write when /shared/kernel.bin is absent).
 sidekick_prepare_grub() {
   local overlay="$1"
@@ -73,7 +73,7 @@ sidekick_prepare_grub() {
   _sidekick_check_artefacts
   local work; work="$(dirname "$overlay")/sidekick-work"
   rm -rf "$work"; mkdir -p "$work"
-  echo "sidekick: regenerating grub.cfg in $(basename "$overlay") for serial boot …" >&2
+  echo "sidekick: regenerating grub.cfg in $(basename "$overlay") for serial boot ..." >&2
   _sidekick_op "$work" "$_SK_OPLIB/sidekick-overlay.sh" -drive "file=$overlay,if=virtio" || { rm -rf "$work"; return 1; }
   rm -rf "$work"; touch "$stamp"
 }
@@ -90,7 +90,7 @@ sidekick_make_iso() {
     return 0
   fi
   _sidekick_check_artefacts
-  echo "sidekick: assembling GRUB ISO from $(basename "$staging") …" >&2
+  echo "sidekick: assembling GRUB ISO from $(basename "$staging") ..." >&2
   rm -rf "$work"; mkdir -p "$work/iso-staging"
   cp -a "$staging/." "$work/iso-staging/"
   printf '%s\n' "$grub_cfg" > "$work/iso-grub.cfg"

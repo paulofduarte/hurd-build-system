@@ -18,8 +18,8 @@ kernel built on aarch64-darwin vs aarch64-linux/x86_64 diverged in
 `.debug_line` for a handful of translation units; the divergence disappears
 once the chunk size is pinned).
 
-Pinning `chunksize` to a fixed value makes the chunk size — and therefore the
-split points and the emitted `.debug_line` — identical regardless of the
+Pinning `chunksize` to a fixed value makes the chunk size - and therefore the
+split points and the emitted `.debug_line` - identical regardless of the
 obstack implementation, without otherwise changing gas's behaviour (4096 is
 the same size the zero-default already targets).
 

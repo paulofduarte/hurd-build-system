@@ -1,4 +1,4 @@
-# Sidekick helper VM — a generic Debian (glibc) command dispatcher for harness
+# Sidekick helper VM - a generic Debian (glibc) command dispatcher for harness
 # operations darwin can't do natively (abidiff/pahole for the ABI gate,
 # grub-mkrescue/ext-mount for the run scenarios).  The VM is dumb: it runs
 # host-supplied commands/scripts (see dispatcher.sh); all logic lives host-side.
@@ -54,7 +54,7 @@ in
     mkdir -p "$rootfs/lib"
     [ -d "$kpkg/lib/modules" ] && cp -a "$kpkg/lib/modules" "$rootfs/lib/"
 
-    # Decompress the 9p-over-virtio stack into /mods (dependency order) —
+    # Decompress the 9p-over-virtio stack into /mods (dependency order) -
     # busybox insmod wants uncompressed .ko.  (Block/ext modules for the
     # overlay op are modprobe'd on demand from /lib/modules.)
     moddir=$(echo "$rootfs"/lib/modules/*)
@@ -64,7 +64,7 @@ in
       [ -f "$src" ] && gzip -dc "$src" > "$rootfs/mods/$(printf '%02d' "$i")-$(basename "$m").ko" && i=$((i+1)) || true
     done
 
-    # ---- Debian .deb data trees → rootfs (ar then data.tar.*) ----
+    # ---- Debian .deb data trees -> rootfs (ar then data.tar.*) ----
     ${lib.concatMapStringsSep "\n" (name: ''
       ( tmp=$(mktemp -d); cd "$tmp"; ar x ${fetchedDebs.${name}}; \
         tar xf data.tar.* -C "$rootfs"; cd /; rm -rf "$tmp" )

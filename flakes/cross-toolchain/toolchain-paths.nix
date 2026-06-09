@@ -8,7 +8,7 @@ let
   crossPkgs = mkCrossPkgs system target;
   binutils  = crossPkgs.buildPackages.binutils-unwrapped;
 in {
-  inherit binutils;                              # the derivation (for AR/AS/LD/… tool paths)
+  inherit binutils;                              # the derivation (for AR/AS/LD/... tool paths)
   binutilsBin = "${binutils}/bin";               # --with-binutils
   buildTriple = pkgs.stdenv.hostPlatform.config; # --build (the build-host triple)
   hostTriple  = target.crossTarget;              # --host (the <cpu>-gnu target)

@@ -1,15 +1,15 @@
-# GNU Hurd userland — per-target derivations.  Builds the core servers +
+# GNU Hurd userland - per-target derivations.  Builds the core servers +
 # libraries with the cross-toolchain (wrapped cc, mig, glibc-hurd sysroot).
 # Output layout (hurd's `make install prefix=$out`):
 #
-#   $out/hurd/...        translators (ext2fs, isofs, pflocal, exec, …)
-#   $out/lib/...         the hurd libraries (libports, libdiskfs, …)
+#   $out/hurd/...        translators (ext2fs, isofs, pflocal, exec, ...)
+#   $out/lib/...         the hurd libraries (libports, libdiskfs, ...)
 #   $out/libexec/...     runsystem + boot helpers
 #   $out/include/hurd/...
 #   $out/bin, $out/sbin  userland utilities
 #
 # Optional components with external deps (parted, rump, nfs, lwip, pci-arbiter/
-# acpi, console xkbcommon, libgcrypt, libdaemon) are disabled — the goal is the
+# acpi, console xkbcommon, libgcrypt, libdaemon) are disabled - the goal is the
 # core ext2fs-bootable userland.  They configure off cleanly (empty
 # PKG_CONFIG_PATH + --without-* flags); driver/filesystem extras are a follow-up.
 #
@@ -60,7 +60,7 @@ let
         ++ [ toolchain crossMig ];
 
       # CFLAGS go via configureFlags (below), NOT a derivation env var: an env
-      # CFLAGS is seen by configure (→ config.make) AND make, so `-g/-O/-std` land
+      # CFLAGS is seen by configure (-> config.make) AND make, so `-g/-O/-std` land
       # in DW_AT_producer twice vs the in-tree build (configure-only).  The
       # toolchain debug-prefix-map moves to NIX_CFLAGS_COMPILE (preBuild).
 
@@ -72,7 +72,7 @@ let
         grep "^AC_INIT" configure.ac
       '';
 
-      # Empty PKG_CONFIG_PATH → the optional PKG_CHECK_MODULES probes find
+      # Empty PKG_CONFIG_PATH -> the optional PKG_CHECK_MODULES probes find
       # nothing and their components stay off.  CC/MIG pinned to the cross tools
       # so autoreconfHook's host-gcc setup-hook doesn't shadow them.
       preConfigure = ''
@@ -81,14 +81,14 @@ let
         export MIG=${tp}-mig
         export USER_MIG=${tp}-mig
         # CFLAGS via configureFlagsArray (a bash array) so the embedded space
-        # survives — a plain configureFlags list element is word-split by nix.
+        # survives - a plain configureFlags list element is word-split by nix.
         configureFlagsArray+=("CFLAGS=${buildFlags.hurdExtraCflags} ${buildFlags.baseCflags}")
         ${helpers.crossPkg.outOfTreePreConfigure}
       '';
 
       # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive rule uses
       # $(AR)/$(RANLIB), but those resolve to make's built-in (host) `ar`/`ranlib`
-      # — configure's AC_CHECK_TOOL result doesn't reach the sub-makes.  On a
+      # - configure's AC_CHECK_TOOL result doesn't reach the sub-makes.  On a
       # non-Linux host the host ar/ranlib can't index i686-gnu ELF, so the static
       # archives come out empty and every .static program fails to link.
       # Command-line make vars override the built-ins and propagate.
@@ -110,7 +110,7 @@ let
       # Install under fakeroot: hurd's daemons/ + utils/ install some programs
       # `-o root -m 4755` (setuid), which the sandbox can't do (chown forbidden,
       # store disallows setuid).  fakeroot fakes the chown + setuid so the install
-      # completes; the bits don't persist (nix strips setuid in the store — a
+      # completes; the bits don't persist (nix strips setuid in the store - a
       # deploy-time concern), so the outcome matches the host `make dist-hurd`
       # path while keeping the source unmutated.
       installPhase = ''
@@ -119,24 +119,24 @@ let
         runHook postInstall
       '';
 
-      # Parallel build — a calculated bet, not a guarantee.  hurd's top Makefile
-      # declares NO prog→lib ordering (each subdir is `… : FORCE`), so nothing
+      # Parallel build - a calculated bet, not a guarantee.  hurd's top Makefile
+      # declares NO prog->lib ordering (each subdir is `... : FORCE`), so nothing
       # stops a prog-subdir reaching its link before a lib-subdir it needs has
-      # built → undefined ports_*/trivfs_*.  Latent, not structural: lib-subdirs
+      # built -> undefined ports_*/trivfs_*.  Latent, not structural: lib-subdirs
       # are listed first so make tends to start them first and they usually
       # finish in time, which is why moderate-`-j` builds pass.  If a high-`-j`
-      # build ever fails on undefined ports_*/trivfs_*, that's this race — revert
+      # build ever fails on undefined ports_*/trivfs_*, that's this race - revert
       # to false.
       enableParallelBuilding = true;
 
       # Disable the `--shrink-rpath` patchELF hook (registered by the patchelf in
-      # nativeBuildInputs) — keep it from mutating the servers'/libs' RPATHs, for
+      # nativeBuildInputs) - keep it from mutating the servers'/libs' RPATHs, for
       # output stability.  dontPatchELF guards ONLY this hook; the audit-tmpdir
       # check still runs.
       dontPatchELF = true;
 
       # Keep the deployable `#!/bin/bash` shebangs in the installed hurd scripts.
-      # nixpkgs' patchShebangs rewrites them to `#!/nix/store/…/bash`, which isn't
+      # nixpkgs' patchShebangs rewrites them to `#!/nix/store/.../bash`, which isn't
       # deployable on a target Hurd and diverges from the in-tree `make install`.
       dontPatchShebangs = true;
 
@@ -146,7 +146,7 @@ let
       dontStrip = true;
 
       # Keep a REAL $out/sbin.  nixpkgs' move-sbin.sh fixup otherwise moves
-      # $out/sbin/* into $out/bin and symlinks sbin -> bin — NOT the GNU/Hurd
+      # $out/sbin/* into $out/bin and symlinks sbin -> bin - NOT the GNU/Hurd
       # layout: hurd installs sutils to a distinct $(sbindir) and ships
       # bin/MAKEDEV -> ../sbin/MAKEDEV; Debian GNU/Hurd keeps /sbin real too.  The
       # hook also breaks that MAKEDEV link, diverges from the in-tree install, and
@@ -162,15 +162,15 @@ let
         license = licenses.gpl2Plus;
       };
 
-      # Determinism — make the nix userland BYTE-IDENTICAL to the in-tree build.
-      # hurd builds OUT-OF-TREE ($srcdir ≠ $PWD), both mapped to the SINGLE
+      # Determinism - make the nix userland BYTE-IDENTICAL to the in-tree build.
+      # hurd builds OUT-OF-TREE ($srcdir != $PWD), both mapped to the SINGLE
       # canonical the in-tree build maps src+build to (build-flags.nix
       # hurdCanonBuild) so DWARF paths agree.  Pin the shared -frandom-seed.
       # ALSO strip host build-tool `-isystem /nix/store/*`: the native stdenv
       # dumps every nativeBuildInput's include dir into NIX_CFLAGS_COMPILE, and on
       # darwin the HOST libiconv-dev lands ahead of the target glibc, so
       # console/pc_kbd/vga compile against the wrong iconv.h and leak the host
-      # store path into DWARF (Linux glibc has iconv built in → no leak).  A
+      # store path into DWARF (Linux glibc has iconv built in -> no leak).  A
       # cross-compile must resolve system headers from its own sysroot only.
       preBuild = ''
         ${buildFlags.detCflagsExport { inherit toolchain; canonBuild = buildFlags.hurdCanonBuild; stripIsystem = true; }}
