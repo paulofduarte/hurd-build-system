@@ -129,7 +129,7 @@ DIST_HURD_NIX_STAMP    := $(WORK)/dist-hurd-nix/$(_VARIANT)$(ARCH).stamp
 DIST_LIBGCC_STAMP    := $(WORK)/dist-libgcc/$(_VARIANT)$(ARCH).stamp
 DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(_VARIANT)$(ARCH).stamp
 # In-tree dist install stamps.  The dist tree is mtime-normalised to the source
-# epoch by dist-finalize, so it can't be the staleness baseline (always older than
+# epoch by _dist_finalize, so it can't be the staleness baseline (always older than
 # src mtime → permanently stale).  Each dist-*-tree touches its stamp on completion,
 # giving the gate a real "last installed" time.
 DIST_GLIBC_TREE_STAMP   := $(WORK)/dist-glibc-tree/$(_VARIANT)$(ARCH).stamp
@@ -141,24 +141,24 @@ DIST_HURD_TREE_STAMP    := $(WORK)/dist-hurd-tree/$(_VARIANT)$(ARCH).stamp
 # `lastModified`) — true provenance, not nix's 1970 epoch.  Untracked nix packages
 # (gcc runtime, tzdata) have no pinned commit, so they use the `nixpkgs` snapshot
 # date.  Parsed with jq; empty if flake.lock/jq absent -> mtime left as-is.
-src-epoch      = $(shell jq -r '.nodes["$(1)"].locked.lastModified' flake.lock 2>/dev/null)
-EPOCH_GNUMACH    := $(call src-epoch,gnumach-src)
-EPOCH_HURD    := $(call src-epoch,hurd-src)
-EPOCH_GLIBC   := $(call src-epoch,glibc-src)
-EPOCH_NIXPKGS := $(call src-epoch,nixpkgs)
+_src_epoch      = $(shell jq -r '.nodes["$(1)"].locked.lastModified' flake.lock 2>/dev/null)
+EPOCH_GNUMACH    := $(call _src_epoch,gnumach-src)
+EPOCH_HURD    := $(call _src_epoch,hurd-src)
+EPOCH_GLIBC   := $(call _src_epoch,glibc-src)
+EPOCH_NIXPKGS := $(call _src_epoch,nixpkgs)
 
 # Wall-clock when this make started — the cut between "written by this build"
 # (CURRENT mtime) and earlier components' already-stamped files (a past date).
 DIST_BUILD_START := $(shell date +%s)
 
-# $(call dist-finalize,<epoch>): normalise the files the calling dist-* just wrote
+# $(call _dist_finalize,<epoch>): normalise the files the calling dist-* just wrote
 # into $(DIST) — owner-writable PERMS + deterministic MTIME <epoch>.  Matches items
 # newer than DIST_BUILD_START (this build's installs) OR still at the nix store
 # epoch (mtime<=1, from `cp -a`); earlier components' files (1<date<start) are left
 # alone, so each owns its slice of the shared /lib, /share/info, /include.
 # Idempotent; no-op if <epoch> empty.  chmod targets files+dirs (bare chmod follows
 # symlinks); touch targets files+symlinks (-h).  Runs in the dev-shell (GNU find/touch).
-define dist-finalize
+define _dist_finalize
 [ -z "$(1)" ] || { \
   find $(DIST) \( -type f -o -type d \) \( -newermt @$(DIST_BUILD_START) -o ! -newermt @1 \) -exec chmod u+w {} + ; \
   find $(DIST) \( -type f -o -type l \) \( -newermt @$(DIST_BUILD_START) -o ! -newermt @1 \) -exec touch -h -d @$(1) {} + ; \
@@ -167,7 +167,7 @@ endef
 
 # $(call _make_writable,DIR): make a subtree writable — tolerant of a read-only
 # /nix/store copy (`cp -a` clones the store's r-o perms) and a missing dir.  Used
-# after a store copy (so writes + dist-finalize can touch it) and by clean/mrproper.
+# after a store copy (so writes + _dist_finalize can touch it) and by clean/mrproper.
 _make_writable = chmod -R u+w $(1) 2>/dev/null || true
 
 # A xen variant shares its CPU sibling's `<cpu>-gnu` ABI: "xen" only selects the
@@ -317,25 +317,25 @@ $(eval $(call _detect_in_tree,GLIBC_IN_TREE,$(GLIBC_SRC)))
 # mig builds against gnumach-headers; gnumach runs mig; hurd-headers uses mig (which
 # drags in gnumach); hurd links glibc-hurd + uses mig + mach/hurd headers; glibc-hurd
 # farms gnumach+hurd headers + mig.
-_dG := gnumach mig                  # gnumach kernel
-_dH := hurd mig gnumach glibc       # hurd userland
-_dC := glibc gnumach hurd mig       # glibc-hurd (working)
+_DG := gnumach mig                  # gnumach kernel
+_DH := hurd mig gnumach glibc       # hurd userland
+_DC := glibc gnumach hurd mig       # glibc-hurd (working)
 _DEPS.mig               := mig gnumach
-_DEPS.gnumach           := $(_dG)
-_DEPS.dist-gnumach      := $(_dG)
-_DEPS.dist-gnumach-tree := $(_dG)
-_DEPS.dist-gnumach-nix  := $(_dG)
+_DEPS.gnumach           := $(_DG)
+_DEPS.dist-gnumach      := $(_DG)
+_DEPS.dist-gnumach-tree := $(_DG)
+_DEPS.dist-gnumach-nix  := $(_DG)
 _DEPS.gnumach-headers   := gnumach
 _DEPS.hurd-headers      := hurd mig gnumach
-_DEPS.hurd              := $(_dH)
-_DEPS.dist-hurd         := $(_dH)
-_DEPS.dist-hurd-tree    := $(_dH)
-_DEPS.dist-hurd-nix     := $(_dH)
-_DEPS.glibc             := $(_dC)
-_DEPS.work-glibc        := $(_dC)
-_DEPS.dist-glibc        := $(_dC)
-_DEPS.dist-glibc-tree   := $(_dC)
-_DEPS.dist-glibc-nix    := $(_dC)
+_DEPS.hurd              := $(_DH)
+_DEPS.dist-hurd         := $(_DH)
+_DEPS.dist-hurd-tree    := $(_DH)
+_DEPS.dist-hurd-nix     := $(_DH)
+_DEPS.glibc             := $(_DC)
+_DEPS.work-glibc        := $(_DC)
+_DEPS.dist-glibc        := $(_DC)
+_DEPS.dist-glibc-tree   := $(_DC)
+_DEPS.dist-glibc-nix    := $(_DC)
 _DEPS.dist              := mig gnumach hurd glibc
 _DEPS.all               := mig gnumach hurd glibc
 
@@ -1003,7 +1003,7 @@ all: gnumach hurd
 
 # Lockstep with _SDEPS.dist (above): the components must match both lists or the
 # staleness gate and the recipe disagree (silent mis-ship).  No whole-tree post-step:
-# each dist-* finalises only its slice via $(call dist-finalize,…).
+# each dist-* finalises only its slice via $(call _dist_finalize,…).
 dist: dist-gnumach dist-hurd dist-glibc dist-libgcc dist-tzdata
 
 # Serialize dist's components under `make -j` — they contend on two shared resources
@@ -1277,14 +1277,14 @@ $(SYSROOT)/lib/libc.so.0.3: $(GLIBC_BUILT)
 # else every userland link fails on undefined __mach_port_*/__io_*/….
 dist-glibc-tree: $(DIST_GLIBC_TREE_STAMP)
 
-# Target the work-side STAMP, not the dist libc.so.0.3: dist-finalize stamps the dist
+# Target the work-side STAMP, not the dist libc.so.0.3: _dist_finalize stamps the dist
 # file back to the source epoch, so as a make target it's forever older than its prereq
 # → re-installs every run.  The stamp (touched last) is the real "installed" mark.
 $(DIST_GLIBC_TREE_STAMP): $(GLIBC_BUILT)
 	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE) install DESTDIR=$(DIST_GLIBC)
 	cp -an $(SYSROOT)/include/. $(DIST_GLIBC)/include/ ; $(call _make_writable,$(DIST_GLIBC)/include)
 	@$(call _glibc_finalize_libc,$(DIST_GLIBC))
-	@$(call dist-finalize,$(EPOCH_GLIBC))
+	@$(call _dist_finalize,$(EPOCH_GLIBC))
 	@$(call _assert_file,$(DIST_GLIBC)/lib/libc.so.0.3,libc.so.0.3)
 	@$(call _dist_done,$@)
 endif
@@ -1316,13 +1316,13 @@ dist-glibc: $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
 _stamp_skip  = [ "$$(cat $(1) 2>/dev/null)" = "$(2)" ] && [ -e $(3) ]
 _assert_file = ls $(1) >/dev/null || { echo "ERROR: $(2) missing"; exit 1; }
 # $(call _dist_done,stamp): record completion — the staleness baseline for a dist goal
-# (its output is mtime-normalised by dist-finalize, so it can't be the mark).  Touched
+# (its output is mtime-normalised by _dist_finalize, so it can't be the mark).  Touched
 # on EVERY run, copy or skip, so a confirmed-current dist out-dates its src.
 _dist_done   = mkdir -p $(dir $(1)) && touch $(1)
 # $(call _dist_nix_copy,module,DEST,attr,STAMP,keyfile,infofile): resolve the nix
 # package, copy its tree into DEST (skip if the store path is unchanged), preserve
 # share/info/dir, re-register <infofile>, stamp, assert <keyfile>.  Per-module
-# post-checks + dist-finalize go in the caller.
+# post-checks + _dist_finalize go in the caller.
 define _dist_nix_copy
 	@mkdir -p $(dir $(2)/$(5)) $(dir $(4)); \
 	echo "  DIST-NIX  resolving nix $(3)…"; \
@@ -1348,7 +1348,7 @@ dist-glibc-nix: $(DIST_GLIBC_NIX_STAMP)
 $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix
 	$(call _dist_nix_copy,glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_NIX_STAMP),lib/libc.so.0.3,libc.info)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
-	@$(call dist-finalize,$(EPOCH_GLIBC))
+	@$(call _dist_finalize,$(EPOCH_GLIBC))
 
 # ---- dist-libgcc ----
 # Ship the gcc TARGET RUNTIME + docs into the dist tree — ALWAYS from the nix cross-gcc,
@@ -1394,7 +1394,7 @@ $(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
 	@$(call _assert_file,$(DIST)/lib/libgcc_s.so.1,libgcc_s.so.1)
 	@$(call _assert_file,$(DIST)/lib/libstdc++.so.6,libstdc++.so.6)
 	@$(call _assert_file,$(DIST)/lib/libatomic.so.1,libatomic.so.1)
-	@$(call dist-finalize,$(EPOCH_NIXPKGS))
+	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
 
 # ---- dist-tzdata ----
 # Ship the IANA timezone database so glibc's TZ/localtime works (without it the target
@@ -1421,7 +1421,7 @@ $(DIST_TZDATA_STAMP): flake.lock
 	fi
 	@$(call _dist_done,$(DIST_TZDATA_STAMP))
 	@$(call _assert_file,$(DIST)/share/zoneinfo/UTC,zoneinfo/UTC)
-	@$(call dist-finalize,$(EPOCH_NIXPKGS))
+	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
 
 # ---- gnumach (opt-in in-tree; else the nix kernel) ----
 # In-tree kernel build under $(GNUMACH_BUILD), using $(MIG) — the effective mig (nix
@@ -1466,7 +1466,7 @@ dist-gnumach-tree: $(DIST_GNUMACH_TREE_STAMP)
 # Stamp target, not the epoch-stamped dist kernel (see dist-glibc-tree).
 $(DIST_GNUMACH_TREE_STAMP): $(GNUMACH_KERNEL)
 	cd $(GNUMACH_BUILD) && $(MAKE) install prefix=$(DIST_GNUMACH)
-	@$(call dist-finalize,$(EPOCH_GNUMACH))
+	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 	@$(call _dist_done,$@)
 endif  # GNUMACH_IN_TREE — opted-out `gnumach`/`dist-gnumach-tree` stubs are top-level (above)
 
@@ -1482,7 +1482,7 @@ dist-gnumach-nix: $(DIST_GNUMACH_NIX_STAMP)
 
 $(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix
 	$(call _dist_nix_copy,gnumach,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
-	@$(call dist-finalize,$(EPOCH_GNUMACH))
+	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 
 # ---- hurd / dist-hurd ----
 # `make hurd`      — in-tree incremental userland build (counterpart to `make mach`).
@@ -1558,7 +1558,7 @@ $(DIST_HURD_TREE_STAMP): $(HURD_BUILD)/.built
 	@# add the Hurd entry explicitly (as dist-gnumach-tree does for mach.info and
 	@# dist-hurd-nix for the nix path) or the merged index loses "* Hurd: (hurd)".
 	@[ -e $(DIST_HURD)/share/info/hurd.info ] && install-info --quiet --info-dir=$(DIST_HURD)/share/info $(DIST_HURD)/share/info/hurd.info || true
-	@$(call dist-finalize,$(EPOCH_HURD))
+	@$(call _dist_finalize,$(EPOCH_HURD))
 	@$(call _assert_file,$(DIST_HURD)/hurd/ext2fs,hurd/ext2fs)
 	@$(call _dist_done,$@)
 endif  # HURD_IN_TREE — opted-out `hurd`/`dist-hurd-tree` stubs are top-level (above)
@@ -1575,7 +1575,7 @@ dist-hurd-nix: $(DIST_HURD_NIX_STAMP)
 
 $(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix
 	$(call _dist_nix_copy,hurd,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
-	@$(call dist-finalize,$(EPOCH_HURD))
+	@$(call _dist_finalize,$(EPOCH_HURD))
 
 # ---- check ----
 #   check-gnumach : gnumach's 'make check' — kernel tests run inside QEMU.  Upstream
