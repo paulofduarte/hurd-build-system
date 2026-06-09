@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Source-repo helpers - shared by the version composer (the fork-id) and the
-# Makefile `srcs` targets (clone url + pinned rev).
+# Makefile `src` targets (clone url + pinned rev).
 #
 # Single source of truth is the `*-src` flake inputs.  Nix doesn't expose
 # owner/repo/ref on a fetched input (only rev / shortRev / dates), so we read
@@ -21,7 +21,7 @@ let
   inherit (import ./info.nix { inherit lib flakeLib; }) info;
 
   # `*-src` inputs that are NOT in-tree source projects: never cloned into src/
-  # by `make srcs`, never `--override-input`-ed by `make`.  Today just the
+  # by `make src`, never `--override-input`-ed by `make`.  Today just the
   # `*-ref-src` reference twins (frozen tags the reference glibc - and hence
   # gcc's libgcc_s/libstdc++ - bind; see TOOLCHAIN-LIBC-DECOUPLING.md).  They must
   # stay un-overridable: --override-input is eval-global, so an in-tree clone
@@ -39,7 +39,7 @@ in
   # { <dir> = info; ... } for every in-tree `*-src` input, keyed by src/<dir>
   # (input "gnumach-src" -> dir "gnumach").  Auto-discovered from flake.lock's
   # root node minus `toolchainOnly`, so adding an in-tree `<name>-src` input
-  # makes it appear here (and in `make srcs`) with no list to maintain.  `inputs`
+  # makes it appear here (and in `make src`) with no list to maintain.  `inputs`
   # is the outputs-fn attrset, used only so `info` can read `.lastModifiedDate`.
   # Backs the `srcs` flake output.
   all = self: inputs:

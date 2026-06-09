@@ -18,7 +18,7 @@
 #   platform    : "at" / "xen" - fed to gnumach's --enable-platform= flag.
 #
 # Source comes from the pinned `gnumach-src` flake input, NOT the local
-# src/gnumach working clone (a `make srcs` dev convenience).
+# src/gnumach working clone (a `make src` dev convenience).
 #
 # `mig` is the attrset from flakes/mig; "mig-<name>" goes into nativeBuildInputs.
 # gnumach's configure runs `AC_CHECK_TOOL([MIG], [mig])` + `AC_CHECK_PROG(

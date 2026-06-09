@@ -21,8 +21,8 @@
     # Source repos for the kernel + MIG.  These pin exactly what nix builds
     # (locked in flake.lock); their `.rev` / `.shortRev` / `.lastModifiedDate`
     # also feed PACKAGE_VERSION.  The local clones under src/ are a separate dev
-    # convenience populated by `make srcs` - nix never reads them.  `make
-    # pin-srcs` bumps the pin (flake.lock only - your format here is preserved).
+    # convenience populated by `make src` - nix never reads them.  `make
+    # pin-src` bumps the pin (flake.lock only - your format here is preserved).
     gnumach-src = {
       type  = "git";
       url   = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
@@ -179,7 +179,7 @@
       inherit (pkgOutputs) packages apps;
 
       # Source pins (owner/repo/ref/rev/url) from the `*-src` inputs via
-      # flake.lock - consumed by `make srcs` to populate the src/ clones.  See
+      # flake.lock - consumed by `make src` to populate the src/ clones.  See
       # flakes/sources.
       srcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).all self inputs;
     };

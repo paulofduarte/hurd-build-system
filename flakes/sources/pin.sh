@@ -23,7 +23,7 @@ pins() {
 before=$(pins)
 
 # Optional positional args restrict the bump to the named source(s); with none
-# we bump every source (the `make pin-srcs` behaviour).  `make pin-src-<name>`
+# we bump every source (the `make pin-src` behaviour).  `make pin-src-<name>`
 # passes a single name.  An unknown name aborts before any flake.lock change.
 want_all=1; wanted=" "
 if [ "$#" -gt 0 ]; then
@@ -31,7 +31,7 @@ if [ "$#" -gt 0 ]; then
   known=$(printf '%s\n' "$before" | cut -f1)
   for w in "$@"; do
     printf '%s\n' "$known" | grep -qx -- "$w" || {
-      echo "pin-srcs: unknown source '$w'. Known:" $known >&2; exit 1; }
+      echo "pin-src: unknown source '$w'. Known:" $known >&2; exit 1; }
     wanted+="$w "
   done
 fi

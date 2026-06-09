@@ -88,7 +88,7 @@ host only needs:
 | Tool | Required version | Notes |
 |---|---|---|
 | **Nix** | any with flakes support (2.4+, Dec 2021) | provides every other tool, including the cross-toolchain |
-| **git** | any | needed to clone the repo (and the source trees via `make srcs`) |
+| **git** | any | needed to clone the repo (and the source trees via `make src`) |
 | **GNU Make** *(recommended)* | 3.81+ | only for the convenience of running `make` from your host shell; if missing, use `nix develop` and run `make` *inside* the dev shell |
 
 macOS and most Linux distros ship git and a sufficiently new make by
@@ -121,7 +121,7 @@ clone is enough to build. To *iterate* on the sources (`make mig` / `make
 mach`), populate the working clones under `src/` once:
 
 ```sh
-make srcs        # clone each source's working tree at its pinned rev
+make src        # clone each source's working tree at its pinned rev
 ```
 
 ### 2. Build
@@ -205,14 +205,14 @@ how the harness is structured and how to add new scenarios.
 The kernel and MIG sources are **pinned flake inputs** (`gnumach-src` /
 `mig-src`), not submodules. The fork + branch each tracks is declared in
 `flake.nix`, and `flake.lock` records the exact commit nix builds - run `nix
-flake metadata` (or `make srcs`, below) to see the current pins. There's no
+flake metadata` (or `make src`, below) to see the current pins. There's no
 `.gitmodules`, and nothing to keep in sync.
 
-For iterating on the sources, `make srcs` populates working clones under
+For iterating on the sources, `make src` populates working clones under
 `src/` (gitignored) at the pinned revs:
 
 ```sh
-make srcs          # clone - or reconcile an existing clone to the pinned rev
+make src          # clone - or reconcile an existing clone to the pinned rev
 ```
 
 On an existing clone it adds the pinned remote (named `pin`) without
@@ -222,7 +222,7 @@ clones as usual - nix keeps building the pinned commit until you advance the
 pin:
 
 ```sh
-make pin-srcs      # bump the pins to the forks' branch HEADs; then `make srcs`
+make pin-src      # bump the pins to the forks' branch HEADs; then `make src`
 ```
 
 `flake.lock` is the single source of truth for what nix builds - there's no
@@ -307,14 +307,14 @@ configure / makefiles can put on PATH.
 |-- flake.lock                      # pinned nixpkgs (nixos-25.11)
 |-- Makefile                        # orchestration: always dispatches through `nix develop -i`
 |-- cloud-init.yaml                 # bootstrap recipe for any cloud-init-capable Linux VM
-|-- src/                            # working clones (gitignored; `make srcs`)
+|-- src/                            # working clones (gitignored; `make src`)
 |   `-- <name>/                     # one per `<name>-src` flake input (fork + rev in flake.nix)
 |-- work/                           # local in-tree build dirs (gitignored)
 |   |-- mig/<target>/install/       # iterative MIG build (`make mig`)
 |   `-- gnumach/<target>/           # iterative kernel build (`make mach`)
 |-- flakes/                         # nix sub-flakes (source-only)
 |   |-- cross-toolchain/default.nix # mkDevShell + x86_64-darwin config.sub overlay
-|   |-- sources/                    # source-pin helpers (flake.lock -> fork-id) + sync.sh (`make srcs`)
+|   |-- sources/                    # source-pin helpers (flake.lock -> fork-id) + sync.sh (`make src`)
 |   |-- gnumach-headers/default.nix # per-target headers derivation
 |   |-- gnumach-headers/result-*    # per-target gc-root symlinks (gitignored)
 |   |-- mig/default.nix             # per-target MIG derivation
@@ -455,7 +455,7 @@ v1.8+git20260224-g79f3013+github.paulofduarte.gnumach+build.gec67ddf
 
 The branch is deliberately not in the fork section - `g<src>` already pins
 the commit uniquely, branches move (or get deleted), and detached pins have
-no branch.  `make show-srcs-pins` is where you go to see the branch a pin
+no branch.  `make show-src-pins` is where you go to see the branch a pin
 tracks.
 
 **Build-rev by artifact role.** The `+build.g<rev>` field is provenance
@@ -504,7 +504,7 @@ recorded verbatim in the kernel's DWARF
 **Local in-tree builds (`make mig` / `make mach` / `make hurd`).** These
 carry the **plain upstream `PACKAGE_VERSION`** - `autoreconf` reads the
 committed `version.m4` / `configure.ac` as-is. In-tree builds **never
-write `src/<repo>`** (only `make srcs` may touch the source clones); the
+write `src/<repo>`** (only `make src` may touch the source clones); the
 rich build-rev version is stamped solely on the nix-built, shippable
 artefacts. This mirrors Debian and Guix, whose in-tree/binary version is
 the plain upstream value while the snapshot/git provenance lives in the

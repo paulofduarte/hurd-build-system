@@ -8,11 +8,11 @@
 #   rev          - the locked commit nix actually builds.
 #   date         - locked commit date (YYYY-MM-DD) from
 #                  input.lastModifiedDate.
-#   url          - clone url for `make srcs` to feed `git clone`.
+#   url          - clone url for `make src` to feed `git clone`.
 #   forkUrl      - fork URL fed into shortUrl for the version fork-id
 #                  (no .git suffix).
 #   name         - stable host-named remote (e.g. `github.<owner>.<repo>`,
-#                  `savannah.<project>.<repo>`).  What `make srcs` calls
+#                  `savannah.<project>.<repo>`).  What `make src` calls
 #                  the pin's remote, consistent across environments and
 #                  matching the PACKAGE_VERSION fork field.
 #

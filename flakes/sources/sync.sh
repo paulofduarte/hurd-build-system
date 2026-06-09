@@ -39,16 +39,16 @@ lines=$(nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs
     let s = srcs.${n};
     in builtins.concatStringsSep "\t" [ n s.url s.rev s.ref s.name ])
     (builtins.attrNames srcs))')
-[ -n "$lines" ] || { echo "srcs: .#srcs is empty" >&2; exit 1; }
+[ -n "$lines" ] || { echo "src: .#srcs is empty" >&2; exit 1; }
 
 # Optional positional args restrict the run to the named source(s); with none
-# we reconcile every source (the `make srcs` behaviour).  `make src-<name>`
+# we reconcile every source (the `make src` behaviour).  `make src-<name>`
 # passes a single name.  An unknown name aborts before anything is touched.
 if [ "$#" -gt 0 ]; then
   known=$(printf '%s\n' "$lines" | cut -f1)
   for want in "$@"; do
     printf '%s\n' "$known" | grep -qx -- "$want" || {
-      echo "srcs: unknown source '$want'. Known:" $known >&2; exit 1; }
+      echo "src: unknown source '$want'. Known:" $known >&2; exit 1; }
   done
   sel=""
   while IFS= read -r line; do
@@ -100,7 +100,7 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
   [ -n "${name:-}" ] || continue
   dir="src/$name"
   if [ -e "$dir/.git" ] && [ -n "$(git -C "$dir" status --porcelain)" ]; then
-    echo "srcs: REFUSING - $dir has uncommitted changes; commit or stash first." >&2
+    echo "src: REFUSING - $dir has uncommitted changes; commit or stash first." >&2
     exit 1
   fi
 done < <(printf '%s\n' "$lines")
@@ -122,7 +122,7 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
     # exist on a fresh clone, but guards re-runs after a prior abort).
     if [ "${SRCS_DRY_RUN:-}" != "1" ] \
         && git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
-      echo "srcs: REFUSING - $dir already has a remote '$remote_name'." >&2
+      echo "src: REFUSING - $dir already has a remote '$remote_name'." >&2
       exit 1
     fi
     run git -C "$dir" remote rename origin "$remote_name"
@@ -141,7 +141,7 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
   done < <(git -C "$dir" remote -v | awk '$3 == "(fetch)"')
   if [ -z "$remote" ]; then
     if git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
-      echo "srcs: REFUSING - $dir already has a remote '$remote_name' pointing" >&2
+      echo "src: REFUSING - $dir already has a remote '$remote_name' pointing" >&2
       echo "        at $(git -C "$dir" remote get-url "$remote_name")," >&2
       echo "        but the pin wants $url." >&2
       echo "        Rename/fix that remote and re-run." >&2
@@ -160,7 +160,7 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
     existing_stable=$(git -C "$dir" remote get-url "$remote_name" 2>/dev/null || true)
     if [ -n "$existing_stable" ]; then
       if [ "$(norm_url "$existing_stable")" != "$nurl" ]; then
-        echo "srcs: REFUSING - $dir has a remote '$remote_name' pointing at" >&2
+        echo "src: REFUSING - $dir has a remote '$remote_name' pointing at" >&2
         echo "        $existing_stable, but the pin wants $url." >&2
         echo "        Rename/fix that remote and re-run." >&2
         exit 1
@@ -177,4 +177,4 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
   checkout_pinned "$dir" "$remote" "$url" "$ref" "$rev"
 done < <(printf '%s\n' "$lines")
 
-echo "srcs: done."
+echo "src: done."

@@ -228,7 +228,7 @@ ifdef MIG_IN_TREE
 MIG := $(LOCAL_MIG)
 endif
 
-# Hurd source clone (populated by `make srcs`) + in-tree build dir.
+# Hurd source clone (populated by `make src`) + in-tree build dir.
 HURD_SRC         := $(SRC)/hurd
 HURD_BUILD       := $(WORK)/hurd/$(_VARIANT)$(_TC_ARCH)
 HURD_CONFIGURED  := $(HURD_BUILD)/config.status
@@ -261,7 +261,7 @@ HURD_HDR_STAGE   := $(HURD_HDR_BUILD)/install
 # headers into the shared sysroot dir, so glibc depends on this build-dir stamp.
 HURD_HDR_STAMP := $(HURD_HDR_BUILD)/.headers-installed
 
-# Working glibc clone (populated by `make srcs`, hackable like the kernel
+# Working glibc clone (populated by `make src`, hackable like the kernel
 # sources - see TOOLCHAIN-LIBC-DECOUPLING.md).
 GLIBC_SRC        := $(SRC)/glibc
 # OVERRIDABLE (?=): glibc emits objects differing only in case (pthread_atfork.os
@@ -460,11 +460,11 @@ help:
 	@echo "  sidekick         build the helper VM (x86_64 Debian-tool dispatcher;"
 	@echo "                   ABI gate + Hurd run scenarios)"
 	@echo "  push-cache       push the $(ARCH) build environment to the shared binary cache"
-	@echo "  srcs             populate/reconcile src/ working clones from the pinned source revisions"
+	@echo "  src              populate/reconcile src/ working clones from the pinned source revisions"
 	@echo "  src-<name>       same, for ONE source only (e.g. 'make src-gnumach')"
-	@echo "  show-srcs-pins   print the current source pins (the revisions the build uses)"
+	@echo "  show-src-pins    print the current source pins (the revisions the build uses)"
 	@echo "  lint-reuse       REUSE license-compliance check (SPDX headers + LICENSES/ + REUSE.toml)"
-	@echo "  pin-srcs         bump the pinned source revs to their forks' branch HEADs (verbose)"
+	@echo "  pin-src          bump the pinned source revs to their forks' branch HEADs (verbose)"
 	@echo "  pin-src-<name>   same, for ONE source only (e.g. 'make pin-src-mig')"
 	@echo "  check-glibc      deep ABI check: in-tree glibc vs the nix reference"
 	@echo "                   (opt-in 'make src-glibc'; sidekick, all hosts)"
@@ -587,28 +587,28 @@ push-cache:
 	  | cachix push $(_CACHE_NAME)
 	@echo "==> push-cache done"
 
-# ---- srcs (always-on, arch-independent) ----
+# ---- src (always-on, arch-independent) ----
 # Populate / reconcile the src/<name> working clones from the nix source pins
 # (.#srcs, from flake.lock): adds the pinned remote without clobbering others, checks
-# out the rev nix builds, refuses if a tree is dirty.  `SRCS_DRY_RUN=1 make srcs`
+# out the rev nix builds, refuses if a tree is dirty.  `SRCS_DRY_RUN=1 make src`
 # previews the git commands.  Top level - no dispatch.
-.PHONY: srcs
-srcs:
+.PHONY: src
+src:
 	@bash flakes/sources/sync.sh
 
-# ---- pin-srcs (always-on, arch-independent) ----
+# ---- pin-src (always-on, arch-independent) ----
 # Bump the pinned source revs to their tracked refs' HEAD, then print a before->after
 # summary (so the rev change is visible in stdout/PRs, not buried in flake.lock).
-# Auto-discovers inputs from `.#srcs`.  Run `make srcs` afterwards.
-.PHONY: pin-srcs
-pin-srcs:
+# Auto-discovers inputs from `.#srcs`.  Run `make src` afterwards.
+.PHONY: pin-src
+pin-src:
 	@bash flakes/sources/pin.sh
 
-# ---- show-srcs-pins (always-on, arch-independent) ----
+# ---- show-src-pins (always-on, arch-independent) ----
 # Print the current source pins (from `.#srcs`), one tabular line per source -
 # read-only, no network.
-.PHONY: show-srcs-pins
-show-srcs-pins:
+.PHONY: show-src-pins
+show-src-pins:
 	@bash flakes/sources/show-pins.sh
 
 # ---- lint-reuse (always-on, arch-independent) ----
@@ -621,14 +621,14 @@ lint-reuse:
 	@$(NIX_FLAKE) run nixpkgs#reuse -- lint
 
 # ---- per-source src / pin-src (always-on, arch-independent) ----
-# Per-source counterparts to srcs/pin-srcs.  The source name passes through to the
+# Per-source counterparts to src/pin-src.  The source name passes through to the
 # same scripts, which validate it against .#srcs and abort on an unknown name - so a
 # new *-src input gets its targets for free (no hardcoded list).
 #
 # `src-<name>` is gated by a sentinel against flake.lock: the pin it reconciles to is
 # derived from flake.lock, so a sync is only needed when flake.lock moved (e.g. after
 # `make pin-src-<name>`).  The stamp lives under work/, never src/ (which it would
-# dirty).  Removing it (or `make mrproper`) forces a re-sync; `make srcs` stays
+# dirty).  Removing it (or `make mrproper`) forces a re-sync; `make src` stays
 # unconditional.  (pin-src-<name> mutates flake.lock, so it is never gated.)
 SRC_STAMP_DIR := $(WORK)/.src-stamps
 
@@ -772,8 +772,8 @@ endif
 # filtered so standalone `make sidekick` doesn't enter the dev shell (arch-independent
 # build); pulled in as a `run` prereq it still runs inside.  `mig` is a build goal
 # ONLY when src/mig opts in; otherwise filtered out (top-level no-op recipe, no
-# dispatch) - like srcs/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache srcs pin-srcs show-srcs-pins lint-reuse src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+# dispatch) - like src/clean.
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
 #   _MARK.<goal>   the completion marker - its stamp/output.  Existence is the
