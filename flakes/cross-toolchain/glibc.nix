@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # glibc-hurd - per-target Hurd C library derivation.
 # (See .claude/docs/build/HURD-TOOLCHAIN-DESIGN.md for the overall plan.)
 #

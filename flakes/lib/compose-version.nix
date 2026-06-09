@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Compose the full PACKAGE_VERSION string at flake eval.
 #
 # Shape (matching the GNU Hurd projects' `git describe --tags` outputs):

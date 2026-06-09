@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Reproducibility attrs for `mkDerivation` - merge in with `//`.  The
 # host-independence knobs not tied to the source layout (the caller still owns
 # `preConfigure`, the autoconf-flavor-specific version splice).

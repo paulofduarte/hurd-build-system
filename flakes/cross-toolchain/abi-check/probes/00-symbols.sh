@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Tier-1 - exported symbol + version set, SONAME, abilist cross-check.
 #

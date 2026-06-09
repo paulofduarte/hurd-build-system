@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Print the current source pins (.#srcs, derived from flake.lock) as a
 # human-skimmable table.  Read-only; no network, no git side effects.
 set -euo pipefail

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Cross-toolchain machinery - barrel.  THE `<cpu>-gnu` Hurd cross-toolchain
 # for the repo: builds the gnumach kernel, MIG, glibc-hurd, and the Hurd
 # userland - one toolchain + one dev shell.

@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: REUSE lint
+
+# License-compliance gate: every tracked file must carry copyright + license
+# info (inline SPDX header or REUSE.toml), and every license identifier in use
+# must have its verbatim text under LICENSES/.  Cheap and source-only, so it
+# runs on every push/PR independent of the toolchain workflows.  Mirror locally
+# with `nix run nixpkgs#reuse -- lint` or `reuse lint` in the dev shell.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: reuse-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: fsfe/reuse-action@v6

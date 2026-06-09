@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Cross nixpkgs instantiation - the only place in the flake that imports
 # nixpkgs with `crossSystem` set.  Everything else (gnumach-headers, mig,
 # sidekick) works with the host-side `legacyPackages.<system>` only.

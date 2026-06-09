@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Top-level Makefile for the GNU Hurd / Mach build.
 #
 # Usage:
@@ -455,6 +457,7 @@ help:
 	@echo "  srcs             populate/reconcile src/ working clones from the pinned source revisions"
 	@echo "  src-<name>       same, for ONE source only (e.g. 'make src-gnumach')"
 	@echo "  show-srcs-pins   print the current source pins (the revisions the build uses)"
+	@echo "  lint-reuse       REUSE license-compliance check (SPDX headers + LICENSES/ + REUSE.toml)"
 	@echo "  pin-srcs         bump the pinned source revs to their forks' branch HEADs (verbose)"
 	@echo "  pin-src-<name>   same, for ONE source only (e.g. 'make pin-src-mig')"
 	@echo "  check-glibc      deep ABI check: in-tree glibc vs the nix reference"
@@ -601,6 +604,15 @@ pin-srcs:
 .PHONY: show-srcs-pins
 show-srcs-pins:
 	@bash flakes/sources/show-pins.sh
+
+# ---- lint-reuse (always-on, arch-independent) ----
+# REUSE license-compliance check (per-file SPDX headers + LICENSES/ +
+# REUSE.toml) - the same gate the `REUSE lint` CI workflow runs.  Top level,
+# no dispatch: licensing is arch-independent, so it runs reuse straight from
+# nixpkgs rather than entering a per-arch dev shell.
+.PHONY: lint-reuse
+lint-reuse:
+	@$(NIX_FLAKE) run nixpkgs#reuse -- lint
 
 # ---- per-source src / pin-src (always-on, arch-independent) ----
 # Per-source counterparts to srcs/pin-srcs.  The source name passes through to the
@@ -755,7 +767,7 @@ endif
 # build); pulled in as a `run` prereq it still runs inside.  `mig` is a build goal
 # ONLY when src/mig opts in; otherwise filtered out (top-level no-op recipe, no
 # dispatch) - like srcs/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache srcs pin-srcs show-srcs-pins src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache srcs pin-srcs show-srcs-pins lint-reuse src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
 
 # Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
 #   _MARK.<goal>   the completion marker - its stamp/output.  Existence is the

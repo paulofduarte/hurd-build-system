@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # GNU Mach public headers - per-target derivations (autoreconf + configure +
 # make install-data), one `gnumach-headers-<name>` per entry in `targets`.
 # Output ($out/include/...) is what downstream consumers (MIG cpu.sym, the

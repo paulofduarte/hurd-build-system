@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # overlay-kernel op - runs INSIDE the sidekick (dispatcher oneshot mode, so
 # /shared is already 9p-mounted and busybox applets are installed; the
 # target qcow2 is attached via -drive).  Host-staged into /shared/run.sh by

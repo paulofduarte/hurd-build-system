@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 name: Cache cross-toolchains
 
 # Populate the cachix cache with each target's cross-toolchain
@@ -6,8 +8,8 @@ name: Cache cross-toolchains
 # and their source changes wouldn't retrigger this workflow anyway (the
 # sanity-check builds them).
 #
-# A `plan` job first cross-evaluates every (host × target) toolchain path and
-# probes cachix (no download — just the .narinfo), so a host whose toolchains
+# A `plan` job first cross-evaluates every (host x target) toolchain path and
+# probes cachix (no download - just the .narinfo), so a host whose toolchains
 # are all cached spins NO runner.  `populate` then builds only the missing
 # (host, target) pairs and pushes them.
 #
@@ -27,7 +29,7 @@ on:
       - .github/actions/setup-nix/action.yml
   workflow_dispatch:
 
-# A newer commit supersedes an in-flight run — we only care about the cache
+# A newer commit supersedes an in-flight run - we only care about the cache
 # reflecting the latest main.
 concurrency:
   group: cache-toolchains-${{ github.ref }}
@@ -51,7 +53,7 @@ jobs:
       - name: Set up nix
         uses: ./.github/actions/setup-nix
 
-      - name: Plan — probe cachix for each (host, target) toolchain
+      - name: Plan - probe cachix for each (host, target) toolchain
         id: plan
         run: |
           set -euo pipefail
@@ -71,7 +73,7 @@ jobs:
             sys=$(echo "$row" | jq -r .system)
             echo "::group::probe $sys"
             # target -> toolchain outPath for this host (one cross-eval).
-            # shellcheck disable=SC2016  # ${n} is Nix, not bash — must not expand
+            # shellcheck disable=SC2016  # ${n} is Nix, not bash - must not expand
             map=$(nix eval --json ".#packages.$sys" --apply '
               pkgs:
               let names = builtins.filter
@@ -109,9 +111,9 @@ jobs:
             echo "## Toolchain cache plan"
             echo
             if [ "$(echo "$include" | jq length)" -gt 0 ]; then
-              echo "$include" | jq -r '.[] | "- **\(.system)** → build `\(.targets)`"'
+              echo "$include" | jq -r '.[] | "- **\(.system)** -> build `\(.targets)`"'
             else
-              echo "All toolchains already cached — no build jobs."
+              echo "All toolchains already cached - no build jobs."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -147,7 +149,7 @@ jobs:
         with:
           name: hurd-build-system
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          # Don't re-push paths already on cache.nixos.org — keeps the free-tier
+          # Don't re-push paths already on cache.nixos.org - keeps the free-tier
           # footprint to just our cross-toolchains.
           skipPush: false
 
@@ -156,7 +158,7 @@ jobs:
           TARGETS: ${{ matrix.targets }}
         run: |
           set -euo pipefail
-          # Only the targets `plan` found missing for this host — cached ones are
+          # Only the targets `plan` found missing for this host - cached ones are
           # skipped, so we never download a closure just to re-push nothing.
           for t in $TARGETS; do
             echo "::group::nix build .#toolchain-$t"

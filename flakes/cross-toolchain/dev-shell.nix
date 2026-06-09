@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # The single per-(host, target) development shell - `nix develop .#<arch>`.
 #
 # One shell drives every in-tree build: `make mach` (freestanding gnumach
@@ -99,6 +101,8 @@ in
       #   python3/gettext/gawk/bison/perl/texinfo  glibc's host build tools, for the
       #              opt-in `make glibc` (mirrors glibc.nix); the dedup handles the
       #              overlap with inferredBuildInputs.
+      #   reuse      `reuse lint` - the REUSE license-compliance check the CI
+      #              reuse-lint workflow runs (LICENSES/ + REUSE.toml).
       # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo` strips
       # the unpatched texinfo wherever it appears, then texinfoDet is added once - so
       # the only install-info on PATH is the deterministic one.
@@ -107,7 +111,7 @@ in
           [ toolchain binu mig ]
           ++ inferredBuildInputs
           ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
-                           python3 jq gettext gawk bison perl texinfo ])
+                           python3 jq gettext gawk bison perl texinfo reuse ])
           # gnumach's x86 `make check` builds a multiboot ISO with grub-mkrescue
           # (needs xorriso + mtools); nixpkgs' grub2 is linux-only, so gate on
           # x86 + linux hosts.

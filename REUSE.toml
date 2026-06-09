@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# REUSE (https://reuse.software) annotations for the only two tracked files
+# that cannot carry their own SPDX info: `flake.lock` is generated JSON with
+# no comment syntax, and `LICENSE` is the verbatim GNU GPLv3 text that must
+# not be altered.  Every other file carries an inline SPDX header or a
+# `.license` sidecar (the in-tree patches use sidecars so their bytes stay
+# byte-identical and keep applying cleanly).  See THIRD-PARTY-LICENSES.md.
+
+version = 1
+
+# Generated lockfile: factual input pins, no authored expression.
+[[annotations]]
+path = "flake.lock"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Verbatim GNU GPLv3 kept at the repo root (for GitHub detection); the
+# canonical copy also lives in LICENSES/.  Copyright is the FSF's.
+[[annotations]]
+path = "LICENSE"
+SPDX-FileCopyrightText = "2007 Free Software Foundation, Inc."
+SPDX-License-Identifier = "GPL-3.0-or-later"

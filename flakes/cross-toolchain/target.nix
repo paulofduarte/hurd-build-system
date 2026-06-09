@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Map a host system to the cross-target whose ABI is closest to it.  Used
 # by the root flake to expose `devShells.<system>.default` and by the run
 # apps to pick a default arch.

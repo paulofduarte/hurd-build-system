@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Shared preConfigure prelude for the cross gnumach/hurd derivations.  Consumed via
 # flakes/lib (helpers.crossPkg).
 { lib }:

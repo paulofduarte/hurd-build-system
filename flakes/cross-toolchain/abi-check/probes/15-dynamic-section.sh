@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 15 - dynamic section tags.  DT_NEEDED set (what libc.so.0.3 itself
 # pulls in), DT_FLAGS/DT_FLAGS_1 (BIND_NOW, NODELETE, ...), RELR/GNU_HASH

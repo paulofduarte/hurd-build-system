@@ -20,11 +20,11 @@
     "glibc-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1780248972,
-        "narHash": "sha256-vamJ7FmGQQctHAAAw5wF3Es/Qct0Tq7dU5WlM+EKGtw=",
+        "lastModified": 1780984593,
+        "narHash": "sha256-kESLUoGrZmyKoOOwwu5nBEsPEi+vFzKVRtNnAj2/EUg=",
         "ref": "release/2.43/master",
-        "rev": "18b97b03b7442d8ba0860e43145f8724c9e77b17",
-        "revCount": 43356,
+        "rev": "fe0ccc9564c3476f7171cb005884560da0699773",
+        "revCount": 43362,
         "type": "git",
         "url": "https://sourceware.org/git/glibc.git"
       },
@@ -90,11 +90,11 @@
     "hurd-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1780857930,
-        "narHash": "sha256-SEhN2qdquIjNgzHYxYMxplfk/HjNA+FfcTqLimd0lCE=",
+        "lastModified": 1780954872,
+        "narHash": "sha256-Ohr/ZwRQKSNjjV0mqvqfrI315l3z/TQJ376QWvgQ1AI=",
         "ref": "master",
-        "rev": "fdcefe705eea2918dd4b4460c106f49ac8bdc2dc",
-        "revCount": 12997,
+        "rev": "cbf1fb550c3606809482d87fd249f553e158a096",
+        "revCount": 13000,
         "type": "git",
         "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
       },
@@ -141,11 +141,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1780734595,
-        "narHash": "sha256-DmTfP92QFYRLOGXlMIE54MAgxSJjDWocl3gRNOu72Os=",
+        "lastModified": 1780902259,
+        "narHash": "sha256-q8yYEC5f1mFlQO9RGna4LTc9QrcvWunX6FYp83munkQ=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "9b696460ac78b5ccfc17c854d8c976f20456e943",
+        "rev": "bd0ff2d3eac24699c3664d5966b9ef36f388e2ca",
         "type": "github"
       },
       "original": {

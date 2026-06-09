@@ -1,4 +1,6 @@
 #cloud-config
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Bootstrap a Linux VM (orbstack, AWS, GCP, libvirt, ...) for nix-based
 # dev work on this project.  System-wide setup - every user gets the

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Shared determinism build flags for the cross builds - consumed by the nix
 # kernel/userland builds (flakes/gnumach, flakes/hurd) AND the in-tree dev
 # shell (dev-shell.nix), so gnumach/hurd/glibc come out byte-identical on

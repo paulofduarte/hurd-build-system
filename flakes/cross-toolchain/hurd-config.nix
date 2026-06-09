@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Shared GNU Hurd configure flags (nix build + in-tree dev shell, kept in lockstep);
 # `--host=<tp>` is added by the caller.
 #

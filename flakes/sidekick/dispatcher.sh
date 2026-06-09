@@ -1,4 +1,6 @@
 #!/bin/busybox sh
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Generic sidekick dispatcher - PID 1 in the Debian helper VM.  The VM is
 # dumb: it runs host-supplied commands/scripts; all logic lives host-side
 # (flakes/run + the ABI gate).  See .claude/docs/build/SIDEKICK-DISPATCHER.md.

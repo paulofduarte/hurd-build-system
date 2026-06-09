@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # glibc ABI gate - the run-once check that the WORKING glibc keeps the
 # exported ABI gcc's prebuilt libgcc_s/libstdc++ (and all userland) bind
 # to, relative to the REFERENCE glibc.  See TOOLCHAIN-LIBC-DECOUPLING.md

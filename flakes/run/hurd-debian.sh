@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # SCENARIO=hurd-debian - boot Debian Hurd userland on our gnumach.
 # Approach: overlay our kernel onto the distro's bundled kernel path
 # inside the per-run qcow2 overlay, then let the disk's own GRUB

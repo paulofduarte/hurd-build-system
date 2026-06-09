@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Shared helpers for the per-target derivations.  Barrel - the logic lives in
 # sibling modules, grouped by concern:
 #

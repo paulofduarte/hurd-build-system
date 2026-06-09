@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # SCENARIO=boot - bare kernel smoke test.  Universal across all
 # supported ARCHs; for x86_64 we route through a tiny GRUB ISO
 # (built by sidekick) because qemu's -kernel rejects 64-bit ELFs.

@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
 # hurd-build-system
 
 A reproducible, Nix-based cross-build environment for **GNU/Hurd**,
@@ -331,7 +336,7 @@ configure / makefiles can put on PATH.
 |                                   # MIG is host-arch (not target-arch) so it's not bundled here.
 |                                   # See "Invoking MIG directly" below.
 |-- .gcroots/<target>               # per-target dev-shell gc-roots (gitignored)
-`-- LICENSE                         # GPL-2.0
+`-- LICENSE                         # GPL-3.0-or-later
 ```
 
 ## How it works
@@ -759,9 +764,16 @@ follows automatically from the `targets` attrset.
 
 ## License
 
-GPL-2.0 - see [LICENSE](LICENSE). Matches the licensing of the GNU/Hurd
-components this build system orchestrates.
+GPL-3.0-or-later - see [LICENSE](LICENSE). This covers the build glue in
+this repository (the `.nix` flakes, `Makefile`, and shell scripts). The
+repository is [REUSE](https://reuse.software)-compliant, so every file
+records its own copyright and license; [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)
+maps what the build fetches and builds and under which terms.
 
-The build glue here (`flake.nix`, `Makefile`) is original work licensed
-under GPL-2.0. The source trees under `src/` retain their own upstream
-licensing.
+This sits alongside the GNU/Hurd components the build system orchestrates,
+which keep their own upstream licensing: the Hurd is GPL-2.0-or-later, GNU
+Mach is a mix of CMU-permissive and GPL-2.0 code, MIG is CMU-permissive,
+and glibc is LGPL-2.1-or-later. The in-tree patches under `flakes/*/patches/`
+are derivative works of those upstreams and inherit their licenses, not the
+build glue's. The source trees fetched under `src/` retain their own
+upstream licensing.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: deep
 # Probe 21 - the public, standalone headers still self-include (C and
 # C++).  A header that stops compiling alone (a moved declaration, a

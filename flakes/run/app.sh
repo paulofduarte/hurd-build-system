@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Body of the `nix run .#<arch>` app - wrapped by writeShellApplication in
 # flakes/run/default.nix.  That file prepends a tiny nix-interpolated
 # prelude (ARCH, GNUMACH_KERNEL, SIDEKICK_*, DISTRO_URLS_FILE,

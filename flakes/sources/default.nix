@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Source-repo helpers - shared by the version composer (the fork-id) and the
 # Makefile `srcs` targets (clone url + pinned rev).
 #

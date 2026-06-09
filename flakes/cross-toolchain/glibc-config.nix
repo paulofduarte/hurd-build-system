@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Shared glibc-hurd configure flags (consumed by glibc.nix + the in-tree Makefile via
 # dev-shell exports).  deployFlags pins the root-relative install dirs + the libc_cv_*
 # cache vars to /lib - under --prefix=/ they would otherwise default to //lib.  Mirrors

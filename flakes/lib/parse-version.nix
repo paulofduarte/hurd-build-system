@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Parse the upstream version string out of an autoconf input file - version.m4
 # (gnumach: `m4_define([AC_PACKAGE_VERSION], [X])`) or configure.ac (mig:
 # `AC_INIT([Name], [X], ...)`).  Pure-eval (readFile + match).  Returns "unknown"

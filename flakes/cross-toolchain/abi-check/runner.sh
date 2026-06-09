@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # ABI-gate runner - globs probes/*.sh in numeric order and aggregates.
 #
 # Answers one question (see TOOLCHAIN-LIBC-DECOUPLING.md "ABI gate"): did

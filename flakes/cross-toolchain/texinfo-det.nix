@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Patched texinfo (deterministic install-info).  compare_entries_text() is an
 # inconsistent qsort comparator for case-only-different, equal-length menu names
 # (e.g. `_Exit` vs `_exit` in libc.info): it returns -1 for BOTH (a,b) and (b,a),

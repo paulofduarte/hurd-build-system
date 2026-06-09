@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # SCENARIO=hurd-guix - Guix childhurd, kernel-overlay approach.
 # Needs -M q35 to boot (Guix qcow2 won't come up on i440fx).
 #

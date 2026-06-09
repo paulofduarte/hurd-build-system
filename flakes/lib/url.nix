@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # URL -> dotted-identifier short form, for the fork/remote section of the
 # composed version string (see compose-version.nix):
 #

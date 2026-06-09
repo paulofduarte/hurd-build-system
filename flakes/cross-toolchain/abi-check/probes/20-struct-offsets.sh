@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: full
 # Probe 20 - the no-DWARF complement to Tier-2.  Capture the REFERENCE
 # struct sizes + member offsets from its DWARF (via pahole), emit

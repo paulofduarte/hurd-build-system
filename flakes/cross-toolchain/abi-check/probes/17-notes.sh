@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 17 - ELF notes, chiefly .note.ABI-tag (the minimum OS/ABI version
 # the binary declares).  A bump there raises the floor for everything

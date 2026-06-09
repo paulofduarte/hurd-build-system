@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Metadata derived from the flake's `self` - the build-system repo's
 # short rev and commit date, in a form composeVersion expects.
 

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # lib/systems extension to re-enable GNU Hurd cross-compilation.
 #
 # nixpkgs carried a `hurd` kernel + `isHurd` predicate from ~2012 to

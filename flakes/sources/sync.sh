@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Populate / reconcile the src/<name> working clones from the nix source pins.
 #
 # The pins come from the flake's `.#srcs` output (derived from flake.lock via

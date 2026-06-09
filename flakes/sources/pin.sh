@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Bump the *-src flake input pins to their tracked refs' current HEAD on the
 # remote, then print a concise before->after summary of what moved (so PR
 # reviewers see the rev change in stdout, not just in the flake.lock diff).

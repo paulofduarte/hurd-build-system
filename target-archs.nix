@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Cross targets we know how to build for.  Add an entry here to support a
 # new target; the cross-toolchain, gnumach-headers, mig, and gnumach
 # sub-flakes all consume from this attrset.  Dropping a target is a

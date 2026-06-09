@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 25 - deployable-prefix (C-full) static acceptance.
 # When the working glibc is built --prefix=/ (deployPrefix), a DEPLOYED Hurd

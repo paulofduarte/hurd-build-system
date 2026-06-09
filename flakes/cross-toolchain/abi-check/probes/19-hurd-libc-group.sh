@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 19 - the Hurd libc.so GROUP, the single most important Hurd gate.
 # glibc.nix sed-augments the libc.so ld-script so `-lc` also pulls

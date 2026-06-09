@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Sidekick helper VM - a generic Debian (glibc) command dispatcher for harness
 # operations darwin can't do natively (abidiff/pahole for the ABI gate,
 # grub-mkrescue/ext-mount for the run scenarios).  The VM is dumb: it runs

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # SCENARIO=hurd-gentoo - Gentoo Hurd userland on our gnumach via
 # kernel overlay (see hurd-debian.sh for the architectural notes).
 # Kernel path /boot/gnumach.gz verified against the cached

@@ -1,4 +1,6 @@
-elf/rtld: walk _environ directly in process_envvars_secure (Hurd link fix).
+From: Paulo Duarte <paulofernandobd@gmail.com>
+Date: Sun, 31 May 2026 02:06:31 +0100
+Subject: [PATCH] elf/rtld: walk _environ directly in process_envvars_secure (Hurd link fix).
 
 The plain `getenv(nextp)` call inside process_envvars_secure (added in
 glibc commit 59974938fe1f4add, 2024-04-16) is unresolved when linking
@@ -14,6 +16,9 @@ are all already used in this same function, so this adds no new
 link-time dependency.  The semantic is identical: increment skip_env
 iff the named variable is set, then unsetenv it.  Correct on every
 port, so upstreamable as-is.
+---
+ elf/rtld.c |   20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
 
 --- a/elf/rtld.c
 +++ b/elf/rtld.c

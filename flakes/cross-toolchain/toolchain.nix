@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Cross-toolchain components - per-target derivations, built against the
 # patched `<cpu>-gnu` nixpkgs from pkgs.nix.
 #

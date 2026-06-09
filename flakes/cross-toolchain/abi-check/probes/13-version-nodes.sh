@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 13 - version definition nodes (the .gnu.version_d set).  Catches a
 # dropped or renamed version node, including the GLIBC_ABI_* gate nodes

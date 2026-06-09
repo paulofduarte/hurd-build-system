@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # GNU MIG - per-target cross-compiler derivations (autoreconf + configure +
 # make + make install), producing the per-target MIG binary + migcom under
 # $out/{bin,libexec}.

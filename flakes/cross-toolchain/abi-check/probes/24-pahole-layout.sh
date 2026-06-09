@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: full
 # Probe 24 - packing / alignment drift in ABI-critical public structs, via
 # `pahole` on the unstripped ref+working libc.  Complements Tier-2: abidiff

@@ -1,4 +1,6 @@
-install-info: make compare_entries_text a total order (cross-host determinism)
+From: Paulo Duarte <paulofernandobd@gmail.com>
+Date: Sat, 06 Jun 2026 20:14:18 +0100
+Subject: [PATCH] install-info: make compare_entries_text a total order (cross-host determinism)
 
 compare_entries_text() (the qsort comparator for Info `dir` menu entries) is
 inconsistent: when two entries' names are equal case-insensitively AND the same
@@ -12,6 +14,9 @@ Keep the existing "shorter (prefix) name first" rule for different-length names
 (it is already consistent), and for equal-length case-insensitive ties break on
 the full entry text (strcmp) so the comparator is a consistent total order and
 qsort is well-defined and host-independent.  Faithful: only reorders, never drops.
+---
+ install-info/install-info.c |   16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
 
 --- a/install-info/install-info.c	2026-06-06 13:52:51
 +++ b/install-info/install-info.c	2026-06-06 13:52:51

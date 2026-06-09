@@ -1,16 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 name: Toolchain sanity check
 
-# Cross-host toolchain consistency.  For every (host × target) it runs
+# Cross-host toolchain consistency.  For every (host x target) it runs
 # `make dist` and records the result; the `compare` job then gates PURELY on
-# whether the hosts AGREE — not on whether the kernel source is correct:
+# whether the hosts AGREE - not on whether the kernel source is correct:
 #   * all build -> per-file dist hashes must be byte-identical (else drift = FAIL)
 #   * all fail  -> normalised error signatures must match (consistent source
 #                  bug, e.g. i686-xen htonl = PASS)
 #   * otherwise -> divergence = FAIL
 #
 # Targets come from target-archs.nix (not hardcoded).  Runs after `Cache
-# cross-toolchains` — but only when that run actually built >=1 toolchain (the
-# setup gate reads its build-plan artifact) — plus manual dispatch, and pulls
+# cross-toolchains` - but only when that run actually built >=1 toolchain (the
+# setup gate reads its build-plan artifact) - plus manual dispatch, and pulls
 # the toolchain from cachix rather than rebuilding it per host.
 
 on:
@@ -54,7 +56,7 @@ jobs:
           path: plan
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      - name: Gate — run only if >=1 toolchain was (re)built
+      - name: Gate - run only if >=1 toolchain was (re)built
         id: gate
         run: |
           set -euo pipefail
@@ -83,7 +85,7 @@ jobs:
   build:
     needs: setup
     if: ${{ needs.setup.outputs.run == 'true' }}
-    name: ${{ matrix.runner.system }} → ${{ matrix.arch }}
+    name: ${{ matrix.runner.system }} -> ${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -103,7 +105,7 @@ jobs:
       - name: Set up nix
         uses: ./.github/actions/setup-nix
 
-      # Capture the outcome without failing the job — `compare` owns pass/fail.
+      # Capture the outcome without failing the job - `compare` owns pass/fail.
       # result.txt = HOST/ARCH + either STATUS=ok and per-file dist hashes, or
       # STATUS=fail and a normalised error signature.
       - name: Build dist + capture result
@@ -159,7 +161,7 @@ jobs:
           path: results
           pattern: result-*
 
-      - name: Compare across hosts — fail on divergence
+      - name: Compare across hosts - fail on divergence
         env:
           ARCHES: ${{ needs.setup.outputs.arches }}
         # No `| tee`: it would mask Python's exit (a pipeline's status is the
@@ -175,7 +177,7 @@ jobs:
 
           arches = json.loads(os.environ["ARCHES"])
 
-          # Read every result.txt (content authoritative — avoids parsing the
+          # Read every result.txt (content authoritative - avoids parsing the
           # artifact name).
           recs = {}  # (host, arch) -> (status, payload_lines)
           for f in glob.glob("results/*/result.txt"):
@@ -216,7 +218,7 @@ jobs:
               present = {h: recs[(h, arch)] for h in hosts if (h, arch) in recs}
               missing = [h for h in hosts if h not in present]
               if not present:
-                  out(f"### `{arch}` — ⚠ no results"); out(); diverged = True; continue
+                  out(f"### `{arch}` - [WARN] no results"); out(); diverged = True; continue
 
               statuses = {h: present[h][0] for h in present}
               allok   = all(s == "ok"   for s in statuses.values())
@@ -226,18 +228,18 @@ jobs:
                   maps = {h: hashmap(present[h][1]) for h in present}
                   ref = next(iter(maps.values()))
                   if all(m == ref for m in maps.values()):
-                      out(f"### `{arch}` — ✅ builds, byte-identical across "
+                      out(f"### `{arch}` - [PASS] builds, byte-identical across "
                           f"{len(present)} host(s)")
                   else:
                       diverged = True
-                      out(f"### `{arch}` — ❌ **builds DIFFER across hosts** "
+                      out(f"### `{arch}` - [FAIL] **builds DIFFER across hosts** "
                           f"(toolchain drift)")
                       out()
                       paths = sorted(set().union(*(set(m) for m in maps.values())))
                       out("| File | hash per host |")
                       out("| --- | --- |")
                       for p in paths:
-                          vals = {h: maps[h].get(p, "—(absent)") for h in present}
+                          vals = {h: maps[h].get(p, "-(absent)") for h in present}
                           if len(set(vals.values())) > 1:
                               det = "<br>".join(f"{h}=`{vals[h][:12]}`" for h in sorted(vals))
                               out(f"| `{p}` | {det} |")
@@ -245,12 +247,12 @@ jobs:
                   sigs = {h: frozenset(present[h][1]) for h in present}
                   ref = next(iter(sigs.values()))
                   if all(s == ref for s in sigs.values()):
-                      out(f"### `{arch}` — ✅ fails identically on all "
-                          f"{len(present)} host(s) (consistent — source issue, "
+                      out(f"### `{arch}` - [PASS] fails identically on all "
+                          f"{len(present)} host(s) (consistent - source issue, "
                           f"not toolchain)")
                   else:
                       diverged = True
-                      out(f"### `{arch}` — ❌ **fails DIFFERENTLY across hosts** "
+                      out(f"### `{arch}` - [FAIL] **fails DIFFERENTLY across hosts** "
                           f"(toolchain drift)")
                       out()
                       for h in sorted(present):
@@ -260,18 +262,18 @@ jobs:
                           out("```"); out("</details>")
               else:
                   diverged = True
-                  out(f"### `{arch}` — ❌ **builds on some hosts, fails on "
+                  out(f"### `{arch}` - [FAIL] **builds on some hosts, fails on "
                       f"others** (divergence): "
                       + ", ".join(f"{h}={s}" for h, s in sorted(statuses.items())))
 
               if missing:
-                  out(f"  ⚠ missing host(s): {', '.join(missing)}")
+                  out(f"  [WARN] missing host(s): {', '.join(missing)}")
               out()
 
           out("---")
           if diverged:
-              out("**RESULT: ❌ divergence detected — failing the workflow.**")
+              out("**RESULT: [FAIL] divergence detected - failing the workflow.**")
               summary.close(); sys.exit(1)
-          out("**RESULT: ✅ all targets consistent across hosts.**")
+          out("**RESULT: [PASS] all targets consistent across hosts.**")
           summary.close()
           PYEOF

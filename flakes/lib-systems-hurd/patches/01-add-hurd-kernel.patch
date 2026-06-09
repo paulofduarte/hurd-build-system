@@ -1,4 +1,6 @@
-Re-add GNU Hurd kernel support to lib/systems.
+From: Paulo Duarte <paulofernandobd@gmail.com>
+Date: Sun, 31 May 2026 01:43:35 +0100
+Subject: [PATCH] Re-add GNU Hurd kernel support to lib/systems.
 
 Restores the support that lived in nixpkgs from ~2012 through 2018 and was
 removed in PR #45721 (commit history under pkgs/os-specific/gnu/).  This
@@ -38,6 +40,11 @@ cpu-kernel-environment allow-list into two branches and moved the `gnu`
 ABI into the first one - so the Hurd 3-tuple branch now leads the "3"
 case (the old "add gnu/hurd to the list" hunk is obsolete).  Expect a
 one-line fuzz on next minor bumps.
+---
+ lib/systems/parse.nix   |   46 ++++++++++++++++++++++++++++++++++++++++++++--
+ lib/systems/inspect.nix |    4 ++++
+ lib/systems/default.nix |    6 ++++++
+ 3 files changed, 54 insertions(+), 2 deletions(-)
 
 --- a/lib/systems/parse.nix	2026-05-31 20:23:50
 +++ b/lib/systems/parse.nix	2026-05-31 20:24:23

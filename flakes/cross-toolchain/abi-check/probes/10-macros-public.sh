@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 10 - public macro VALUES.  errno/signal/O_*/RLIMIT_*/_SC_* and
 # function-like-macro bodies are constant-folded into callers at compile
@@ -39,7 +41,13 @@ gen "$WORK" > "$td/wrk"
 changed="$(awk -F'\t' 'NR==FNR { v[$1] = $2; next }
                        ($1 in v) && v[$1] != $2 { print $1": "v[$1]" -> "$2 }' \
            "$td/ref" "$td/wrk")"
-# A removed public macro can break `#ifdef`/use sites too.
+# A removed public macro is a source-API change, not a binary-ABI break:
+# #defines are constant-folded into callers, so nothing in libgcc_s /
+# libstdc++ or already-built userland binds to one.  Report for review,
+# never fatal - else a routine upstream header cleanup on the moving
+# working branch trips the gate against the frozen reference tag (e.g. the
+# 2.43 branch commenting out the non-compilable PF_LINK/AF_LINK defines).
+# A genuine source break surfaces as a userland build failure anyway.
 removed="$(comm -23 <(cut -f1 "$td/ref") <(cut -f1 "$td/wrk"))"
 
 rc=0
@@ -47,10 +55,12 @@ if [ -n "$changed" ]; then
   echo "FAIL 10-macros-public - public macro value(s) changed:"
   printf '       - %s\n' $(printf '%s\n' "$changed" | head -25)
   rc=1
+else
+  n_rm="$(printf '%s' "$removed" | grep -c . || true)"
+  echo "PASS 10-macros-public - no public macro value changes (removed: ${n_rm:-0}, review-only)"
 fi
+# Removals are review-only (see above): list them whether or not the gate failed.
 if [ -n "$removed" ]; then
-  echo "FAIL 10-macros-public - public macro(s) removed: $(printf '%s ' $(printf '%s\n' "$removed" | head -25))"
-  rc=1
+  echo "       note: public macro(s) removed (source-API only, review): $(printf '%s ' $(printf '%s\n' "$removed" | head -25))"
 fi
-[ "$rc" -eq 0 ] && echo "PASS 10-macros-public - no public macro value/removal changes"
 exit "$rc"

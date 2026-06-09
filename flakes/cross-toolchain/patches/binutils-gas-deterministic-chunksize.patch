@@ -1,4 +1,6 @@
-gas: pin the obstack chunk size for cross-host reproducible builds
+From: Paulo Duarte <paulofernandobd@gmail.com>
+Date: Fri, 29 May 2026 03:27:03 +0100
+Subject: [PATCH] gas: pin the obstack chunk size for cross-host reproducible builds
 
 gas leaves its global `chunksize` at 0, which tells the obstack library to
 pick its own default chunk size, computed as `4096 - extra`.  That "extra"
@@ -24,6 +26,9 @@ obstack implementation, without otherwise changing gas's behaviour (4096 is
 the same size the zero-default already targets).
 
 This is a local reproducibility fix; it has not (yet) been submitted upstream.
+---
+ gas/as.c |   11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/gas/as.c b/gas/as.c
 index 449167d..eeb996a 100644

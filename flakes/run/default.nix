@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # `nix run` apps - one per cross-arch.
 #
 # Returned API: an attrset suitable for `flake.apps.<system>`:

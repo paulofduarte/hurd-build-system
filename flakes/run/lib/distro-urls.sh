@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Distro image URLs - single source of truth.
 #
 # Both the parent Makefile's `run:` recipe and the `nix run` apps

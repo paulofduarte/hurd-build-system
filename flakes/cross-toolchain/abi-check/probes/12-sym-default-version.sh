@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 12 - default (@@VER) vs non-default (@VER) version *flips*.
 # Tier-1's abilist-style extraction normalizes both away, so a symbol

@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # mkiso op - runs INSIDE the sidekick (dispatcher oneshot mode; /shared
 # already mounted, busybox installed).  Host-staged into /shared/run.sh by
 # flakes/run/lib/sidekick.sh, with /shared/iso-staging/ (kernel + multiboot

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Hurd-specific helpers - fetch, overlay, vanilla-vs-inject branch, exec.
 #
 # Reads $WORK, $ARCH, $GNUMACH_KERNEL, $QEMU*, $RUN_* from env.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Dispatch one command to the warm sidekick (control dir = $SK_CTL), relay
 # its stdout/stderr, and exit with its return code.  This is the canonical
 # send used by the transparent tool shims (abidiff/pahole/...): each shim is

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Entry point for `make run`. Validates env, exec's the scenario script.
 set -euo pipefail
 . "$(dirname "$0")/lib/common.sh"   # provides die()

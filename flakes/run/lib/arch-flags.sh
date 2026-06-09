@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Arch-keyed qemu defaults + optional host-acceleration overlay.
 #
 # Defaults track upstream gnumach's test harness

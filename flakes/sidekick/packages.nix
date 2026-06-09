@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Pinned Alpine linux-virt KERNEL for the sidekick VM (kernel + modules
 # only - the userland tools come from Debian; see debian-packages.nix).
 #

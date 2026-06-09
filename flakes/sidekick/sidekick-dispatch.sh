@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Host-side dispatch to the sidekick VM - sourced by the ABI gate (warm
 # `serve`) and the run apps (`oneshot`).  See SIDEKICK-DISPATCHER.md.
 # Needs in env: SIDEKICK_KERNEL, SIDEKICK_INITRD; qemu-system-x86_64 on PATH.

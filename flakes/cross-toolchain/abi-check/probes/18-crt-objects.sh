@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # abi-level: auto
 # Probe 18 - C-runtime startup objects (crt1/crti/crtn/Scrt1).  Their
 # symbols and section set are the startup ABI every executable links;

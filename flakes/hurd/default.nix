@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # GNU Hurd userland - per-target derivations.  Builds the core servers +
 # libraries with the cross-toolchain (wrapped cc, mig, glibc-hurd sysroot).
 # Output layout (hurd's `make install prefix=$out`):

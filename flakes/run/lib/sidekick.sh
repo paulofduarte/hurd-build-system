@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Host-side orchestrator for the sidekick helper VM.
 #
 # Reads $SIDEKICK_KERNEL, $SIDEKICK_INITRD from env (exported by the parent
