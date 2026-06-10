@@ -354,6 +354,8 @@ _DEPS.dist-glibc-tree   := $(_DC)
 _DEPS.dist-glibc-nix    := $(_DC)
 _DEPS.dist              := mig gnumach hurd glibc
 _DEPS.all               := mig gnumach hurd glibc
+# The split gcc runtime libs sit on the WORKING glibc -> same transitive srcs.
+$(foreach l,$(_GCC_RT_LIBS),$(eval _DEPS.dist-gcc-$(l) := $(_DC)))
 
 # module -> its IN_TREE flag var.
 _FLAG.mig     := MIG_IN_TREE
@@ -365,6 +367,29 @@ _FLAG.glibc   := GLIBC_IN_TREE
 _override1 = $(if $($(_FLAG.$(1))),--override-input $(1)-src $(SRC)/$(1))
 # $(call _overrides,TARGET): the scoped --override-input set for a nix TARGET.
 _overrides = $(foreach d,$(_DEPS.$(1)),$(call _override1,$(d)))
+
+# module -> its in-tree clone dir (the staleness twin of _override1's src path).
+_SRCDIR.mig     := $(MIG_SRC)
+_SRCDIR.gnumach := $(GNUMACH_SRC)
+_SRCDIR.hurd    := $(HURD_SRC)
+_SRCDIR.glibc   := $(GLIBC_SRC)
+# $(call _intree_srcs,TARGET): the src dirs TARGET's overrides drag in (opted-in
+# modules only) - derived from the same _DEPS graph that scopes _overrides, so the
+# staleness watches can't drift from the override set.  Feeds _WATCH.<nix-half>.
+_intree_srcs = $(strip $(foreach d,$(_DEPS.$(1)),$(if $($(_FLAG.$(d))),$(_SRCDIR.$(d)))))
+
+# Always-run prereq for the store-path-stamped nix halves WHEN overrides are active:
+# an overridden input's staleness lives in src/<m>, invisible to the stamp's flake-file
+# prereqs - so force the recipe and let the store-path compare do the real skip.  With
+# no overrides the stamp fast-path stands.
+.PHONY: _FORCE
+_FORCE:
+
+# The store-path-stamped nix halves.  Their _stale gate term mirrors _FORCE: mtime
+# can't see an override flip (the stamp records the PINNED resolve; src/<m> may be
+# older than it), so with overrides active they are always gate-stale - the dispatch
+# runs, the recipe re-resolves, and the store-path compare does the real skip.
+_OVR_GOALS = dist-glibc-nix dist-gnumach-nix dist-hurd-nix $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
 
 # Dirtiness cascade (in-tree only).  $(call _src_is_dirty,MODULE) -> "1" if src/<m>
 # has uncommitted TRACKED changes; $(call _chain_dirty,TARGET) -> non-empty if TARGET
@@ -731,7 +756,8 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # that scopes the overrides - so no drift.
 _DEP_GOALS := mig gnumach dist-gnumach dist-gnumach-tree dist-gnumach-nix gnumach-headers \
               hurd-headers hurd dist-hurd dist-hurd-tree dist-hurd-nix \
-              glibc work-glibc dist-glibc dist-glibc-tree dist-glibc-nix dist all
+              glibc work-glibc dist-glibc dist-glibc-tree dist-glibc-nix dist all \
+              $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
 _needs = $(strip $(foreach g,$(_DEP_GOALS),$(if $(filter $(1),$(_DEPS.$(g))),$(g))))
 _NEEDS_GNUMACH_SRC := $(call _needs,gnumach)
 _NEEDS_MIG_SRC     := $(call _needs,mig)
@@ -795,17 +821,18 @@ $(foreach l,$(_GCC_RT_LIBS),$(eval _MARK.dist-gcc-$(l) := $(DIST_GCC_STAMP_DIR)/
 _MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
 
 # Direct src watches (transitive src flows through _SDEPS).  The nix dist halves watch
-# only their flake, never src/, so a non-opt-in build never expects a clone.
+# their flake + (via _intree_srcs) the src of every OPTED-IN module their overrides
+# drag in - flag-gated, so a non-opt-in build never expects a clone.
 _WATCH.gnumach-headers  := $(GNUMACH_SRC)
 _WATCH.hurd-headers     := $(HURD_SRC)
 _WATCH.mig              := $(MIG_SRC) flakes/mig
 _WATCH.glibc            := $(GLIBC_SRC)
 _WATCH.gnumach          := $(GNUMACH_SRC)
 _WATCH.hurd             := $(HURD_SRC)
-_WATCH.dist-gnumach-nix := flakes/gnumach
-_WATCH.dist-hurd-nix    := flakes/hurd
-_WATCH.dist-glibc-nix   := flakes/cross-toolchain
-$(foreach l,$(_GCC_RT_LIBS),$(eval _WATCH.dist-gcc-$(l) := flakes/cross-toolchain))
+_WATCH.dist-gnumach-nix := flakes/gnumach $(call _intree_srcs,dist-gnumach-nix)
+_WATCH.dist-hurd-nix    := flakes/hurd $(call _intree_srcs,dist-hurd-nix)
+_WATCH.dist-glibc-nix   := flakes/cross-toolchain $(call _intree_srcs,dist-glibc-nix)
+$(foreach l,$(_GCC_RT_LIBS),$(eval _WATCH.dist-gcc-$(l) := flakes/cross-toolchain $(call _intree_srcs,dist-gcc-$(l))))
 # (work-glibc/dist-*-tree inherit src via _SDEPS; dist-tzdata's only input is the
 # nixpkgs pin - flake.lock, the recipe's prereq - so a missing mark is its trigger.)
 
@@ -852,6 +879,7 @@ _newer_tracked = $(strip $(foreach d,$(_WATCH.$(1)),$(call _newer_tracked_one,$(
 # with neither _MARK nor _SDEPS is conservatively stale (returns its own name).
 _stale = $(strip \
   $(if $(_MARK.$(1))$(_SDEPS.$(1)), \
+    $(if $(filter $(1),$(_OVR_GOALS)),$(if $(call _intree_srcs,$(1)),$(1))) \
     $(if $(_MARK.$(1)),$(call _mark_missing,$(1)) $(call _newer_tracked,$(1))) \
     $(foreach d,$(_SDEPS.$(1)),$(call _stale,$(d))), \
     $(1)))
@@ -1365,7 +1393,7 @@ endef
 
 dist-glibc-nix: $(DIST_GLIBC_NIX_STAMP)
 
-$(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix
+$(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(call _overrides,dist-glibc-nix)),_FORCE)
 	$(call _dist_nix_copy,glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_NIX_STAMP),lib/libc.so.0.3,libc.info)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
@@ -1387,11 +1415,13 @@ $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.ni
 .PHONY: $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
 $(addprefix dist-gcc-,$(_GCC_RT_LIBS)): dist-gcc-%: $(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp ;
 
-$(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: flake.lock flakes/cross-toolchain/gcc-runtime.nix flakes/cross-toolchain/toolchain.nix
+# Conditional _FORCE: all runtime libs share one dep set (_DC), so any lib's override
+# set stands in for the pattern (no $* in plain prereqs); the recipe still scopes per-goal.
+$(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: flake.lock flakes/cross-toolchain/gcc-runtime.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(call _overrides,dist-gcc-libgcc)),_FORCE)
 	@mkdir -p $(DIST)/lib $(dir $@)
 	@echo "  DIST-GCC     resolving nix cross-gcc-rt-$*-$(_TC_ARCH)..."
 	@set -e; \
-	out=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-rt-$*-$(_TC_ARCH) --no-link --print-out-paths); \
+	out=$$($(NIX_BUILD) $(call _overrides,dist-gcc-$*) $(PROJ)\#cross-gcc-rt-$*-$(_TC_ARCH) --no-link --print-out-paths); \
 	if $(call _stamp_skip,$@,$$out,$(DIST)/lib/$(_RT_SO.$*)); then \
 	  echo "  unchanged - skip copy"; \
 	else \
@@ -1497,7 +1527,7 @@ dist-gnumach: $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 # else.  Store-path-stamped; share/info/dir stashed/restored + merged (see dist-glibc-nix).
 dist-gnumach-nix: $(DIST_GNUMACH_NIX_STAMP)
 
-$(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix
+$(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix $(if $(strip $(call _overrides,dist-gnumach-nix)),_FORCE)
 	$(call _dist_nix_copy,gnumach,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 
@@ -1590,7 +1620,7 @@ dist-hurd: $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 # Store-path-stamped; share/info/dir stashed/restored + hurd.info merged (see dist-glibc-nix).
 dist-hurd-nix: $(DIST_HURD_NIX_STAMP)
 
-$(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix
+$(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix $(if $(strip $(call _overrides,dist-hurd-nix)),_FORCE)
 	$(call _dist_nix_copy,hurd,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
 	@$(call _dist_finalize,$(EPOCH_HURD))
 
