@@ -169,6 +169,15 @@ let
     bp.wrapCCWith {
       inherit cc;
       libc     = working;
+      # The FLIP: cross-gcc bakes the pinned REFERENCE glibc as its native sys-include
+      # (its libcCross), and the wrapper's own libc headers land at -idirafter (after it),
+      # so ref would win.  Add the WORKING glibc headers at -isystem (ahead of the gcc
+      # sys-include) so user code AND the runtime libs compile against WORKING - everything
+      # converges on the work ABI, so no ref-vs-work ABI gate is needed.  working/include
+      # carries the merged glibc + mach + hurd tree, so this is the whole system surface.
+      extraBuildCommands = ''
+        echo "-isystem ${working}/include" >> $out/nix-support/cc-cflags
+      '';
       bintools = bp.wrapBintoolsWith {
         bintools = bp.binutils-unwrapped;
         libc     = working;
