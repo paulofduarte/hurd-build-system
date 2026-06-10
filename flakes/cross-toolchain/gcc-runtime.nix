@@ -75,6 +75,11 @@ in
       bp      = (mkCrossPkgs system target).buildPackages;
       tgt     = target.crossTarget;
       salt    = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tgt;
+      # gcc's source subdir for the lib.  Only libstdc++ diverges: the gcc tree keeps
+      # the historical `libstdc++-v3` directory name (the 1998 rewrite; there is no v4
+      # and never will be - the ABI evolves in place), but every user-facing name
+      # (attr, target, the installed libstdc++.so) is plain libstdc++.
+      srcDir  = if libName == "libstdc++" then "libstdc++-v3" else libName;
       # cross-gcc wrapped around the working glibc; for the non-libgcc libs the wrapper
       # also -B's the libgcc derivation so they link the WORK-built libgcc.
       wrapped = wrappedToolchain system target { cc = compiler; working = working; libgcc = libgccDrv; };
@@ -146,7 +151,7 @@ in
         # Build the one requested lib.  libgcc has no -B (it IS libgcc); the rest link
         # the libgcc derivation via the wrapper's -B.  (libgomp passes --disable-werror -
         # its affinity-fmt.c trips -Werror=discarded-qualifiers on the Hurd glibc headers.)
-        buildLib ${libName} ${extraFlags}
+        buildLib ${srcDir} ${extraFlags}
 
         runHook postBuild
       '';

@@ -128,7 +128,21 @@ DIST_GLIBC    ?= $(DIST)
 DIST_GLIBC_NIX_STAMP := $(WORK)/dist-glibc-nix/$(_VARIANT)$(ARCH).stamp
 DIST_GNUMACH_NIX_STAMP := $(WORK)/dist-gnumach-nix/$(_VARIANT)$(ARCH).stamp
 DIST_HURD_NIX_STAMP    := $(WORK)/dist-hurd-nix/$(_VARIANT)$(ARCH).stamp
-DIST_LIBGCC_STAMP    := $(WORK)/dist-libgcc/$(_VARIANT)$(ARCH).stamp
+# The split gcc runtime libs (one nix derivation + one dist-gcc-<lib> target each).
+# `make dist` ships ONLY libgcc by default (glibc dlopens libgcc_s.so.1 for
+# pthread_cancel unwinding); the rest are opt-in: `make dist-gcc-<lib>` directly, or
+# DIST_GCC_LIBS="libstdc++ libgomp" to fold them into `make dist`.
+_GCC_RT_LIBS  := libgcc libstdc++ libatomic libitm libquadmath libssp libgomp
+DIST_GCC_LIBS ?=
+# Each lib's primary shared object (the dist-presence assert + stamp check file).
+_RT_SO.libgcc       := libgcc_s.so.1
+_RT_SO.libstdc++    := libstdc++.so.6
+_RT_SO.libatomic    := libatomic.so.1
+_RT_SO.libitm       := libitm.so.1
+_RT_SO.libquadmath  := libquadmath.so.0
+_RT_SO.libssp       := libssp.so.0
+_RT_SO.libgomp      := libgomp.so.1
+DIST_GCC_STAMP_DIR   := $(WORK)/dist-gcc
 DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(_VARIANT)$(ARCH).stamp
 # In-tree dist install stamps.  The dist tree is mtime-normalised to the source
 # epoch by _dist_finalize, so it can't be the staleness baseline (always older than
@@ -437,9 +451,9 @@ help:
 	@echo "                   if opted in (make src-gnumach), else the nix kernel"
 	@echo "  dist-gnumach     install the kernel into ./dist/$(ARCH)/ - the in-tree build if"
 	@echo "                   opted in (make src-gnumach), else the nix kernel"
-	@echo "  dist             install kernel + Hurd userland + glibc + gcc runtime + tzdata"
+	@echo "  dist             install kernel + Hurd userland + glibc + libgcc + tzdata"
 	@echo "                   into ./dist/$(ARCH)/ (= dist-gnumach + dist-hurd + dist-glibc +"
-	@echo "                   dist-libgcc + dist-tzdata; mig is host-arch, not bundled)"
+	@echo "                   dist-gcc-libgcc + dist-tzdata; mig is host-arch, not bundled)"
 	@echo "  hurd             build the Hurd userland - in-tree under ./work/hurd/$(_TC_ARCH)/"
 	@echo "                   if opted in (make src-hurd), else the nix userland"
 	@echo "  dist-hurd        install the Hurd userland into ./dist/$(ARCH)/ - the in-tree build"
@@ -450,8 +464,10 @@ help:
 	@echo "                   else a no-op).  The in-tree userland then links against it."
 	@echo "  dist-glibc       install glibc into ./dist/$(ARCH)/ - the in-tree build if opted in"
 	@echo "                   (make src-glibc), else the nix deployable glibc"
-	@echo "  dist-libgcc      install the gcc base runtime (libgcc_s + libstdc++)"
-	@echo "                   from the nix cross-gcc into ./dist/$(ARCH)/lib"
+	@echo "  dist-gcc-<lib>   install ONE gcc runtime lib into ./dist/$(ARCH)/lib"
+	@echo "                   (libgcc, libstdc++, libatomic, libitm, libquadmath,"
+	@echo "                   libssp, libgomp).  'make dist' ships only libgcc; opt the"
+	@echo "                   rest in per-target or via DIST_GCC_LIBS=\"libstdc++ ...\""
 	@echo "  dist-tzdata      install the IANA timezone db (zoneinfo) into ./dist/$(ARCH)/share"
 	@echo "  check            run the kernel test suite (== check-gnumach)"
 	@echo "  check-gnumach    run gnumach's 'make check' (kernel tests under QEMU)"
@@ -502,10 +518,11 @@ clean-dist:
 	@# rm can't unlink inside a read-only dir, so make the tree writable first.
 	@$(call _make_writable,$(DIST))
 	rm -rf $(DIST)
-	@# the dist-*-nix / dist-libgcc store-path stamps live under work/ (survive this
+	@# the dist-*-nix / dist-gcc-<lib> store-path stamps live under work/ (survive this
 	@# rm); drop them too, else their "already shipped" record makes a later `make
 	@# dist` skip re-populating the freshly-cleaned tree.
-	rm -f $(DIST_GLIBC_NIX_STAMP) $(DIST_GNUMACH_NIX_STAMP) $(DIST_HURD_NIX_STAMP) $(DIST_LIBGCC_STAMP)
+	rm -f $(DIST_GLIBC_NIX_STAMP) $(DIST_GNUMACH_NIX_STAMP) $(DIST_HURD_NIX_STAMP)
+	rm -f $(DIST_GCC_STAMP_DIR)/*.stamp
 
 # mrproper nukes work/ wholesale - a deeper reset including configure state.
 # flakes/ holds tracked sources, so scrub only its gitignored result-* gc-roots,
@@ -774,7 +791,7 @@ _MARK.dist-hurd-tree    := $(DIST_HURD_TREE_STAMP)
 _MARK.dist-hurd-nix     := $(DIST_HURD_NIX_STAMP)
 _MARK.dist-glibc-tree   := $(DIST_GLIBC_TREE_STAMP)
 _MARK.dist-glibc-nix    := $(DIST_GLIBC_NIX_STAMP)
-_MARK.dist-libgcc       := $(DIST_LIBGCC_STAMP)
+$(foreach l,$(_GCC_RT_LIBS),$(eval _MARK.dist-gcc-$(l) := $(DIST_GCC_STAMP_DIR)/$(l)-$(_VARIANT)$(ARCH).stamp))
 _MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
 
 # Direct src watches (transitive src flows through _SDEPS).  The nix dist halves watch
@@ -788,7 +805,7 @@ _WATCH.hurd             := $(HURD_SRC)
 _WATCH.dist-gnumach-nix := flakes/gnumach
 _WATCH.dist-hurd-nix    := flakes/hurd
 _WATCH.dist-glibc-nix   := flakes/cross-toolchain
-_WATCH.dist-libgcc      := flakes/cross-toolchain
+$(foreach l,$(_GCC_RT_LIBS),$(eval _WATCH.dist-gcc-$(l) := flakes/cross-toolchain))
 # (work-glibc/dist-*-tree inherit src via _SDEPS; dist-tzdata's only input is the
 # nixpkgs pin - flake.lock, the recipe's prereq - so a missing mark is its trigger.)
 
@@ -806,7 +823,7 @@ _SDEPS.dist-gnumach      := $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnuma
 _SDEPS.dist-hurd         := $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 _SDEPS.dist-glibc        := $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
 _SDEPS.all               := gnumach hurd
-_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-libgcc dist-tzdata
+_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc-libgcc $(addprefix dist-gcc-,$(DIST_GCC_LIBS)) dist-tzdata
 
 # `git ls-files` enumerates "real source" - generated files (configure, Makefile.in,
 # autom4te.cache/, ...) shouldn't trigger staleness.  Authoritative: exactly what
@@ -945,6 +962,7 @@ _DIST_PASSTHROUGH := \
   DIST_GNUMACH=$(DIST_GNUMACH) \
   DIST_HURD=$(DIST_HURD) \
   DIST_GLIBC=$(DIST_GLIBC) \
+  DIST_GCC_LIBS="$(DIST_GCC_LIBS)" \
   GLIBC_BUILD=$(GLIBC_BUILD) \
   ALT_BUILD=$(ALT_BUILD) \
   _HOST_SYSTEM=$(_HOST_SYSTEM) \
@@ -1006,7 +1024,7 @@ all: gnumach hurd
 # Lockstep with _SDEPS.dist (above): the components must match both lists or the
 # staleness gate and the recipe disagree (silent mis-ship).  No whole-tree post-step:
 # each dist-* finalises only its slice via $(call _dist_finalize,...).
-dist: dist-gnumach dist-hurd dist-glibc dist-libgcc dist-tzdata
+dist: dist-gnumach dist-hurd dist-glibc dist-gcc-libgcc $(addprefix dist-gcc-,$(DIST_GCC_LIBS)) dist-tzdata
 
 # Serialize dist's components under `make -j` - they contend on two shared resources
 # and otherwise corrupt each other:
@@ -1014,7 +1032,7 @@ dist: dist-gnumach dist-hurd dist-glibc dist-libgcc dist-tzdata
 #     SAME $(GLIBC_BUILDDIR), where glibc regenerates intermediates (build/mach/stubs,
 #     stubsT), so two concurrent installs race -> "mach/stubs Error 1".
 #   - the dist tree: dist-glibc(-nix)'s `chmod -R u+w $(DIST)` walks the whole tree
-#     while dist-gnumach/dist-hurd/dist-libgcc write into it.
+#     while dist-gnumach/dist-hurd/dist-gcc-<lib> write into it.
 # `.NOTPARALLEL: dist` serializes ONLY dist's immediate prerequisites; each component
 # still builds internally with -j, and the individual `dist-*` targets get full
 # parallelism on their own.  Needs GNU make 4.4 (inner make); the outer make never
@@ -1303,8 +1321,8 @@ dist-glibc: $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
 # whole $out tree is ROOT-RELATIVE - a verbatim `cp -a` IS a deployable sysroot.  cp -a
 # clones the store's read-only perms, so chmod -R u+w after.  NB: glibc's /bin helper
 # SCRIPTS carry a nixpkgs-rewritten /nix/store bash shebang - a cosmetic leak in dev
-# scripts only; the ELF tools are /-clean.  The gcc runtime ships via `dist-libgcc` (a
-# gcc artefact, same whether glibc is in-tree or nix).  Store-path-stamped.
+# scripts only; the ELF tools are /-clean.  The gcc runtime ships via `dist-gcc-<lib>`
+# (a gcc artefact, same whether glibc is in-tree or nix).  Store-path-stamped.
 #
 # share/info/dir: the nix glibc ships its OWN standalone dir, and a verbatim cp -a would
 # clobber the dir dist-gnumach/dist-hurd already merged into.  So mirror `make install`:
@@ -1352,50 +1370,47 @@ $(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.ni
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
 
-# ---- dist-libgcc ----
-# Ship the gcc TARGET RUNTIME + docs into the dist tree - ALWAYS from the nix cross-gcc,
-# independent of the glibc choice (gcc artefacts, not glibc).  Copies the WHOLE gcc lib
-# output in its native symlink layout: the full runtime set (libgcc_s, libstdc++,
-# libatomic, libitm, libquadmath, libssp) + libstdc++*-gdb.py (the gdb pretty-printer
-# hook; toolchain.nix's postFixup rewrites its store paths to the deployed /lib, so it's
-# cross-host pure).  Also installs the gcc info manuals + man pages.  All three nix
-# outputs (^lib/^info/^man) are byte-identical cross-host, so a plain copy + the
-# deterministic install-info keep the dist reproducible - no rpath scrub (the libs carry
-# NO RUNPATH: toolchain.nix drops both the nixpkgs store rpath and the /lib one, matching
-# Debian GNU/Hurd).  glibc dlopen()s libgcc_s for backtrace()/Hurd assert_backtrace (a
-# DT_NEEDED scan misses it), so it MUST be present.  Store-path-stamped.  Resolved via
-# $(_TC_ARCH): a xen variant reuses its CPU sibling's final gcc.
-.PHONY: dist-libgcc
-dist-libgcc: $(DIST_LIBGCC_STAMP)
+# ---- dist-gcc-<lib> (per-lib gcc runtime) ----
+# Ship ONE gcc target-runtime lib into the dist tree, from its own nix derivation
+# (cross-gcc-rt-<lib>-<arch>, built against the WORKING glibc - see
+# flakes/cross-toolchain/gcc-runtime.nix).  Copies the lib's shared objects in their
+# native symlink layout (+ libstdc++'s *-gdb.py pretty-printer hook) and its own info
+# docs (libgomp.info, ...); the compiler's gcc.info/man belong to a deployable-toolchain
+# artifact, not the runtime dist.  The libs carry NO RUNPATH (NIX_DONT_SET_RPATH,
+# matching Debian GNU/Hurd) and the nix outputs are byte-identical cross-host, so a
+# plain copy + the deterministic install-info keep the dist reproducible.
+# `make dist` pulls ONLY dist-gcc-libgcc by default - glibc dlopen()s libgcc_s for
+# backtrace()/Hurd assert_backtrace (a DT_NEEDED scan misses it), so it MUST be present;
+# the other libs ship when something needs them (opt-in: `make dist-gcc-<lib>` or
+# DIST_GCC_LIBS).  Store-path-stamped.  Resolved via $(_TC_ARCH): a xen variant reuses
+# its CPU sibling's runtime.
+.PHONY: $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
+$(addprefix dist-gcc-,$(_GCC_RT_LIBS)): dist-gcc-%: $(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp ;
 
-$(DIST_LIBGCC_STAMP): flake.lock flakes/cross-toolchain/toolchain.nix
-	@mkdir -p $(DIST)/lib $(DIST)/share/info $(DIST)/share/man $(dir $(DIST_LIBGCC_STAMP))
-	@echo "  DIST-LIBGCC  resolving nix cross-gcc-final-$(_TC_ARCH) {lib,info,man}..."
+$(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: flake.lock flakes/cross-toolchain/gcc-runtime.nix flakes/cross-toolchain/toolchain.nix
+	@mkdir -p $(DIST)/lib $(dir $@)
+	@echo "  DIST-GCC     resolving nix cross-gcc-rt-$*-$(_TC_ARCH)..."
 	@set -e; \
-	gcclib=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-final-$(_TC_ARCH)^lib  --no-link --print-out-paths); \
-	gccinfo=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-final-$(_TC_ARCH)^info --no-link --print-out-paths); \
-	gccman=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-final-$(_TC_ARCH)^man  --no-link --print-out-paths); \
-	stamp="$$gcclib $$gccinfo $$gccman"; \
-	if $(call _stamp_skip,$(DIST_LIBGCC_STAMP),$$stamp,$(DIST)/lib/libgcc_s.so.1); then \
+	out=$$($(NIX_BUILD) $(PROJ)\#cross-gcc-rt-$*-$(_TC_ARCH) --no-link --print-out-paths); \
+	if $(call _stamp_skip,$@,$$out,$(DIST)/lib/$(_RT_SO.$*)); then \
 	  echo "  unchanged - skip copy"; \
 	else \
-	  rtdir=$$(dirname $$(find $$gcclib -name libgcc_s.so.1 | head -1)); \
-	  echo "  copying whole gcc runtime ($$(ls $$rtdir | grep -c '\.so') libs) -> $(DIST)/lib"; \
-	  cp -a $$rtdir/. $(DIST)/lib/; \
-	  echo "  copying gcc man -> $(DIST)/share/man"; \
-	  cp -a $$gccman/share/man/. $(DIST)/share/man/; \
-	  echo "  installing gcc info -> $(DIST)/share/info"; \
-	  cp -L $$gccinfo/share/info/*.info* $(DIST)/share/info/; \
-	  $(call _make_writable,$(DIST)/share/info); \
-	  for inf in $$gccinfo/share/info/*.info; do \
-	    install-info --quiet --info-dir=$(DIST)/share/info "$(DIST)/share/info/$$(basename $$inf)" || true; \
-	  done; \
-	  printf '%s' "$$stamp" > $(DIST_LIBGCC_STAMP); \
+	  cp -a $$out/lib/*.so* $(DIST)/lib/; \
+	  $(call _make_writable,$(DIST)/lib); \
+	  echo "  copied $$(ls $$out/lib | grep -c '\.so') .so entries -> $(DIST)/lib"; \
+	  if [ -d $$out/share/info ]; then \
+	    mkdir -p $(DIST)/share/info; \
+	    cp -L $$out/share/info/*.info* $(DIST)/share/info/ 2>/dev/null || true; \
+	    $(call _make_writable,$(DIST)/share/info); \
+	    for inf in $$out/share/info/*.info; do \
+	      install-info --quiet --info-dir=$(DIST)/share/info \
+	        "$(DIST)/share/info/$$(basename $$inf)" || true; \
+	    done; \
+	  fi; \
+	  printf '%s' "$$out" > $@; \
 	fi
-	@$(call _dist_done,$(DIST_LIBGCC_STAMP))
-	@$(call _assert_file,$(DIST)/lib/libgcc_s.so.1,libgcc_s.so.1)
-	@$(call _assert_file,$(DIST)/lib/libstdc++.so.6,libstdc++.so.6)
-	@$(call _assert_file,$(DIST)/lib/libatomic.so.1,libatomic.so.1)
+	@$(call _dist_done,$@)
+	@$(call _assert_file,$(DIST)/lib/$(_RT_SO.$*),$(_RT_SO.$*))
 	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
 
 # ---- dist-tzdata ----

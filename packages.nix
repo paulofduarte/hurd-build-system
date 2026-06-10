@@ -162,14 +162,15 @@ in
           working  = bareGlibcHurd."glibc-hurd-${name}";
           libName  = "libgcc";
         }) hurdTargets;
-      # name -> configure flags for the remaining runtime libs.
+      # name -> configure flags for the remaining runtime libs.  (libstdc++ maps to
+      # gcc's historical libstdc++-v3 source dir inside mkRuntimeLib.)
       otherRuntimeSpecs = {
-        "libstdc++-v3" = "--enable-shared";
-        "libatomic"    = "--enable-shared";
-        "libitm"       = "--enable-shared";
-        "libquadmath"  = "--enable-shared";
-        "libssp"       = "--enable-shared";
-        "libgomp"      = "--enable-shared --disable-werror";
+        "libstdc++"   = "--enable-shared";
+        "libatomic"   = "--enable-shared";
+        "libitm"      = "--enable-shared";
+        "libquadmath" = "--enable-shared";
+        "libssp"      = "--enable-shared";
+        "libgomp"     = "--enable-shared --disable-werror";
       };
       mkOtherRuntimeLib = name: target: libName: flags:
         mkRuntimeLib system target {
