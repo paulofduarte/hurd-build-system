@@ -88,4 +88,10 @@ rec {
   # paths under one root).  Consumed by gnumach/hurd default.nix + the Makefile.
   gnumachCanonBuild = "/gnumach-build";
   hurdCanonBuild    = "/hurd-build";
+
+  # cross-gcc-runtime: one canon root pair so its target libs come out cross-host
+  # reproducible (the gcc build dir + source are host-varying sandbox/store paths).
+  gccRuntimeCanonSrc     = "/gcc-runtime-src";
+  gccRuntimeCanonBuild   = "/gcc-runtime-build";
+  gccRuntimeCanonSysroot = "/gcc-runtime-sysroot";
 }

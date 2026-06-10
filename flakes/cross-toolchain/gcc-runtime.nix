@@ -27,14 +27,23 @@ in
 
 {
   mkCompiler = system: target:
-    (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc.cc.override {
-      langCC = true;
-    };
+    let bp = (mkCrossPkgs system target).buildPackages;
+    in (bp.gccWithoutTargetLibc.cc.override { langCC = true; }).overrideAttrs (old: {
+      # --with-ld: pin the GNU cross ld so libtool's C++ --whole-archive probe
+      # (`$CC -print-prog-name=ld --help`) resolves the same on every host.  Without
+      # it the probe falls back to the BUILD host's native ld - darwin cctools sorts
+      # objects alphabetically, linux GNU ld keeps archive order - giving libstdc++.so
+      # a host-varying .text/.cold layout.  The final gcc (mkGcc) carries the same flag.
+      configureFlags = (old.configureFlags or [ ]) ++ [
+        "--with-ld=${bp.gccWithoutTargetLibc.bintools}/bin/${target.crossTarget}-ld"
+      ];
+    });
 
   mkRuntime = system: target: { compiler, working }:
     let
       bp      = (mkCrossPkgs system target).buildPackages;
       tgt     = target.crossTarget;
+      salt    = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tgt;
       # The prebuilt nolibc compiler wrapped around the working glibc: knows its
       # headers and links the bare-name libc.so GROUP (the same wrapper the in-tree
       # userland uses).  GCC_FOR_TARGET, so the libs compile with the prebuilt cc1.
@@ -63,6 +72,16 @@ in
 
         mkdir -p ../b && cd ../b
         bdir=$PWD
+
+        # Determinism: pin the host-varying inputs the reproducible-builds hook would
+        # otherwise bake into the target libs - the cross-toolchain store paths (DWARF),
+        # the build/src dirs, and -frandom-seed - so they come out cross-host identical.
+        export NIX_CFLAGS_COMPILE${salt}="${buildFlags.debugPrefixMapStr wrapped} -ffile-prefix-map=$bdir=${buildFlags.gccRuntimeCanonBuild} -ffile-prefix-map=$gccdir=${buildFlags.gccRuntimeCanonSrc} -ffile-prefix-map=${working}=${buildFlags.gccRuntimeCanonSysroot} -frandom-seed=${buildFlags.randomSeed} ''${NIX_CFLAGS_COMPILE${salt}:-}"
+
+        # --with-ld routes the link through gccWithoutTargetLibc's ld, which (unlike the
+        # wrapped one) would bake a -rpath to the host-varying ${working}/lib.  Suppress
+        # it the same way mkGcc does, so the libs carry no DT_RUNPATH (Debian Hurd parity).
+        export NIX_DONT_SET_RPATH${salt}=1
 
         # DRY: configure + build + install one target-lib subdir, compiled with the
         # prebuilt cc1 (CC/CXX) against the working glibc.  Extra args ($@) are passed
