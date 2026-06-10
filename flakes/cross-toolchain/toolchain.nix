@@ -183,7 +183,7 @@ let
         libc     = working;
         # No --sysroot.  How the deployable glibc's libc.so GROUP ld-script resolves
         # at link depends on which `working` we wrap:
-        #  - The gated re-export farm (abi-check.nix mkAbiChecked) the userland
+        #  - The bare-name re-export farm (bareGlibcHurd in packages.nix) the userland
         #    toolchain links against rewrites the GROUP to BARE NAMES (libc.so.0.3,
         #    libmachuser.so, ...).  ld resolves them via the -L"${working}/lib" the
         #    wrapper already adds - no --sysroot, never doubled, host-uniform.

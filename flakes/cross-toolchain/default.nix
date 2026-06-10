@@ -17,8 +17,6 @@
 #   gcc-runtime.nix - `mkCompiler` (the nolibc cross-gcc) + `mkRuntime` (the target
 #                     runtime libs built from it, without rebuilding cc1).
 #   glibc.nix       - `glibc-hurd-<arch>` (imported directly by packages.nix).
-#   abi-check.nix   - `mkAbiChecked` (in-build ABI gate) + `mkAbiReport`
-#                     (`make check-glibc[-full]` back-end).
 #   hurd-config.nix - the configure flag set shared by the nix Hurd build
 #                     (flakes/hurd) and the dev shell.
 #   dev-shell.nix   - `mkDevShell`: the single per-(host, target)
@@ -33,9 +31,8 @@ let
 
   toolchain  = import ./toolchain.nix  { inherit nixpkgs mkCrossPkgs; };
   gccRuntime = import ./gcc-runtime.nix { inherit nixpkgs mkCrossPkgs; inherit (toolchain) wrappedToolchain; };
-  abiCheck   = import ./abi-check.nix  { inherit nixpkgs mkCrossPkgs; };
   devShell   = import ./dev-shell.nix  { inherit nixpkgs mkCrossPkgs; };
   target     = import ./target.nix     { inherit nixpkgs; };
 in
 
-pkgs // toolchain // gccRuntime // abiCheck // devShell // target
+pkgs // toolchain // gccRuntime // devShell // target

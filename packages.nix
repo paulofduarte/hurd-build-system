@@ -16,7 +16,7 @@
 
 let
   inherit (nixpkgs) lib;
-  inherit (crossToolchain) mkCrossPkgs mkAll mkGcc mkCompiler mkRuntime wrappedToolchain mkAbiChecked mkAbiReport mkAbiReportHost;
+  inherit (crossToolchain) mkCrossPkgs mkAll mkGcc mkCompiler mkRuntime wrappedToolchain;
   # Fork-id metadata (owner/repo/ref) from the `*-src` inputs via flake.lock;
   # feeds the version string's fork field.  See flakes/sources.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -125,28 +125,25 @@ in
         };
       };
 
-      # The ABI gate dispatches its Linux-only analysers (abidiff/pahole) into
-      # the Debian sidekick VM, so it runs on every host (no darwin skip, no
-      # nixpkgs libabigail/pahole dep).  See SIDEKICK-DISPATCHER.md.
-      sidekickArgs = {
-        sidekick    = sidekick.sidekick;
-        dispatchLib = ./flakes/sidekick/sidekick-dispatch.sh;
-        sendScript  = ./flakes/sidekick/sidekick-send.sh;
-      };
-
-      # The ABI-gated working glibc - what the wrapped cc + userland bind.  Per
-      # target: if working and reference resolve to the same store path the gate
-      # is a no-op (pass the working glibc through); once they diverge the gate
-      # runs the FULL probe suite (via sidekick) and re-exports on pass.  gcc
-      # binds the reference glibc (ungated), so the gate never rebuilds gcc.
-      gatedGlibcHurd = lib.mapAttrs' (name: target:
-        let
-          w = glibcHurd."glibc-hurd-${name}";
-          r = glibcRefHurd."glibc-hurd-${name}";
-        in lib.nameValuePair "glibc-hurd-${name}"
-          (if w.drvPath == r.drvPath
-           then w
-           else mkAbiChecked system target ({ working = w; reference = r; glibcSrc = glibc-src; } // sidekickArgs)))
+      # The bare-name working glibc the wrapped cc + userland LINK against.  NO ABI gate:
+      # the wrapper flip (user code + the runtime compile against THIS working glibc) makes
+      # the ref-vs-work ABI consistent by construction, so there is nothing to gate.  We
+      # only rewrite the deployable libc.so GROUP to BARE NAMES (libc.so.0.3, libmachuser.so,
+      # ...) so the cross link resolves them via the wrapper's -L (this ld has no --sysroot
+      # for the absolute /lib GROUP).  The SHIPPED glibc (glibc-hurd-<arch> = glibcHurd)
+      # keeps its absolute /lib GROUP; this bare farm is the cross-LINK sysroot only.
+      bareGlibcHurd = lib.mapAttrs' (name: target:
+        lib.nameValuePair "glibc-hurd-${name}"
+          (nixpkgs.legacyPackages.${system}.runCommand "glibc-hurd-${name}-bare" { } ''
+            mkdir -p "$out"
+            cp -as "${glibcHurd."glibc-hurd-${name}"}"/. "$out"/
+            chmod u+w "$out/lib"
+            for so in "$out"/lib/*.so; do
+              [ -L "$so" ] && grep -q '^GROUP' "$so" 2>/dev/null || continue
+              tgt="$(readlink -f "$so")"; rm -f "$so"
+              sed 's@ /lib/@ @g' "$tgt" > "$so"; chmod u+w "$so"
+            done
+          ''))
         hurdTargets;
 
       # The single nolibc C++ compiler - the one `cross-gcc-<arch>` going forward.
@@ -162,7 +159,7 @@ in
           compiler = newCompilerByName.${name};
           # The gated glibc's libc.so GROUP is bare-named (resolves via -L); the raw
           # one's is absolute /lib/... and this ld has no --sysroot support.
-          working  = gatedGlibcHurd."glibc-hurd-${name}";
+          working  = bareGlibcHurd."glibc-hurd-${name}";
         }) hurdTargets;
 
       # `cross-gcc-<arch>` = the nolibc C++ compiler; `cross-gcc-runtime-<arch>` =
@@ -176,7 +173,7 @@ in
         { name = "cross-gcc-final-${name}";   value = finalGccByName.${name}; }
         { name = "toolchain-${name}"; value = wrappedToolchain system target {
             cc      = finalGccByName.${name};
-            working = gatedGlibcHurd."glibc-hurd-${name}";
+            working = bareGlibcHurd."glibc-hurd-${name}";
           }; }
       ]) hurdTargets));
 
@@ -208,25 +205,6 @@ in
           migChecked."mig-checked-${toolchainNameByCrossTarget.${target.crossTarget}}")
         targets);
 
-      # `make check-glibc` / `check-glibc-full` back-ends: the explicit report
-      # (`deep` = Tier-1/2 + headers; `full` adds the heavy probes).  Dispatches
-      # abidiff/pahole via the sidekick like the in-build gate, so it runs on
-      # every host.  Compares the RAW working glibc against the reference.
-      abiReportPkgs = lib.listToAttrs (lib.concatLists (lib.mapAttrsToList (name: target:
-        let
-          w = glibcHurd."glibc-hurd-${name}";
-          r = glibcRefHurd."glibc-hurd-${name}";
-          mk = level: mkAbiReport system target ({ working = w; reference = r; inherit level; glibcSrc = glibc-src; } // sidekickArgs);
-        in [
-          { name = "abi-check-${name}";      value = mk "deep"; }
-          { name = "abi-check-full-${name}"; value = mk "full"; }
-          # Host-side runner for the in-tree glibc: takes the in-tree sysroot as
-          # a runtime arg, compares it against the frozen reference `r` via the
-          # sidekick.
-          { name = "abi-report-host-${name}";
-            value = mkAbiReportHost system target ({ reference = r; } // sidekickArgs); }
-        ]) hurdTargets));
-
       # GNU Mach kernel - built with the wrapped cross-cc (freestanding,
       # -nostdlib).  `toolchainFor` resolves each target onto its `toolchain-<arch>`.
       gnumach = import ./flakes/gnumach {
@@ -241,7 +219,7 @@ in
       hurd = import ./flakes/hurd {
         inherit nixpkgs system targets self;
         mig = checkedMigFor;   # downstream of glibc -> the validated mig
-        glibcHurd = gatedGlibcHurd;
+        glibcHurd = bareGlibcHurd;
         hurdToolchain = hurdFinalPkgs;
         srcInput = hurd-src;
         forkUrl = hurdInfo.forkUrl;
@@ -258,7 +236,6 @@ in
     // glibcRefHurdPkgs
     // hurdFinalPkgs
     // migChecked
-    // abiReportPkgs
     # Timezone database for the dist (dist-tzdata copies its share/zoneinfo).
     # arch-independent zic-compiled data, byte-identical cross-host; one package
     # serves every target.

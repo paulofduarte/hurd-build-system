@@ -27,16 +27,11 @@ ARCH="${ARCH:-amd64}"
 # INSIDE the VM (Linux-kernel ops + Linux-only tools), so their tools must
 # be present here regardless of nix-on-darwin availability:
 #   busybox                  agent basics (sh/mount/insmod/awk/...)
-#   abigail-tools, pahole    the ABI gate's Tier-2 + pahole analysers
 #   grub-pc-bin, grub-common grub-mkrescue (mkiso op)
 #   xorriso, mtools          grub-mkrescue's ISO + EFI-FAT helpers (in-VM)
 #   e2fsprogs                ext fsck/tools for the overlay-kernel op
-# Their transitive Depends pull in libc6/libstdc++6/libxml2/libdw1/... .
-# NOT bundled: abi-compliance-checker (probe 23) - it's a perl-based
-# confirmatory cross-check that would ~2x the image; abidiff is the
-# authority for type/struct ABI, so probe 23 stays an opt-in skip (add
-# abi-compliance-checker + abi-dumper here to enable it).
-TOPLEVEL="${TOPLEVEL:-busybox abigail-tools pahole grub-pc-bin grub-common xorriso mtools e2fsprogs}"
+# Their transitive Depends pull in libc6/libstdc++6/... .
+TOPLEVEL="${TOPLEVEL:-busybox grub-pc-bin grub-common xorriso mtools e2fsprogs}"
 
 BASE="https://snapshot.debian.org/archive/debian/${SNAPSHOT}"
 IDX="${BASE}/dists/${SUITE}/main/binary-${ARCH}/Packages.xz"

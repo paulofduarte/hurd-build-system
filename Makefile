@@ -466,9 +466,6 @@ help:
 	@echo "  lint-reuse       REUSE license-compliance check (SPDX headers + LICENSES/ + REUSE.toml)"
 	@echo "  pin-src          bump the pinned source revs to their forks' branch HEADs (verbose)"
 	@echo "  pin-src-<name>   same, for ONE source only (e.g. 'make pin-src-mig')"
-	@echo "  check-glibc      deep ABI check: in-tree glibc vs the nix reference"
-	@echo "                   (opt-in 'make src-glibc'; sidekick, all hosts)"
-	@echo "  check-glibc-full + heavy ABI probes (pahole/conform/acc; opt-in; sidekick, all hosts)"
 	@echo "  rebaseline-ref   re-resolve the frozen reference-source pins"
 	@echo "                   (new gcc ABI baseline; ~25min)"
 	@echo "  clean            per-subdir 'make clean' - preserves configure state"
@@ -688,31 +685,6 @@ dist-hurd-tree:
 	@echo "$@: opt-in - run 'make src-hurd' for the in-tree userland (dist-hurd ships the nix hurd)."
 endif
 
-# ---- ABI gate deep checks for the IN-TREE glibc (opt-in; arch-specific) ----
-# The AUTOMATIC gate (Tier-1 + cheap/Hurd Tier-3 probes) already runs inside every
-# nix build whose working glibc diverges from the reference.  These targets are the
-# EXPLICIT deep/full reports for the in-tree glibc hacker (opt-in like glibc/mig):
-#   check-glibc       deep - + Tier-2 abidiff (struct/signature drift) + header
-#                     self-include (probe 21).
-#   check-glibc-full  full - + heavy Tier-3: pahole, conform, acc (probes 20,22-24).
-# Install the in-tree glibc (work-glibc) and compare against the frozen nix reference,
-# host-side, via the sidekick VM - the Linux-only analysers (abidiff/pahole) ship into
-# the Debian VM, so these run on EVERY host, darwin included.  Filtered out of
-# _BUILD_GOALS: they run host-side; work-glibc does the dispatched build+install.
-.PHONY: check-glibc check-glibc-full
-ifndef GLIBC_IN_TREE
-check-glibc check-glibc-full:
-	@echo "$@: opt-in - run 'make src-glibc' to build glibc in-tree; then this compares it"
-	@echo "  against the frozen nix reference (sidekick-backed abidiff/pahole, all hosts)."
-else
-check-glibc:
-	+$(MAKE) --no-print-directory work-glibc ARCH=$(ARCH)
-	$(NIX_FLAKE) run $(PROJ)\#abi-report-host-$(_TC_ARCH) -- $(SYSROOT) deep
-check-glibc-full:
-	+$(MAKE) --no-print-directory work-glibc ARCH=$(ARCH)
-	$(NIX_FLAKE) run $(PROJ)\#abi-report-host-$(_TC_ARCH) -- $(SYSROOT) full
-endif
-
 # ---- rebaseline-ref (always-on, arch-independent) ----
 # The deliberate "the working ABI changed on purpose - accept it" action.
 # Re-resolves the frozen reference pins (*-ref-src) to their current rev, so gcc
@@ -773,7 +745,7 @@ endif
 # build); pulled in as a `run` prereq it still runs inside.  `mig` is a build goal
 # ONLY when src/mig opts in; otherwise filtered out (top-level no-op recipe, no
 # dispatch) - like src/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) check-glibc check-glibc-full rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) rebaseline-ref,$(_GOALS))
 
 # Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
 #   _MARK.<goal>   the completion marker - its stamp/output.  Existence is the

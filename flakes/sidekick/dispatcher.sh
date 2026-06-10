@@ -9,8 +9,8 @@
 #   oneshot  run /shared/run.sh once (host staged it + any -drive), capture
 #            rc to /shared/run.rc, power off.  Used by overlay-kernel/mkiso.
 #   serve    warm command loop: execute queued requests from /shared/q and
-#            self-power-off after `keepalive` seconds of inactivity.  Used by
-#            the ABI tools (abidiff/pahole) - one boot, many fast dispatches.
+#            self-power-off after `keepalive` seconds of inactivity - one boot,
+#            many fast dispatches (e.g. the planned locale-gen op).
 bb() { /bin/busybox "$@"; }
 
 # Install busybox applet symlinks (uname, head, awk, mount, insmod, ...) into
@@ -29,9 +29,9 @@ bb mount -t 9p -o trans=virtio,version=9p2000.L shared /shared 2>/dev/null \
   || { echo "FATAL: 9p mount failed" >&2; bb poweroff -f; }
 
 # Optional read-only /nix/store mount (mount_tag=nixstore) so tool
-# arguments that are store paths resolve verbatim in the VM - the host
-# shim ships `abidiff /nix/store/.../libc.so.0.3 ...` unchanged.  Absent for
-# ops that don't need it (overlay-kernel/mkiso stage their inputs in /shared).
+# arguments that are store paths resolve verbatim in the VM - a host shim can
+# ship `<tool> /nix/store/... ...` unchanged.  Absent for ops that don't need it
+# (overlay-kernel/mkiso stage their inputs in /shared).
 if bb grep -q nixstore /proc/mounts 2>/dev/null; then :; else
   bb mkdir -p /nix/store 2>/dev/null
   bb mount -t 9p -o trans=virtio,version=9p2000.L,ro nixstore /nix/store 2>/dev/null || true
