@@ -21,15 +21,16 @@ let
   inherit (import ./info.nix { inherit lib flakeLib; }) info;
 
   # `*-src` inputs that are NOT in-tree source projects: never cloned into src/
-  # by `make src`, never `--override-input`-ed by `make`.  Today just the
-  # `*-ref-src` reference twins (frozen tags the reference glibc - and hence
-  # gcc's libgcc_s/libstdc++ - bind; see TOOLCHAIN-LIBC-DECOUPLING.md).  They must
-  # stay un-overridable: --override-input is eval-global, so an in-tree clone
-  # would drag the reference glibc, and thus gcc, into every rebuild.  Bump them
-  # together via `make rebaseline-ref`.  glibc-src itself is NOT here - the
-  # working glibc is hackable in-tree like gnumach/mig/hurd.
+  # by `make src`, never `--override-input`-ed by `make`.  The `*-ref-src`
+  # reference twins (frozen tags the reference glibc - and hence cross-gcc -
+  # binds; see TOOLCHAIN-LIBC-DECOUPLING.md) must stay un-overridable:
+  # --override-input is eval-global, so an in-tree clone would drag the
+  # reference glibc, and thus gcc, into every rebuild.  Bump them together via
+  # `make rebaseline-ref`.  glibc-src is here too: the working glibc is
+  # nix-only (the gcc model) - version picking = edit the input in flake.nix;
+  # patches live in flakes/cross-toolchain/glibc.nix.
   toolchainOnly = [
-    "gnumach-ref-src" "mig-ref-src" "hurd-ref-src" "glibc-ref-src"
+    "gnumach-ref-src" "mig-ref-src" "hurd-ref-src" "glibc-ref-src" "glibc-src"
   ];
 in
 

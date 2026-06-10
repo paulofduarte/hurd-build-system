@@ -28,21 +28,17 @@
 let
   lib = nixpkgs.lib;
   hurdConfig = import ./hurd-config.nix;
-  glibcConfig = import ./glibc-config.nix;
   toolchainPaths = import ./toolchain-paths.nix { inherit nixpkgs mkCrossPkgs; };
   buildFlags = import ./build-flags.nix { inherit lib; };
 in
 
 {
-  # mkDevShell : system -> name -> target -> { toolchain, glibcCC, gnumach, mig,
-  #              headers } -> shell.  `toolchain` is the wrapped cc (toolchain-<arch>,
-  #              or the CPU sibling's for a xen variant); `glibcCC` is the COMPLETE
-  #              final gcc wrapped against the REFERENCE glibc (the cc the nix working
-  #              glibc is built with) - what the opt-in `make glibc` uses, so in-tree
-  #              and nix work-glibc are built by the same compiler.  gnumach/mig/
-  #              headers are this target's derivations, for build-tool inference (and
-  #              subtraction).
-  mkDevShell = system: name: target: { toolchain, glibcCC, gnumach, mig, headers }:
+  # mkDevShell : system -> name -> target -> { toolchain, gnumach, mig, headers }
+  #              -> shell.  `toolchain` is the wrapped cc (toolchain-<arch>, or the
+  #              CPU sibling's for a xen variant).  gnumach/mig/headers are this
+  #              target's derivations, for build-tool inference (and subtraction).
+  #              glibc is nix-only - no in-tree glibc build env.
+  mkDevShell = system: name: target: { toolchain, gnumach, mig, headers }:
     let
       pkgs      = nixpkgs.legacyPackages.${system};
       crossPkgs = mkCrossPkgs system target;
@@ -66,15 +62,10 @@ in
       salt  = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
       hurdDeployFlags = lib.concatStringsSep " " hurdConfig.deployFlags;
-      deployFlags = lib.concatStringsSep " " glibcConfig.deployFlags;
-      glibcCoreFlags = lib.concatStringsSep " " glibcConfig.coreFlags;
-      # DWARF store-path maps for every cc the in-tree build invokes: the
-      # working-wrapped `toolchain` (mach + hurd) and the ref-wrapped `glibcCC`
-      # (opt-in `make glibc`).  `toolchain.cc == glibcCC.cc` (both wrap the same
-      # final gcc), so lib.unique drops the duplicate gcc map.  Shared with the nix
-      # builds via build-flags.nix.
-      detPrefixMap = lib.concatStringsSep " "
-        (lib.unique (buildFlags.debugPrefixMap toolchain ++ buildFlags.debugPrefixMap glibcCC));
+      # DWARF store-path maps for the cc the in-tree builds invoke: the
+      # working-wrapped `toolchain` (mach + hurd).  Shared with the nix builds via
+      # build-flags.nix.
+      detPrefixMap = lib.concatStringsSep " " (buildFlags.debugPrefixMap toolchain);
 
       # Build-tool deps inferred from this target's own derivations.  Subtract the
       # own packages AND the libc-free stage-1 cc: mig is subtracted so a mig pulled
@@ -150,17 +141,7 @@ in
         export MIG=${mig}/bin/${tp}mig
         export USER_MIG=${mig}/bin/${tp}mig
 
-        # Build env for the opt-in raw in-tree `make glibc` (mirrors glibc.nix).
-        # GLIBC_CC is the COMPLETE final gcc wrapped against the REFERENCE glibc
-        # - the SAME cc the nix working glibc is built with, so in-tree-work and
-        # nix-work glibc are byte-comparable.  NOT the nolibc stage-1 cc (it's a
-        # bootstrap-only seed) and NOT the wrapped `toolchain` cc above (which
-        # embeds the WORKING glibc -> circular).  The ref wrapper supplies
-        # crt/libc + mechanism-#2 --sysroot for glibc's configure link-tests.
-        # The extra binutils tools (as/objdump/readelf) + native BUILD_CC + the
-        # build triple + binutils bin dir are what glibc's configure consumes.
-        export GLIBC_CC=${glibcCC}/bin/${tp}gcc
-        export GLIBC_CXX=${glibcCC}/bin/${tp}g++
+        # Extra binutils tools the in-tree configures consume.
         export AS=${binu}/bin/${tp}as
         export OBJDUMP=${binu}/bin/${tp}objdump
         export READELF=${binu}/bin/${tp}readelf
@@ -197,14 +178,7 @@ in
         export NIX_CFLAGS_COMPILE="$(printf '%s' "''${NIX_CFLAGS_COMPILE:-}" \
           | sed -E '${buildFlags.isystemStripSed}') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
 
-        # Canonical glibc roots (build-flags.nix) for the in-tree glibc build to
-        # -ffile-prefix-map its $(GLIBC_SRC)/$(GLIBC_BUILDDIR)/$(SYSROOT) to - the
-        # SAME names glibc.nix maps the nix build's roots to, so the in-tree and nix
-        # glibc come out byte-identical.  Passed via env so the Makefile stays DRY.
-        export GLIBC_CANON_SRC=${buildFlags.glibcCanonSrc}
-        export GLIBC_CANON_BUILD=${buildFlags.glibcCanonBuild}
-        export GLIBC_CANON_SYSROOT=${buildFlags.glibcCanonSysroot}
-        # Same for the in-tree gnumach + hurd builds (see build-flags.nix) - the
+        # Canonical roots for the in-tree gnumach + hurd builds (see build-flags.nix) - the
         # SAME single canonical gnumach/default.nix + hurd/default.nix map their
         # nix build's $PWD to, so in-tree == nix for those modules too.
         export GNUMACH_CANON_BUILD=${buildFlags.gnumachCanonBuild}
@@ -242,10 +216,6 @@ in
         export HURD_CONFIGURE_FLAGS="--host=${target.crossTarget} ${coreFlags}"
         # Root-relative install dirs the nix Hurd uses (hurd-config.deployFlags).
         export HURD_DEPLOY_FLAGS="${hurdDeployFlags}"
-        # Deployable-prefix dirs + libc_cv_* the nix glibc uses (glibc-config.nix),
-        # so the in-tree glibc configure stays in lockstep (single source).
-        export GLIBC_DEPLOY_FLAGS="${deployFlags}"
-        export GLIBC_CORE_FLAGS="${glibcCoreFlags}"
       '';
     };
 }

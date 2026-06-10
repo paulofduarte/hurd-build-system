@@ -125,7 +125,7 @@ DIST_GLIBC    ?= $(DIST)
 # Store-path stamps under work/ (NOT the shippable dist tree), per-variant-per-ARCH
 # so targets/variants don't clobber one stamp; an unchanged store path skips the
 # verbatim copy.  Keyed on $(ARCH) so i686 and i686-xen track copies independently.
-DIST_GLIBC_NIX_STAMP := $(WORK)/dist-glibc-nix/$(_VARIANT)$(ARCH).stamp
+DIST_GLIBC_STAMP       := $(WORK)/dist-glibc/$(_VARIANT)$(ARCH).stamp
 DIST_GNUMACH_NIX_STAMP := $(WORK)/dist-gnumach-nix/$(_VARIANT)$(ARCH).stamp
 DIST_HURD_NIX_STAMP    := $(WORK)/dist-hurd-nix/$(_VARIANT)$(ARCH).stamp
 # The split gcc runtime libs (one nix derivation + one dist-gcc-<lib> target each).
@@ -148,7 +148,6 @@ DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(_VARIANT)$(ARCH).stamp
 # epoch by _dist_finalize, so it can't be the staleness baseline (always older than
 # src mtime -> permanently stale).  Each dist-*-tree touches its stamp on completion,
 # giving the gate a real "last installed" time.
-DIST_GLIBC_TREE_STAMP   := $(WORK)/dist-glibc-tree/$(_VARIANT)$(ARCH).stamp
 DIST_GNUMACH_TREE_STAMP := $(WORK)/dist-gnumach-tree/$(_VARIANT)$(ARCH).stamp
 DIST_HURD_TREE_STAMP    := $(WORK)/dist-hurd-tree/$(_VARIANT)$(ARCH).stamp
 
@@ -277,49 +276,23 @@ HURD_HDR_STAMP := $(HURD_HDR_BUILD)/.headers-installed
 
 # Working glibc clone (populated by `make src`, hackable like the kernel
 # sources - see TOOLCHAIN-LIBC-DECOUPLING.md).
-GLIBC_SRC        := $(SRC)/glibc
-# OVERRIDABLE (?=): glibc emits objects differing only in case (pthread_atfork.os
-# vs .oS), which COLLIDE on a case-insensitive filesystem (macOS default), silently
-# corrupting libc_nonshared.a ("undefined reference to pthread_atfork" at the librt
-# link).  On a case-insensitive host, point this at a case-sensitive volume:
-#   make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(_TC_ARCH)
-GLIBC_BUILD      ?= $(WORK)/glibc/$(_VARIANT)$(_TC_ARCH)
-# glibc refuses an in-src build, so build out-of-tree under build/.  NOTE: no
-# trailing inline comment on these := lines - make keeps the whitespace before a
-# `#`, and an embedded space would split $(GLIBC_CONFIGURED) into two targets.
-GLIBC_BUILDDIR   := $(GLIBC_BUILD)/build
-GLIBC_CONFIGURED := $(GLIBC_BUILDDIR)/config.status
-# Canonical glibc/gnumach/hurd path roots for -ffile-prefix-map in the in-tree
-# builds, so they bake the SAME DWARF paths as the nix builds - byte-identical.
-# Each maps BOTH src and build dir (and glibc its sysroot) to a single name, so the
-# variant infix + cross-host work-path variation don't leak into DWARF.  SINGLE
-# SOURCE OF TRUTH: build-flags.nix, exported by the dev-shell as env vars.  No `?=`
-# fallback ON PURPOSE - a stray make outside the dev shell must FAIL via
-# $(call _req_env,...), not silently compile with an empty map and diverge.  Values:
-# GLIBC_CANON_{SRC,BUILD,SYSROOT}, GNUMACH_CANON_BUILD, HURD_CANON_BUILD,
-# BASE_CFLAGS, HURD_EXTRA_CFLAGS.
+# Canonical gnumach/hurd path roots for -ffile-prefix-map in the in-tree builds,
+# so they bake the SAME DWARF paths as the nix builds - byte-identical.  Each maps
+# BOTH src and build dir to a single name, so the variant infix + cross-host
+# work-path variation don't leak into DWARF.  SINGLE SOURCE OF TRUTH:
+# build-flags.nix, exported by the dev-shell as env vars.  No `?=` fallback ON
+# PURPOSE - a stray make outside the dev shell must FAIL via $(call _req_env,...),
+# not silently compile with an empty map and diverge.  Values:
+# GNUMACH_CANON_BUILD, HURD_CANON_BUILD, BASE_CFLAGS, HURD_EXTRA_CFLAGS.
 # $(call _req_env,VAR...): recipe guard - fail if any VAR is unset (a stray make
 # outside the dev shell would compile with empty maps/flags and silently diverge).
 _req_env = $(foreach v,$(1),[ -n "$($(v))" ] || { echo "ERROR: $(v) unset - build via the dev shell (make dispatches into nix develop)"; exit 1; }; )
 
-# `make glibc` only COMPILES glibc - this stamp is its sentinel.  Installs are
-# DESTDIR-staged (configured --prefix=/, so libc.so is root-relative - a
-# relocatable sysroot consumed via --sysroot):
-#   work-glibc  -> $(SYSROOT): the private BUILD sysroot the in-tree hurd links
-#                 against, beside the mach+hurd headers.
-#   dist-glibc  -> $(DIST_GLIBC): the shippable copy.
-GLIBC_BUILT      := $(GLIBC_BUILDDIR)/.glibc-built
-
-# glibc is opt-in in-tree, like mig.  The toolchain (wrapped cc) always carries a
-# glibc sysroot, so glibc is available with no `make glibc`.  `make src-glibc` flips
-# GLIBC_IN_TREE on: `make glibc` becomes a real raw build (mirroring glibc.nix) and
-# the in-tree hurd links against it; without it `make glibc`/`dist-glibc` are no-ops.
-# Built verbatim - src/glibc must carry any patches it needs (e.g. the rtld
-# cross-from-darwin fix).  Force OFF even with src/glibc present (A/B in-tree vs nix):
-# GLIBC_IN_TREE=0.  The resolved value is forwarded across the dispatch so the inner
-# make honours it instead of re-detecting src/glibc.  Pair with ALT_BUILD to keep
-# both variants' trees side by side.
-$(eval $(call _detect_in_tree,GLIBC_IN_TREE,$(GLIBC_SRC)))
+# glibc is nix-only (the gcc model): the pinned `glibc-src` flake input + patches in
+# flakes/cross-toolchain/glibc.nix.  Version picking = edit the input in flake.nix.
+# No in-tree build; the toolchain (wrapped cc) always carries the nix glibc sysroot.
+# In-tree gnumach/hurd/mig changes still reach it: their scoped --override-input set
+# rebuilds the nix glibc (RPC changes ripple into libmachuser/libhurduser).
 
 # In-tree working-source overrides - SCOPED per nix target + per *_IN_TREE.
 # `--override-input <m>-src src/<m>` repoints a nix input at the local clone (nix
@@ -334,8 +307,8 @@ $(eval $(call _detect_in_tree,GLIBC_IN_TREE,$(GLIBC_SRC)))
 # drags in gnumach); hurd links glibc-hurd + uses mig + mach/hurd headers; glibc-hurd
 # farms gnumach+hurd headers + mig.
 _DG := gnumach mig                  # gnumach kernel
-_DH := hurd mig gnumach glibc       # hurd userland
-_DC := glibc gnumach hurd mig       # glibc-hurd (working)
+_DH := hurd mig gnumach             # hurd userland
+_DC := gnumach hurd mig             # the nix glibc (RPC headers + mig stubs)
 _DEPS.mig               := mig gnumach
 _DEPS.gnumach           := $(_DG)
 _DEPS.dist-gnumach      := $(_DG)
@@ -348,12 +321,9 @@ _DEPS.dist-hurd         := $(_DH)
 _DEPS.dist-hurd-tree    := $(_DH)
 _DEPS.dist-hurd-nix     := $(_DH)
 _DEPS.glibc             := $(_DC)
-_DEPS.work-glibc        := $(_DC)
 _DEPS.dist-glibc        := $(_DC)
-_DEPS.dist-glibc-tree   := $(_DC)
-_DEPS.dist-glibc-nix    := $(_DC)
-_DEPS.dist              := mig gnumach hurd glibc
-_DEPS.all               := mig gnumach hurd glibc
+_DEPS.dist              := mig gnumach hurd
+_DEPS.all               := mig gnumach hurd
 # The split gcc runtime libs sit on the WORKING glibc -> same transitive srcs.
 $(foreach l,$(_GCC_RT_LIBS),$(eval _DEPS.dist-gcc-$(l) := $(_DC)))
 
@@ -361,7 +331,6 @@ $(foreach l,$(_GCC_RT_LIBS),$(eval _DEPS.dist-gcc-$(l) := $(_DC)))
 _FLAG.mig     := MIG_IN_TREE
 _FLAG.gnumach := GNUMACH_IN_TREE
 _FLAG.hurd    := HURD_IN_TREE
-_FLAG.glibc   := GLIBC_IN_TREE
 # $(call _override1,MODULE): override <m>-src iff <M>_IN_TREE is truthy.  No
 # clone-existence test - a truthy flag with absent src/<m> is caught by _need_src below.
 _override1 = $(if $($(_FLAG.$(1))),--override-input $(1)-src $(SRC)/$(1))
@@ -372,7 +341,6 @@ _overrides = $(foreach d,$(_DEPS.$(1)),$(call _override1,$(d)))
 _SRCDIR.mig     := $(MIG_SRC)
 _SRCDIR.gnumach := $(GNUMACH_SRC)
 _SRCDIR.hurd    := $(HURD_SRC)
-_SRCDIR.glibc   := $(GLIBC_SRC)
 # $(call _intree_srcs,TARGET): the src dirs TARGET's overrides drag in (opted-in
 # modules only) - derived from the same _DEPS graph that scopes _overrides, so the
 # staleness watches can't drift from the override set.  Feeds _WATCH.<nix-half>.
@@ -389,7 +357,7 @@ _FORCE:
 # can't see an override flip (the stamp records the PINNED resolve; src/<m> may be
 # older than it), so with overrides active they are always gate-stale - the dispatch
 # runs, the recipe re-resolves, and the store-path compare does the real skip.
-_OVR_GOALS = dist-glibc-nix dist-gnumach-nix dist-hurd-nix $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
+_OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
 
 # Dirtiness cascade (in-tree only).  $(call _src_is_dirty,MODULE) -> "1" if src/<m>
 # has uncommitted TRACKED changes; $(call _chain_dirty,TARGET) -> non-empty if TARGET
@@ -485,10 +453,9 @@ help:
 	@echo "                   if opted in (make src-hurd), else the nix userland"
 	@echo "  mig              build MIG in-tree - opt-in for iterating on MIG (run 'make src-mig' first;"
 	@echo "                   otherwise a no-op, MIG is always available)"
-	@echo "  glibc            build glibc in-tree - opt-in for hacking glibc (run 'make src-glibc' first;"
-	@echo "                   else a no-op).  The in-tree userland then links against it."
-	@echo "  dist-glibc       install glibc into ./dist/$(ARCH)/ - the in-tree build if opted in"
-	@echo "                   (make src-glibc), else the nix deployable glibc"
+	@echo "  glibc            realize the nix glibc (nix-only; version = the glibc-src input"
+	@echo "                   in flake.nix, patches in flakes/cross-toolchain/glibc.nix)"
+	@echo "  dist-glibc       install the nix deployable glibc into ./dist/$(ARCH)/"
 	@echo "  dist-gcc-<lib>   install ONE gcc runtime lib into ./dist/$(ARCH)/lib"
 	@echo "                   (libgcc, libstdc++, libatomic, libitm, libquadmath,"
 	@echo "                   libssp, libgomp).  'make dist' ships only libgcc; opt the"
@@ -539,14 +506,14 @@ clean:
 	@rm -f $(FLAKES)/mig/result-* $(FLAKES)/gnumach-headers/result-* $(FLAKES)/gnumach/result-*
 
 clean-dist:
-	@# dist/ may hold read-only trees copied from /nix/store (e.g. dist-glibc-nix);
+	@# dist/ may hold read-only trees copied from /nix/store (e.g. dist-glibc);
 	@# rm can't unlink inside a read-only dir, so make the tree writable first.
 	@$(call _make_writable,$(DIST))
 	rm -rf $(DIST)
 	@# the dist-*-nix / dist-gcc-<lib> store-path stamps live under work/ (survive this
 	@# rm); drop them too, else their "already shipped" record makes a later `make
 	@# dist` skip re-populating the freshly-cleaned tree.
-	rm -f $(DIST_GLIBC_NIX_STAMP) $(DIST_GNUMACH_NIX_STAMP) $(DIST_HURD_NIX_STAMP)
+	rm -f $(DIST_GLIBC_STAMP) $(DIST_GNUMACH_NIX_STAMP) $(DIST_HURD_NIX_STAMP)
 	rm -f $(DIST_GCC_STAMP_DIR)/*.stamp
 
 # mrproper nukes work/ wholesale - a deeper reset including configure state.
@@ -556,14 +523,14 @@ mrproper:
 	rm -rf $(WORK)
 	rm -rf $(SIDEKICK)
 	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-* $(FLAKES)/hurd/result-*
-	@# dist/ may hold read-only /nix/store copies (dist-glibc-nix); chmod so rm can
+	@# dist/ may hold read-only /nix/store copies (dist-glibc); chmod so rm can
 	@# unlink inside them (a read-only dir blocks removal of its entries).
 	@$(call _make_writable,$(DIST_ROOT))
 	rm -rf $(DIST_ROOT)
 	@# git clean each working src clone, guarded by `-d .git`: the opt-in clones
-	@# (src/mig, src/glibc) may be absent, and a bare `git -C` on a missing dir
+	@# (src/mig) may be absent, and a bare `git -C` on a missing dir
 	@# would abort mrproper.
-	@for s in $(GNUMACH_SRC) $(MIG_SRC) $(HURD_SRC) $(GLIBC_SRC); do \
+	@for s in $(GNUMACH_SRC) $(MIG_SRC) $(HURD_SRC); do \
 	  if [ -d "$$s/.git" ]; then echo "  CLEAN  $$s"; git -C "$$s" clean -fdX; fi; \
 	done
 
@@ -692,19 +659,14 @@ mig:
 	$(call _nix_build,mig,mig-$(_TC_ARCH))
 endif
 
-# ---- glibc (no-op when not opted into in-tree; always-on, arch-independent) ----
-# Without src/glibc, glibc comes from the toolchain (wrapped cc's sysroot) - `make
-# glibc` realizes the nix package; work-glibc/dist-glibc-tree are no-ops.  `make
-# src-glibc` flips GLIBC_IN_TREE on and the in-tree build takes over.  NOTE: the
-# PUBLIC `dist-glibc` is NOT a no-op here - it dispatches to dist-glibc-nix, so `make
-# dist`/`dist-glibc` always ship a glibc.
-ifndef GLIBC_IN_TREE
-.PHONY: glibc work-glibc dist-glibc-tree
+# ---- glibc (nix-only; always-on, arch-independent) ----
+# glibc comes from the toolchain (wrapped cc's sysroot); `make glibc` realizes the
+# nix package - with the scoped overrides, so in-tree gnumach/hurd/mig changes
+# rebuild it (RPC stubs).  No in-tree glibc build: version picking = the glibc-src
+# input in flake.nix; patches live in flakes/cross-toolchain/glibc.nix.
+.PHONY: glibc
 glibc:
 	$(call _nix_build,glibc,glibc-hurd-$(_TC_ARCH))
-work-glibc dist-glibc-tree:
-	@echo "$@: opt-in - run 'make src-glibc' for the in-tree glibc (dist-glibc ships the nix glibc)."
-endif
 
 # ---- gnumach / hurd (opt-out: realize the nix package; always-on) ----
 # Without src/<m> (or <M>_IN_TREE=0), `make gnumach`/`make hurd` build the nix
@@ -750,19 +712,18 @@ _GOALS := $(or $(MAKECMDGOALS),all)
 # Fail fast on a forced *_IN_TREE without its source.  The auto-detect only turns
 # these on when src/<module> is present, so on + absent means a forced flag without
 # `make src-<module>`.  $(error) here rather than deep in the dispatch, but ONLY when
-# a goal needing that source is requested (so `make help GLIBC_IN_TREE=1` is fine).
+# a goal needing that source is requested (so `make help MIG_IN_TREE=1` is fine).
 # Covers the DEPENDENCY case too (hurd with MIG_IN_TREE=1 but no src/mig):
 # _NEEDS_<M>_SRC = every goal whose _DEPS contains <m>, derived from the same graph
 # that scopes the overrides - so no drift.
 _DEP_GOALS := mig gnumach dist-gnumach dist-gnumach-tree dist-gnumach-nix gnumach-headers \
               hurd-headers hurd dist-hurd dist-hurd-tree dist-hurd-nix \
-              glibc work-glibc dist-glibc dist-glibc-tree dist-glibc-nix dist all \
+              glibc dist-glibc dist all \
               $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
 _needs = $(strip $(foreach g,$(_DEP_GOALS),$(if $(filter $(1),$(_DEPS.$(g))),$(g))))
 _NEEDS_GNUMACH_SRC := $(call _needs,gnumach)
 _NEEDS_MIG_SRC     := $(call _needs,mig)
 _NEEDS_HURD_SRC    := $(call _needs,hurd)
-_NEEDS_GLIBC_SRC   := $(call _needs,glibc)
 define _need_src
 ifeq ($$(wildcard $(2)/.git),)
 ifneq ($$(filter $(3),$$(_GOALS)),)
@@ -770,9 +731,6 @@ $$(error $(1) is set but its in-tree source is missing at src/$(4) - run `make s
 endif
 endif
 endef
-ifdef GLIBC_IN_TREE
-$(eval $(call _need_src,GLIBC_IN_TREE,$(GLIBC_SRC),$(_NEEDS_GLIBC_SRC),glibc,nix glibc))
-endif
 ifdef MIG_IN_TREE
 $(eval $(call _need_src,MIG_IN_TREE,$(MIG_SRC),$(_NEEDS_MIG_SRC),mig,dev-shell mig))
 endif
@@ -788,7 +746,7 @@ endif
 # build); pulled in as a `run` prereq it still runs inside.  `mig` is a build goal
 # ONLY when src/mig opts in; otherwise filtered out (top-level no-op recipe, no
 # dispatch) - like src/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% $(if $(MIG_IN_TREE),,mig) $(if $(GLIBC_IN_TREE),,glibc work-glibc dist-glibc-tree) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% glibc $(if $(MIG_IN_TREE),,mig) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) rebaseline-ref,$(_GOALS))
 
 # Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
 #   _MARK.<goal>   the completion marker - its stamp/output.  Existence is the
@@ -807,16 +765,13 @@ _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache 
 _MARK.gnumach-headers   := $(GNUMACH_HDR_STAMP)
 _MARK.hurd-headers      := $(HURD_HDR_STAMP)
 _MARK.mig               := $(LOCAL_MIG)
-_MARK.glibc             := $(GLIBC_BUILT)
-_MARK.work-glibc        := $(SYSROOT)/lib/libc.so.0.3
 _MARK.gnumach           := $(GNUMACH_KERNEL)
 _MARK.hurd              := $(HURD_BUILD)/.built
 _MARK.dist-gnumach-tree := $(DIST_GNUMACH_TREE_STAMP)
 _MARK.dist-gnumach-nix  := $(DIST_GNUMACH_NIX_STAMP)
 _MARK.dist-hurd-tree    := $(DIST_HURD_TREE_STAMP)
 _MARK.dist-hurd-nix     := $(DIST_HURD_NIX_STAMP)
-_MARK.dist-glibc-tree   := $(DIST_GLIBC_TREE_STAMP)
-_MARK.dist-glibc-nix    := $(DIST_GLIBC_NIX_STAMP)
+_MARK.dist-glibc        := $(DIST_GLIBC_STAMP)
 $(foreach l,$(_GCC_RT_LIBS),$(eval _MARK.dist-gcc-$(l) := $(DIST_GCC_STAMP_DIR)/$(l)-$(_VARIANT)$(ARCH).stamp))
 _MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
 
@@ -826,29 +781,24 @@ _MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
 _WATCH.gnumach-headers  := $(GNUMACH_SRC)
 _WATCH.hurd-headers     := $(HURD_SRC)
 _WATCH.mig              := $(MIG_SRC) flakes/mig
-_WATCH.glibc            := $(GLIBC_SRC)
 _WATCH.gnumach          := $(GNUMACH_SRC)
 _WATCH.hurd             := $(HURD_SRC)
 _WATCH.dist-gnumach-nix := flakes/gnumach $(call _intree_srcs,dist-gnumach-nix)
 _WATCH.dist-hurd-nix    := flakes/hurd $(call _intree_srcs,dist-hurd-nix)
-_WATCH.dist-glibc-nix   := flakes/cross-toolchain $(call _intree_srcs,dist-glibc-nix)
+_WATCH.dist-glibc       := flakes/cross-toolchain $(call _intree_srcs,dist-glibc)
 $(foreach l,$(_GCC_RT_LIBS),$(eval _WATCH.dist-gcc-$(l) := flakes/cross-toolchain $(call _intree_srcs,dist-gcc-$(l))))
-# (work-glibc/dist-*-tree inherit src via _SDEPS; dist-tzdata's only input is the
+# (dist-*-tree inherit src via _SDEPS; dist-tzdata's only input is the
 # nixpkgs pin - flake.lock, the recipe's prereq - so a missing mark is its trigger.)
 
 # Dep graph - flag-gated: $(if X_IN_TREE,...) drops the edge when the module is nix
 # (the matching dist-*-nix half then watches the flake directly instead).
 _SDEPS.mig               := gnumach-headers
-_SDEPS.glibc             := gnumach-headers hurd-headers $(if $(MIG_IN_TREE),mig)
-_SDEPS.work-glibc        := glibc
 _SDEPS.gnumach           := gnumach-headers $(if $(MIG_IN_TREE),mig)
-_SDEPS.hurd              := hurd-headers gnumach-headers $(if $(MIG_IN_TREE),mig) $(if $(GLIBC_IN_TREE),work-glibc)
+_SDEPS.hurd              := hurd-headers gnumach-headers $(if $(MIG_IN_TREE),mig)
 _SDEPS.dist-gnumach-tree := gnumach
 _SDEPS.dist-hurd-tree    := hurd
-_SDEPS.dist-glibc-tree   := work-glibc
 _SDEPS.dist-gnumach      := $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 _SDEPS.dist-hurd         := $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
-_SDEPS.dist-glibc        := $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
 _SDEPS.all               := gnumach hurd
 _SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc-libgcc $(addprefix dist-gcc-,$(DIST_GCC_LIBS)) dist-tzdata
 
@@ -991,17 +941,15 @@ _DIST_PASSTHROUGH := \
   DIST_HURD=$(DIST_HURD) \
   DIST_GLIBC=$(DIST_GLIBC) \
   DIST_GCC_LIBS="$(DIST_GCC_LIBS)" \
-  GLIBC_BUILD=$(GLIBC_BUILD) \
   ALT_BUILD=$(ALT_BUILD) \
   _HOST_SYSTEM=$(_HOST_SYSTEM) \
-  GLIBC_IN_TREE=$(GLIBC_IN_TREE) \
   MIG_IN_TREE=$(MIG_IN_TREE) \
   GNUMACH_IN_TREE=$(GNUMACH_IN_TREE) \
   HURD_IN_TREE=$(HURD_IN_TREE)
 # _HOST_SYSTEM + ALT_BUILD: forward the variant infix's inputs so the inner make
 # computes the SAME work/ paths.  Forwarding the RESOLVED _HOST_SYSTEM means the inner
-# needn't re-run `nix eval` and can't disagree.  The four *_IN_TREE flags: forward the
-# resolved choice so an explicit force on/off (e.g. GLIBC_IN_TREE=0) survives, else the
+# needn't re-run `nix eval` and can't disagree.  The *_IN_TREE flags: forward the
+# resolved choice so an explicit force on/off (e.g. MIG_IN_TREE=0) survives, else the
 # inner re-detects src/ and flips it back.
 
 # Intentionally NOT forwarding $(MAKEOVERRIDES): (1) every user-facing knob is already
@@ -1040,7 +988,7 @@ REQUIRED_VARS := ARCH GNUMACH_HOST MIG MIG_TARGET CC
 $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#x86_64' (or .#x86_64-xen / .#i686 / .#i686-xen))))
 
-.PHONY: all dist gnumach-headers hurd-headers mig glibc work-glibc gnumach dist-gnumach dist-glibc \
+.PHONY: all dist gnumach-headers hurd-headers mig glibc gnumach dist-gnumach dist-glibc \
         check check-gnumach run run-help
 
 # Explicit default - `help` (above) would otherwise win the "first non-dot target" race.
@@ -1054,12 +1002,9 @@ all: gnumach hurd
 # each dist-* finalises only its slice via $(call _dist_finalize,...).
 dist: dist-gnumach dist-hurd dist-glibc dist-gcc-libgcc $(addprefix dist-gcc-,$(DIST_GCC_LIBS)) dist-tzdata
 
-# Serialize dist's components under `make -j` - they contend on two shared resources
+# Serialize dist's components under `make -j` - they contend on a shared resource
 # and otherwise corrupt each other:
-#   - the glibc build dir: work-glibc and dist-glibc-tree both `make install` in the
-#     SAME $(GLIBC_BUILDDIR), where glibc regenerates intermediates (build/mach/stubs,
-#     stubsT), so two concurrent installs race -> "mach/stubs Error 1".
-#   - the dist tree: dist-glibc(-nix)'s `chmod -R u+w $(DIST)` walks the whole tree
+#   - the dist tree: dist-glibc's `chmod -R u+w $(DIST)` walks the whole tree
 #     while dist-gnumach/dist-hurd/dist-gcc-<lib> write into it.
 # `.NOTPARALLEL: dist` serializes ONLY dist's immediate prerequisites; each component
 # still builds internally with -j, and the individual `dist-*` targets get full
@@ -1215,149 +1160,23 @@ $(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
 	$(call _bake_version,mig,mig-$(_TC_ARCH),$(MIG_SRC))
 endif
 
-# ---- glibc (opt-in raw in-tree build; mirrors flakes/cross-toolchain/glibc.nix) ----
-# With src/glibc present, build glibc against the combined Mach+Hurd sysroot using
-# $(GLIBC_CC) - the same final gcc as $(CC) but wrapped against the REFERENCE glibc,
-# not the working one: building glibc against its own output would be circular, so the
-# ref breaks the cycle.  Out-of-tree build dir (glibc refuses an in-src build).
-# Without src/glibc these are top-level no-ops.  src/glibc is built verbatim - it must
-# carry any patches it needs (e.g. the rtld cross-from-darwin fix).
-ifdef GLIBC_IN_TREE
-GLIBC_SRC_FILES := $(call _tracked_files,$(GLIBC_SRC))
 
-glibc: $(GLIBC_BUILT)
-
-# Two env knobs, mirroring what the nix glibc build gets implicitly:
-#   NIX_HARDENING_ENABLE=  glibc IS the fortify provider and can't be built with it;
-#     the wrapper would otherwise re-inject -D_FORTIFY_SOURCE=3 AFTER glibc's own
-#     -U_FORTIFY_SOURCE, turning the fortify header's `syslog` into an always_inline
-#     misc/syslog.c can't inline ("inlining failed in call to always_inline syslog").
-#   --prefix=/  so the installed libc.so GROUP is ROOT-RELATIVE - a relocatable sysroot
-#     (ld resolves /-paths under --sysroot).  Staged via DESTDIR at install.
-# Depend on the header STAMPS, not $(SYSROOT)/include/{mach,hurd}: glibc's install
-# writes mach/* + hurd/* headers into those shared dirs, so keying config.status on the
-# dirs would make glibc invalidate its own configure and loop a rebuild.  The stamps
-# are touched only by gnumach-headers/hurd-headers.
-$(GLIBC_CONFIGURED): $(GLIBC_SRC)/configure $(GNUMACH_HDR_STAMP) $(HURD_HDR_STAMP)
-	@$(call _req_env,GLIBC_CORE_FLAGS GLIBC_DEPLOY_FLAGS)
-	mkdir -p $(GLIBC_BUILDDIR)
-	@# Preflight: glibc emits objects differing only in case (pthread_atfork.os
-	@# vs .oS).  A case-INSENSITIVE filesystem collides them, silently corrupting
-	@# libc_nonshared.a -> "undefined reference to pthread_atfork" at the librt
-	@# link.  Fail fast with guidance instead.
-	@touch $(GLIBC_BUILDDIR)/.cstest; \
-	if [ -e $(GLIBC_BUILDDIR)/.CSTEST ]; then \
-	  rm -f $(GLIBC_BUILDDIR)/.cstest; \
-	  echo "ERROR: $(GLIBC_BUILD) is on a case-INSENSITIVE filesystem." >&2; \
-	  echo "  glibc's build needs case-sensitivity (pthread_atfork.os vs .oS collide)." >&2; \
-	  echo "  Point GLIBC_BUILD at a case-sensitive volume, e.g.:" >&2; \
-	  echo "    make glibc GLIBC_BUILD=/Volumes/<case-sensitive>/glibc-$(_TC_ARCH)" >&2; \
-	  exit 1; \
-	fi; \
-	rm -f $(GLIBC_BUILDDIR)/.cstest
-	cd $(GLIBC_BUILDDIR) && \
-	  NIX_HARDENING_ENABLE= \
-	  CC="$(GLIBC_CC)" CXX="$(GLIBC_CXX)" BUILD_CC="$(BUILD_CC)" \
-	  AR="$(AR)" AS="$(AS)" LD="$(LD)" NM="$(NM)" OBJCOPY="$(OBJCOPY)" \
-	  OBJDUMP="$(OBJDUMP)" RANLIB="$(RANLIB)" READELF="$(READELF)" STRIP="$(STRIP)" \
-	  $(GLIBC_SRC)/configure \
-	    --build=$(BUILD_TRIPLE) \
-	    --host=$(GNUMACH_HOST) \
-	    --prefix=/ \
-	    $(GLIBC_DEPLOY_FLAGS) \
-	    --with-headers=$(SYSROOT)/include \
-	    --with-binutils=$(BINUTILS_BIN) \
-	    $(GLIBC_CORE_FLAGS)
-	@# $(GLIBC_DEPLOY_FLAGS) pins every install dir + libc_cv_slibdir/rtlddir to a
-	@# single-slash root: under --prefix=/ they default to $(exec_prefix)/lib = //lib
-	@# (double slash baked into PT_INTERP + the libc.so GROUP - POSIX-undefined).  The
-	@# libc_cv_* cache vars (AC_SUBST'd into config.make) are how newer glibc derives the
-	@# lib dirs, so this is more robust than a build-dir configparms.
-
-# `make glibc` COMPILES only - no install (work-glibc/dist-glibc install).
-# NIX_CFLAGS_COMPILE adds the determinism -ffile-prefix-maps so the in-tree glibc bakes
-# the SAME DWARF paths as the nix glibc (build dir -> /glibc-build, src -> /glibc-src,
-# sysroot -> /glibc-sysroot; canon roots from build-flags.nix).  PLUS a "/."-collapse
-# for glibc's Machrules server-stub vpath: $(dir faultexc) = "./" puts $(objpfx)./ on
-# the vpath, so a stub bakes "$(GLIBC_BUILDDIR)/hurd/./..." into DWARF (build-order-
-# dependent -> libhurduser diverges).  ORDER MATTERS: gcc's -ffile-prefix-map is
-# LAST-match-wins, so the specific hurd/. map MUST come AFTER the general
-# $(GLIBC_BUILDDIR) map, else the general one wins and keeps "./".
-$(GLIBC_BUILT): $(MIG) $(GLIBC_CONFIGURED) $(GLIBC_SRC_FILES)
-	@$(call _req_env,GLIBC_CANON_SRC GLIBC_CANON_BUILD GLIBC_CANON_SYSROOT)
-	@# glibc isn't version-stamped, so a dirty chain surfaces only as this warning (it still cascades to hurd's -dirty).
-	$(if $(call _chain_dirty,glibc),@echo "  WARNING         in-tree glibc chain is DIRTY (uncommitted src) - not for release; flagged internally + cascaded to hurd's version")
-	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= \
-	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE -ffile-prefix-map=$(GLIBC_BUILDDIR)=$(GLIBC_CANON_BUILD) -ffile-prefix-map=$(GLIBC_SRC)=$(GLIBC_CANON_SRC) -ffile-prefix-map=$(SYSROOT)=$(GLIBC_CANON_SYSROOT) -ffile-prefix-map=$(GLIBC_BUILDDIR)/hurd/.=$(GLIBC_CANON_BUILD)/hurd" \
-	  $(MAKE)
-	@touch $(GLIBC_BUILT)
-
-# $(call _glibc_finalize_libc,DIR): finalize an installed glibc tree under DIR - make
-# lib writable, augment libc.so's GROUP with the Hurd RPC stub libs (else userland
-# links fail on undefined __mach_port_*), add the i386 /lib/ld.so->ld.so.1 alias (no-op
-# on x86_64), verify.  Shared by work-glibc + dist-glibc-tree.
-define _glibc_finalize_libc
-	$(call _make_writable,$(1)/lib); \
-	sed -i.bak '/^GROUP/ s|)$$| /lib/libmachuser.so /lib/libhurduser.so )|' $(1)/lib/libc.so; \
-	rm -f $(1)/lib/libc.so.bak; \
-	[ -e $(1)/lib/ld.so.1 ] && ln -sf ld.so.1 $(1)/lib/ld.so || true; \
-	grep -q libmachuser $(1)/lib/libc.so || { echo "ERROR: $(1)/lib/libc.so GROUP not augmented"; exit 1; }
-endef
-
-# ---- work-glibc (private: install glibc into the build sysroot) ----
-# Install the built glibc into $(SYSROOT) so the in-tree hurd build links against it -
-# the build counterpart to dist-glibc, beside the mach+hurd headers.  Staged via
-# DESTDIR; --prefix=/ -> root-relative libc.so, resolved via --sysroot=$(SYSROOT) at the
-# hurd link.  $(SYSROOT)/include already holds the headers (glibc just adds its own).
-# Augment libc.so's GROUP with the Hurd RPC stub libs.  Not in `make help`.
-work-glibc: $(SYSROOT)/lib/libc.so.0.3
-
-$(SYSROOT)/lib/libc.so.0.3: $(GLIBC_BUILT)
-	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE) install DESTDIR=$(SYSROOT)
-	@$(call _glibc_finalize_libc,$(SYSROOT))
-
-# ---- dist-glibc-tree (in-tree half of the public dist-glibc) ----
-# Install the built glibc into the dist tree (opt-in).  Staged via DESTDIR - glibc
-# REJECTS `make install prefix=...` (Makerules: "Set DESTDIR instead").  Configured
-# --prefix=/, so libc.so is ROOT-RELATIVE - a relocatable sysroot consumed via
-# --sysroot=$(DIST_GLIBC) or deployed to /.  Then merge the Mach+Hurd headers (glibc
-# install-headers omits them) and augment libc.so's GROUP with the Hurd RPC stub libs -
-# else every userland link fails on undefined __mach_port_*/__io_*/....
-dist-glibc-tree: $(DIST_GLIBC_TREE_STAMP)
-
-# Target the work-side STAMP, not the dist libc.so.0.3: _dist_finalize stamps the dist
-# file back to the source epoch, so as a make target it's forever older than its prereq
-# -> re-installs every run.  The stamp (touched last) is the real "installed" mark.
-$(DIST_GLIBC_TREE_STAMP): $(GLIBC_BUILT)
-	cd $(GLIBC_BUILDDIR) && NIX_HARDENING_ENABLE= $(MAKE) install DESTDIR=$(DIST_GLIBC)
-	cp -an $(SYSROOT)/include/. $(DIST_GLIBC)/include/ ; $(call _make_writable,$(DIST_GLIBC)/include)
-	@$(call _glibc_finalize_libc,$(DIST_GLIBC))
-	@$(call _dist_finalize,$(EPOCH_GLIBC))
-	@$(call _assert_file,$(DIST_GLIBC)/lib/libc.so.0.3,libc.so.0.3)
-	@$(call _dist_done,$@)
-endif
-
-# ---- dist-glibc (PUBLIC) ----
-# The one public glibc-shipment target: dispatch to the in-tree install
-# (dist-glibc-tree) or the nix deployable glibc (dist-glibc-nix), never both.  The two
-# halves below are private.
-.PHONY: dist-glibc
-dist-glibc: $(if $(GLIBC_IN_TREE),dist-glibc-tree,dist-glibc-nix)
-
-# Ship the NIX-built deployable glibc into the dist tree - the NON-opt-in half of the
-# public dist-glibc.  The nix glibc is configured --prefix=/ (deployPrefix), so its
-# whole $out tree is ROOT-RELATIVE - a verbatim `cp -a` IS a deployable sysroot.  cp -a
-# clones the store's read-only perms, so chmod -R u+w after.  NB: glibc's /bin helper
-# SCRIPTS carry a nixpkgs-rewritten /nix/store bash shebang - a cosmetic leak in dev
-# scripts only; the ELF tools are /-clean.  The gcc runtime ships via `dist-gcc-<lib>`
-# (a gcc artefact, same whether glibc is in-tree or nix).  Store-path-stamped.
+# ---- dist-glibc ----
+# Ship the NIX-built deployable glibc into the dist tree (glibc is nix-only; the
+# scoped overrides rebuild it from in-tree gnumach/hurd/mig srcs when opted in).  The
+# nix glibc is configured --prefix=/ (deployPrefix), so its whole $out tree is
+# ROOT-RELATIVE - a verbatim `cp -a` IS a deployable sysroot.  cp -a clones the
+# store's read-only perms, so chmod -R u+w after.  NB: glibc's /bin helper SCRIPTS
+# carry a nixpkgs-rewritten /nix/store bash shebang - a cosmetic leak in dev scripts
+# only; the ELF tools are /-clean.  The gcc runtime ships via `dist-gcc-<lib>`.
+# Store-path-stamped.
 #
 # share/info/dir: the nix glibc ships its OWN standalone dir, and a verbatim cp -a would
 # clobber the dir dist-gnumach/dist-hurd already merged into.  So mirror `make install`:
 # stash the accumulated dir across the copy, restore it (discarding glibc's standalone
 # one), then install-info glibc's libc.info into it - keeping the "each package merges
-# its own info" model + the texinfo-det.nix total-order sort, so in-tree and nix dirs match.
-.PHONY: dist-glibc-nix
+# its own info" model + the texinfo-det.nix total-order sort.
+.PHONY: dist-glibc
 # $(call _stamp_skip,stamp,value,key): the store copy can be skipped - <stamp> already
 # records <value> and the <key> output is present.  $(call _assert_file,path,name):
 # fail the recipe if <path> is missing.  Shared by every dist store-copy below.
@@ -1367,15 +1186,15 @@ _assert_file = ls $(1) >/dev/null || { echo "ERROR: $(2) missing"; exit 1; }
 # (its output is mtime-normalised by _dist_finalize, so it can't be the mark).  Touched
 # on EVERY run, copy or skip, so a confirmed-current dist out-dates its src.
 _dist_done   = mkdir -p $(dir $(1)) && touch $(1)
-# $(call _dist_nix_copy,module,DEST,attr,STAMP,keyfile,infofile): resolve the nix
-# package, copy its tree into DEST (skip if the store path is unchanged), preserve
-# share/info/dir, re-register <infofile>, stamp, assert <keyfile>.  Per-module
-# post-checks + _dist_finalize go in the caller.
+# $(call _dist_nix_copy,target,DEST,attr,STAMP,keyfile,infofile): resolve the nix
+# package (with <target>'s scoped overrides), copy its tree into DEST (skip if the
+# store path is unchanged), preserve share/info/dir, re-register <infofile>, stamp,
+# assert <keyfile>.  Per-module post-checks + _dist_finalize go in the caller.
 define _dist_nix_copy
 	@mkdir -p $(dir $(2)/$(5)) $(dir $(4)); \
 	echo "  DIST-NIX  resolving nix $(3)..."; \
 	set -e; \
-	pkg=$$($(NIX_BUILD) $(call _overrides,dist-$(1)-nix) $(PROJ)\#$(3) --no-link --print-out-paths); \
+	pkg=$$($(NIX_BUILD) $(call _overrides,$(1)) $(PROJ)\#$(3) --no-link --print-out-paths); \
 	if $(call _stamp_skip,$(4),$$pkg,$(2)/$(5)); then \
 	  echo "  unchanged ($$(basename $$pkg)) - skip copy"; \
 	else \
@@ -1391,10 +1210,10 @@ define _dist_nix_copy
 	$(call _assert_file,$(2)/$(5),$(5))
 endef
 
-dist-glibc-nix: $(DIST_GLIBC_NIX_STAMP)
+dist-glibc: $(DIST_GLIBC_STAMP)
 
-$(DIST_GLIBC_NIX_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(call _overrides,dist-glibc-nix)),_FORCE)
-	$(call _dist_nix_copy,glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_NIX_STAMP),lib/libc.so.0.3,libc.info)
+$(DIST_GLIBC_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(call _overrides,dist-glibc)),_FORCE)
+	$(call _dist_nix_copy,dist-glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_STAMP),lib/libc.so.0.3,libc.info)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
 
@@ -1510,7 +1329,7 @@ $(GNUMACH_KERNEL): $(MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 # boot/ + share/ docs.  gnumach's install is plain (no setuid), no fakeroot.
 dist-gnumach-tree: $(DIST_GNUMACH_TREE_STAMP)
 
-# Stamp target, not the epoch-stamped dist kernel (see dist-glibc-tree).
+# Stamp target, not the epoch-stamped dist kernel (mtime-normalised by _dist_finalize).
 $(DIST_GNUMACH_TREE_STAMP): $(GNUMACH_KERNEL)
 	cd $(GNUMACH_BUILD) && $(MAKE) install prefix=$(DIST_GNUMACH)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
@@ -1524,11 +1343,11 @@ dist-gnumach: $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 
 # Ship the NIX-built kernel into the dist tree (non-opt-in half).  Resolved per-$(ARCH)
 # - the kernel is the ONLY per-ARCH package, so i686 vs i686-xen differ HERE and nowhere
-# else.  Store-path-stamped; share/info/dir stashed/restored + merged (see dist-glibc-nix).
+# else.  Store-path-stamped; share/info/dir stashed/restored + merged (see dist-glibc).
 dist-gnumach-nix: $(DIST_GNUMACH_NIX_STAMP)
 
 $(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix $(if $(strip $(call _overrides,dist-gnumach-nix)),_FORCE)
-	$(call _dist_nix_copy,gnumach,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
+	$(call _dist_nix_copy,dist-gnumach-nix,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 
 # ---- hurd / dist-hurd ----
@@ -1550,22 +1369,9 @@ $(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix $(
 ifdef HURD_IN_TREE
 hurd: $(HURD_BUILD)/.built
 
-# Under the glibc opt-in, the userland must link against the in-tree glibc, not the
-# wrapped cc's baked-in one.  It links against the BUILD sysroot $(SYSROOT) (where
-# work-glibc installs glibc), NOT the dist tree.  Depend on the work-glibc output and
-# pass --sysroot=$(SYSROOT); ld resolves the root-relative libc.so GROUP there.
-#
-# The explicit -L$(SYSROOT)/lib is load-bearing for the STATIC bootstrap servers
-# (ext2fs.static etc.).  Their `-static -lc` pulls glibc's static archives, and the
-# wrapped cc's baked `-L<nix-glibc-farm>/lib` otherwise wins over --sysroot - so the link
-# would embed the NIX glibc's objects (diverging the .static binaries cross-host AND
-# bypassing a hacked src/glibc for exactly the boot servers).  A command-line -L precedes
-# the wrapper's baked -L, so the in-tree archives win.  (Dynamic servers only record the
-# libc.so.0.3 soname, already fine.)
-_HURD_SYSROOT := $(if $(GLIBC_IN_TREE),--sysroot=$(SYSROOT))
-_HURD_LDFLAGS := $(if $(GLIBC_IN_TREE),--sysroot=$(SYSROOT) -L$(SYSROOT)/lib)
-
-$(HURD_BUILD)/.built: $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
+# The in-tree userland links against the wrapped cc's nix glibc (glibc is nix-only;
+# its headers/libs ride the toolchain's baked -isystem/-L).
+$(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 	@$(call _req_env,HURD_CANON_BUILD)
 	cd $(HURD_BUILD) && \
 	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE $(call _det_maps,$(HURD_BUILD),$(HURD_SRC),$(HURD_CANON_BUILD))" \
@@ -1578,14 +1384,13 @@ $(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
 	cd $(HURD_SRC) && autoreconf -i
 	$(call _bake_version,hurd,hurd-$(_TC_ARCH),$(HURD_SRC))
 
-$(HURD_CONFIGURED): $(MIG) $(if $(GLIBC_IN_TREE),$(SYSROOT)/lib/libc.so.0.3) $(HURD_SRC)/configure
+$(HURD_CONFIGURED): $(MIG) $(HURD_SRC)/configure
 	@$(call _req_env,BASE_CFLAGS HURD_EXTRA_CFLAGS HURD_DEPLOY_FLAGS)
 	mkdir -p $(HURD_BUILD)
 	cd $(HURD_BUILD) && \
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
 	    MIG=$(MIG) USER_MIG=$(MIG) \
-	    CFLAGS="$(HURD_EXTRA_CFLAGS) $(BASE_CFLAGS) $(_HURD_SYSROOT) $(call _macro_prefix_map,$(HURD_SRC))" \
-	    $(if $(GLIBC_IN_TREE),LDFLAGS="$(_HURD_LDFLAGS)") \
+	    CFLAGS="$(HURD_EXTRA_CFLAGS) $(BASE_CFLAGS) $(call _macro_prefix_map,$(HURD_SRC))" \
 	    $(HURD_DEPLOY_FLAGS)
 
 # In-tree install: `make install` the work/ userland into $(DIST_HURD) as a
@@ -1597,7 +1402,7 @@ dist-hurd-tree: $(DIST_HURD_TREE_STAMP)
 # installs some programs `-o root -m 4755` (setuid), which a non-root install can't do -
 # fakeroot fakes the chown/setuid (cosmetic for a dev dist tree).  Keyed on the installed
 # ext2fs translator (headline output, analog of boot/gnumach) so dist/ holds only install
-# results, no completion stamp.  Stamp target, not the epoch-stamped ext2fs (see dist-glibc-tree).
+# results, no completion stamp.  Stamp target, not the epoch-stamped ext2fs.
 $(DIST_HURD_TREE_STAMP): $(HURD_BUILD)/.built
 	cd $(HURD_BUILD) && fakeroot $(MAKE) install DESTDIR=$(DIST_HURD) \
 	  MIG=$(MIG) USER_MIG=$(MIG)
@@ -1617,11 +1422,11 @@ dist-hurd: $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 
 # Ship the NIX-built userland into the dist tree (non-opt-in half).  Resolved
 # per-$(_TC_ARCH) - CPU-ABI-keyed, shared across xen/non-xen (i686 == i686-xen).
-# Store-path-stamped; share/info/dir stashed/restored + hurd.info merged (see dist-glibc-nix).
+# Store-path-stamped; share/info/dir stashed/restored + hurd.info merged (see dist-glibc).
 dist-hurd-nix: $(DIST_HURD_NIX_STAMP)
 
 $(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix $(if $(strip $(call _overrides,dist-hurd-nix)),_FORCE)
-	$(call _dist_nix_copy,hurd,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
+	$(call _dist_nix_copy,dist-hurd-nix,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
 	@$(call _dist_finalize,$(EPOCH_HURD))
 
 # ---- check ----
