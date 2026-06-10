@@ -161,7 +161,12 @@ let
   # gcc.  We wrap binutils-unwrapped rather than the default cross binutils wrapper
   # to avoid dragging in nixpkgs' own glibc, whose meta.platforms gate refuses the
   # Hurd target at eval time.
-  wrappedToolchain = system: target: { cc, working }:
+  # libgcc (optional): a derivation providing the WORK-built libgcc/crt under
+  # lib/gcc/<tgt>/<ver>/ (cross-gcc-runtime / the split libgcc).  When set, every link
+  # through this toolchain uses it instead of cc's own REF-built copy - the runtime is
+  # actually consumed + ABI-consistent with the working glibc.  Omitted for the wrapped
+  # cc that BUILDS the runtime (no self-dependency).
+  wrappedToolchain = system: target: { cc, working, libgcc ? null }:
     let
       bp   = (mkCrossPkgs system target).buildPackages;
       salt = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
@@ -177,6 +182,13 @@ let
       # carries the merged glibc + mach + hurd tree, so this is the whole system surface.
       extraBuildCommands = ''
         echo "-isystem ${working}/include" >> $out/nix-support/cc-cflags
+      '' + lib.optionalString (libgcc != null) ''
+        # Link the WORK-built libgcc.a/libgcc_s/crt*.o (against the working glibc) instead
+        # of cc's REF-built copy: -B puts the runtime's lib/gcc/<tgt>/<ver> ahead of the
+        # compiler's, so -lgcc + the startfiles resolve to it.  libgcc.a is NOT uniformly
+        # ABI-neutral (the unwinder/__emutls/header-using objects bake glibc/Mach types),
+        # so this is load-bearing, not cosmetic.
+        echo "-B${libgcc}/lib/gcc/${target.crossTarget}/${cc.version}" >> $out/nix-support/cc-cflags
       '';
       bintools = bp.wrapBintoolsWith {
         bintools = bp.binutils-unwrapped;

@@ -174,6 +174,9 @@ in
         { name = "toolchain-${name}"; value = wrappedToolchain system target {
             cc      = finalGccByName.${name};
             working = bareGlibcHurd."glibc-hurd-${name}";
+            # Link the WORK-built libgcc (cross-gcc-runtime) into every build, not cc's
+            # ref-built copy - the runtime is actually consumed + ABI-consistent.
+            libgcc  = gccRuntimeByName.${name};
           }; }
       ]) hurdTargets));
 
