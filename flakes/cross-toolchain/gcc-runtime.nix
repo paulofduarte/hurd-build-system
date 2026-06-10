@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-# The cross-gcc target RUNTIME, built from the prebuilt nolibc compiler against the
-# WORKING glibc WITHOUT rebuilding cc1.  nixpkgs has no standalone runtime builder -
-# it builds the runtime inside the full gcc (`make all-gcc all-target-libgcc`), and
-# nothing that targets an already-built external libc - so this drives a partial gcc
-# tree by hand: configure + emit libgcc's build glue (the host driver/gen-tools, never
-# cc1), then compile each lib subdir with the prebuilt cc1 via GCC_FOR_TARGET.
+# cross-gcc + its target RUNTIME.  cross-gcc (mkCompiler) is bootstrap-gcc rebuilt
+# against the pinned REFERENCE glibc (libcCross - so nixpkgs gives it posix) but trimmed
+# to compiler + static libgcc: it builds NO runtime.  mkRuntime then builds the shipped
+# runtime against the WORKING glibc with cross-gcc, WITHOUT rebuilding cc1 - nixpkgs has
+# no standalone runtime builder (it builds the runtime inside the full gcc), so this
+# drives a partial gcc tree by hand: configure + emit libgcc's build glue (the host
+# driver/gen-tools, never cc1), then compile each lib subdir with cross-gcc via GCC_FOR_TARGET.
 #
-#   mkCompiler  the single nolibc C++ compiler (cross-gcc-<arch>): cc1 + cc1plus +
-#               static libgcc.a, no target libc.  Never rebuilt on a glibc hack.
-#   mkRuntime   the runtime libs (cross-gcc-runtime-<arch>): libgcc (+ libstdc++/
-#               libatomic/... added through the buildLib helper).
+#   mkCompiler  cross-gcc-<arch>: cc1 + cc1plus + static libgcc.a, bound to the ref glibc
+#               for its posix thread model.  Never rebuilt on a WORKING-glibc hack.
+#   mkRuntime   cross-gcc-runtime-<arch>: the target runtime (libgcc/libstdc++/libatomic/
+#               ...) built against the WORKING glibc via the buildLib helper.
 
 { nixpkgs, mkCrossPkgs, wrappedToolchain }:
 
@@ -26,17 +27,41 @@ let
 in
 
 {
-  mkCompiler = system: target:
-    let bp = (mkCrossPkgs system target).buildPackages;
-    in (bp.gccWithoutTargetLibc.cc.override { langCC = true; }).overrideAttrs (old: {
-      # --with-ld: pin the GNU cross ld so libtool's C++ --whole-archive probe
-      # (`$CC -print-prog-name=ld --help`) resolves the same on every host.  Without
-      # it the probe falls back to the BUILD host's native ld - darwin cctools sorts
-      # objects alphabetically, linux GNU ld keeps archive order - giving libstdc++.so
-      # a host-varying .text/.cold layout.  The final gcc (mkGcc) carries the same flag.
+  # cross-gcc: the second-pass compiler.  bootstrap-gcc (nixpkgs gccWithoutTargetLibc)
+  # rebuilt against the PINNED reference glibc (libcCross) - that is what makes it posix
+  # (the ref glibc supplies pthread.h + htl) - but STOPPED at the compiler + static
+  # libgcc: it builds NO runtime (no libstdc++, no libgcc_s).  cross-gcc-runtime owns the
+  # shipped runtime, built against the WORKING glibc with this compiler.  cross-gcc binds
+  # the ref ONLY, so a working-glibc hack never rebuilds it (a ref bump does).
+  mkCompiler = system: target: refGlibc:
+    let
+      bp  = (mkCrossPkgs system target).buildPackages;
+      # withoutTargetLibc=false wires the target headers from libcCross (so libgcc finds
+      # <stdio.h>/<pthread.h> and gthr-default.h comes out posix) - the bootstrap's
+      # --without-headers path cannot.  enableShared=false + the trimmed build/install
+      # targets below keep it at compiler + static libgcc, NOT the full runtime.
+      gcc = bp.gccWithoutTargetLibc.cc.override {
+        withoutTargetLibc = false;
+        langCC            = true;
+        libcCross         = refGlibc;
+        enableShared      = false;
+      };
+    in
+    gcc.overrideAttrs (old: {
       configureFlags = (old.configureFlags or [ ]) ++ [
+        # --with-ld: GNU cross ld so libtool's C++ --whole-archive probe resolves the same
+        # on every host -> the libstdc++ cross-gcc-runtime builds is cross-host reproducible.
         "--with-ld=${bp.gccWithoutTargetLibc.bintools}/bin/${target.crossTarget}-ld"
+        # decimal-float: libgcc's _Decimal* runtime.  nixpkgs already emits
+        # --enable-{__cxa_atexit,long-long,nls,threads=posix} automatically for the full
+        # cross gcc (withoutTargetLibc=false), but NOT this one, and the i686-gnu default
+        # isn't guaranteed - so keep it explicit to ensure the DFP runtime is built.
+        "--enable-decimal-float"
       ];
+      # Stop at compiler + static libgcc.  cross-gcc-runtime builds the target runtime
+      # (libstdc++/libgcc_s) against the WORKING glibc, so cross-gcc must not build it.
+      buildFlags     = [ "all-gcc" "all-target-libgcc" ];
+      installTargets = [ "install-gcc" "install-target-libgcc" ];
     });
 
   mkRuntime = system: target: { compiler, working }:
@@ -44,9 +69,9 @@ in
       bp      = (mkCrossPkgs system target).buildPackages;
       tgt     = target.crossTarget;
       salt    = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tgt;
-      # The prebuilt nolibc compiler wrapped around the working glibc: knows its
-      # headers and links the bare-name libc.so GROUP (the same wrapper the in-tree
-      # userland uses).  GCC_FOR_TARGET, so the libs compile with the prebuilt cc1.
+      # cross-gcc wrapped around the working glibc: knows its headers and links the
+      # bare-name libc.so GROUP (the same wrapper the in-tree userland uses).
+      # GCC_FOR_TARGET, so the libs compile with cross-gcc's cc1.
       wrapped = wrappedToolchain system target { cc = compiler; working = working; };
     in
     bp.stdenv.mkDerivation ({
@@ -99,11 +124,14 @@ in
         }
 
         # The gcc tree + libgcc's build glue (host driver/gen-tools + libgcc.mvars/
-        # tconfig.h, never cc1) - the base every lib needs.
+        # tconfig.h, never cc1) - the base every lib needs.  --enable-threads=posix keeps
+        # this runtime gcc-tree's gthr-default.h posix to match cross-gcc's (belt-and-
+        # braces for libgcc's in-tree build; the libs otherwise take cross-gcc's via the
+        # wrapped GCC_FOR_TARGET).
         "$gccdir/configure" \
           --build="$build" --host="$build" --target="$host" \
           --prefix=/ --disable-bootstrap --disable-multilib \
-          --enable-languages=c,c++ --with-sysroot=${working}
+          --enable-languages=c,c++ --enable-threads=posix --with-sysroot=${working}
         make configure-gcc
         make all-build-libiberty all-build-libcpp \
              all-libiberty all-libcpp all-libdecnumber all-libbacktrace
@@ -117,6 +145,7 @@ in
         buildLib libquadmath --enable-shared
         buildLib libitm --enable-shared
         buildLib libstdc++-v3 --enable-shared
+        buildLib libvtv --enable-shared
         # libgomp: --disable-werror because affinity-fmt.c trips -Werror=discarded-
         # qualifiers against the Hurd glibc headers.  Build-enable only - OpenMP CPU
         # affinity on Hurd is incomplete.

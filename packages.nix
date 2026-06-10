@@ -149,9 +149,12 @@ in
            else mkAbiChecked system target ({ working = w; reference = r; glibcSrc = glibc-src; } // sidekickArgs)))
         hurdTargets;
 
-      # The single nolibc C++ compiler (no target-glibc input) - the one
-      # `cross-gcc-<arch>` going forward.
-      newCompilerByName = lib.mapAttrs (name: target: mkCompiler system target) hurdTargets;
+      # The single nolibc C++ compiler - the one `cross-gcc-<arch>` going forward.
+      # Binds the PINNED reference Hurd headers (gnumach+hurd+mig+glibc) for its posix
+      # thread model only; never rebuilt on a working-glibc hack.  TODO: replace the full
+      # ref glibc's include with a headers-only derivation (no ref libc binaries).
+      newCompilerByName = lib.mapAttrs (name: target:
+        mkCompiler system target glibcRefHurd."glibc-hurd-${name}") hurdTargets;
       # SPIKE: the split-out target runtime libs, built against the WORKING glibc
       # from that compiler (no xgcc rebuild).
       gccRuntimeByName = lib.mapAttrs (name: target:
