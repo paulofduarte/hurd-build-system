@@ -287,7 +287,7 @@ let
       # path).  libc.so.0.3 / ld.so escape (linked -nostdlib).  glibc.nix uses the
       # cc by ABSOLUTE PATH (to dodge the meta gate), so no wrapper setup-hook runs
       # and gcc's --with-ld bintools carries no suppression - set the real env var
-      # here (same channel mkGcc uses for libgcc_s/libstdc++).
+      # here (same channel gcc-runtime.nix uses for the runtime libs).
       "NIX_DONT_SET_RPATH${salt}" = "1";
       # glibc's helper scripts (bin/{ldd,tzselect,xtrace,sotruss,mtrace}) ship a
       # portable shebang from their *.in source; nixpkgs' patchShebangs rewrites it

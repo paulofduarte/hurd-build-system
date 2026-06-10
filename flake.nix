@@ -157,10 +157,10 @@
               let tcName = toolchainNameByCrossTarget.${target.crossTarget}; in
               crossToolchain.mkDevShell system name target {
                 toolchain = pkgsFor."toolchain-${tcName}";
-                # The in-tree `make glibc` compiler: the final gcc wrapped
-                # against the REFERENCE glibc, via the same wrappedToolchain
-                # helper as the nix working glibc's build cc, so nix-work and
-                # in-tree-work glibc match.
+                # The in-tree `make glibc` compiler: cross-gcc wrapped against
+                # the REFERENCE glibc, via the same wrappedToolchain helper as
+                # the nix working glibc's build cc, so nix-work and in-tree-work
+                # glibc match.
                 glibcCC = crossToolchain.wrappedToolchain system target {
                   cc      = pkgsFor."cross-gcc-${tcName}";
                   working = pkgsFor."glibc-ref-hurd-${tcName}";

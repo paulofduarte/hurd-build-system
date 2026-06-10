@@ -11,9 +11,8 @@
 #                     flakes/lib-systems-hurd) with `crossSystem` set, + the
 #                     gas-determinism chunksize overlay.
 #   toolchain.nix   - `mkAll` (cross-binutils + stage-1 cc per target), and the
-#                     `mkGcc` (a complete cross-gcc vs a given target libc) /
-#                     `wrappedToolchain` / `hurdTargets` helpers.  The 2-pass
-#                     gcc/glibc chain is orchestrated in packages.nix.
+#                     `wrappedToolchain` / `hurdTargets` helpers.  The gcc/glibc
+#                     chain is orchestrated in packages.nix.
 #   gcc-runtime.nix - `mkCompiler` (the posix cross-gcc) + `mkRuntimeLib` (one split
 #                     target-runtime lib built from it, without rebuilding cc1).
 #   glibc.nix       - `glibc-hurd-<arch>` (imported directly by packages.nix).

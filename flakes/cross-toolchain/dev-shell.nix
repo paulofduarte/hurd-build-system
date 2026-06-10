@@ -230,7 +230,7 @@ in
         #      not the wrapped bintools' add-local-ldflags-before.sh: gcc links
         #      through its --with-ld bintools (the stage-1 wrapper), which never
         #      sources the working wrapper's suppression - same trap glibc.nix /
-        #      mkGcc hit, fixed the same way (a salted env var the real ld honours).
+        #      gcc-runtime.nix hit, fixed the same way (a salted env var the real ld honours).
         export NIX_DONT_SET_RPATH${salt}=1
         #
         #  (b) the EXPLICIT `-rpath $out/lib` that `nix develop` injects into

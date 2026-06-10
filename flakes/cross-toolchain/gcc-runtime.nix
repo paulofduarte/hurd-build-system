@@ -29,22 +29,28 @@ in
 {
   # cross-gcc: the second-pass compiler.  bootstrap-gcc (nixpkgs gccWithoutTargetLibc)
   # rebuilt against the PINNED reference glibc (libcCross) - that is what makes it posix
-  # (the ref glibc supplies pthread.h + htl) - but STOPPED at the compiler + static
-  # libgcc: it builds NO runtime (no libstdc++, no libgcc_s).  cross-gcc-runtime owns the
-  # shipped runtime, built against the WORKING glibc with this compiler.  cross-gcc binds
-  # the ref ONLY, so a working-glibc hack never rebuilds it (a ref bump does).
+  # (the ref glibc supplies pthread.h + htl) - but STOPPED at the compiler + libgcc: no
+  # libstdc++/libatomic/...  cross-gcc-rt-* owns every SHIPPED runtime lib, built against
+  # the WORKING glibc with this compiler; cross-gcc's own ref-built libgcc/libgcc_s exist
+  # only for the glibc bootstrap + the link spec, and the wrapper's -B/-L always shadows
+  # them with the work-built runtime.  cross-gcc binds the ref ONLY, so a working-glibc
+  # hack never rebuilds it (a ref bump does).
   mkCompiler = system: target: refGlibc:
     let
-      bp  = (mkCrossPkgs system target).buildPackages;
+      bp   = (mkCrossPkgs system target).buildPackages;
+      salt = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
       # withoutTargetLibc=false wires the target headers from libcCross (so libgcc finds
       # <stdio.h>/<pthread.h> and gthr-default.h comes out posix) - the bootstrap's
-      # --without-headers path cannot.  enableShared=false + the trimmed build/install
-      # targets below keep it at compiler + static libgcc, NOT the full runtime.
+      # --without-headers path cannot.  enableShared MUST stay true: it shapes gcc's
+      # baked libgcc link SPEC.  With shared off, the spec emits plain `-lgcc` (EH
+      # assumed inside libgcc.a); the work runtime's libgcc is built shared, keeping EH
+      # in libgcc_eh.a, so static links lose _Unwind_* (hurd's exec.static via glibc
+      # backtrace.c).  Shared-on makes the spec emit `-lgcc -lgcc_eh` for static and
+      # -lgcc_s for dynamic links - matching the runtime's layout.
       gcc = bp.gccWithoutTargetLibc.cc.override {
         withoutTargetLibc = false;
         langCC            = true;
         libcCross         = refGlibc;
-        enableShared      = false;
       };
     in
     gcc.overrideAttrs (old: {
@@ -58,10 +64,19 @@ in
         # isn't guaranteed - so keep it explicit to ensure the DFP runtime is built.
         "--enable-decimal-float"
       ];
-      # Stop at compiler + static libgcc.  cross-gcc-runtime builds the target runtime
-      # (libstdc++/libgcc_s) against the WORKING glibc, so cross-gcc must not build it.
+      # Stop at compiler + libgcc (incl. the ref-built libgcc_s the shared spec needs at
+      # its own build time).  The SHIPPED runtime (libstdc++/libatomic/... and the real
+      # libgcc) comes from cross-gcc-rt-*, so cross-gcc must not build the rest.
       buildFlags     = [ "all-gcc" "all-target-libgcc" ];
       installTargets = [ "install-gcc" "install-target-libgcc" ];
+      # mechanism #2: the libgcc_s link binds the ref glibc, whose --prefix=/ libc.so
+      # GROUP lists absolute /lib members - resolvable only via --sysroot, which the nix
+      # ld-wrapper strips from the command line.  Feed it through the salted env var the
+      # wrapped --with-ld honours (same channel glibc.nix uses).
+      env = (old.env or { }) // {
+        "NIX_LDFLAGS_BEFORE${salt}" =
+          ((old.env or { })."NIX_LDFLAGS_BEFORE${salt}" or "") + " --sysroot=${refGlibc}";
+      };
     });
 
   # Build ONE target-runtime lib as its own derivation: the shared base (partial gcc
@@ -115,7 +130,7 @@ in
 
         # --with-ld routes the link through gccWithoutTargetLibc's ld, which (unlike the
         # wrapped one) would bake a -rpath to the host-varying ${working}/lib.  Suppress
-        # it the same way mkGcc does, so the libs carry no DT_RUNPATH (Debian Hurd parity).
+        # it (salted env var), so the libs carry no DT_RUNPATH (Debian Hurd parity).
         export NIX_DONT_SET_RPATH${salt}=1
 
         # DRY: configure + build + install one target-lib subdir, compiled with the

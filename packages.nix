@@ -16,7 +16,7 @@
 
 let
   inherit (nixpkgs) lib;
-  inherit (crossToolchain) mkCrossPkgs mkAll mkGcc mkCompiler mkRuntimeLib wrappedToolchain;
+  inherit (crossToolchain) mkCrossPkgs mkAll mkCompiler mkRuntimeLib wrappedToolchain;
   # Fork-id metadata (owner/repo/ref) from the `*-src` inputs via flake.lock;
   # feeds the version string's fork field.  See flakes/sources.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -103,24 +103,19 @@ in
           (lib.replaceStrings [ "glibc-hurd-" ] [ "glibc-ref-hurd-" ] n) v)
         glibcRefHurd;
 
-      # Final gcc - the userland cc.  libgcc_s/libstdc++ built vs the reference
-      # glibc, so it rebuilds only on a ref bump, never on a working-glibc hack.
-      finalGccByName = lib.mapAttrs (name: target:
-        mkGcc system target (glibcRefHurd."glibc-hurd-${name}")) hurdTargets;
-
       # glibc-hurd (WORKING): the Hurd C library the wrapped cc + userland bind,
-      # from the working `glibc-src` + working headers/mig.  Built by the FINAL
-      # gcc, so the nix and in-tree working glibc share one compiler.
+      # from the working `glibc-src` + working headers/mig.  Built by CROSS-GCC,
+      # the same compiler the in-tree working glibc uses (flake.nix glibcCC), so
+      # nix-work and in-tree-work glibc match byte-for-byte.
       glibcHurd = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
         forkUrl  = glibcInfo.forkUrl;
-        # Built by the final gcc wrapped around the reference glibc (configure
-        # link-tests need crt/libc; work != ref -> no cycle).  Same gcc the in-tree
-        # working glibc uses, so nix-work and in-tree-work match.
+        # cross-gcc wrapped around the reference glibc (configure link-tests need
+        # crt/libc; work != ref -> no cycle).
         buildCC = name: target: wrappedToolchain system target {
-          cc      = finalGccByName.${name};
+          cc      = newCompilerByName.${name};
           working = glibcRefHurd."glibc-hurd-${name}";
         };
       };
@@ -183,16 +178,14 @@ in
 
       # `cross-gcc-<arch>` = the cross compiler; `cross-gcc-rt-<lib>-<arch>` = each split
       # runtime lib (libgcc + the on-demand rest); `toolchain-<arch>` = THE toolchain
-      # (dev shell, kernel, userland, cache), -B'd to link the work-built libgcc.
-      # `cross-gcc-final-<arch>` keeps the old final gcc reachable until the dist is
-      # repointed off it.
+      # (dev shell, kernel, userland, cache): cross-gcc wrapped around the bare working
+      # glibc, -B'd to link the work-built libgcc.
       hurdFinalPkgs = lib.listToAttrs (lib.concatLists (lib.mapAttrsToList (name: target:
         [
           { name = "cross-gcc-${name}";           value = newCompilerByName.${name}; }
           { name = "cross-gcc-rt-libgcc-${name}"; value = libgccByName.${name}; }
-          { name = "cross-gcc-final-${name}";     value = finalGccByName.${name}; }
           { name = "toolchain-${name}"; value = wrappedToolchain system target {
-              cc      = finalGccByName.${name};
+              cc      = newCompilerByName.${name};
               working = bareGlibcHurd."glibc-hurd-${name}";
               # Link the WORK-built libgcc (the split libgcc derivation) into every build,
               # not cc's ref-built copy - the runtime is actually consumed + ABI-consistent.
