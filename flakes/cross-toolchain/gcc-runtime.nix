@@ -1,17 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-# cross-gcc + its target RUNTIME.  cross-gcc (mkCompiler) is bootstrap-gcc rebuilt
+# cross-gcc + its split target RUNTIME.  cross-gcc (mkCompiler) is bootstrap-gcc rebuilt
 # against the pinned REFERENCE glibc (libcCross - so nixpkgs gives it posix) but trimmed
-# to compiler + static libgcc: it builds NO runtime.  mkRuntime then builds the shipped
-# runtime against the WORKING glibc with cross-gcc, WITHOUT rebuilding cc1 - nixpkgs has
-# no standalone runtime builder (it builds the runtime inside the full gcc), so this
-# drives a partial gcc tree by hand: configure + emit libgcc's build glue (the host
-# driver/gen-tools, never cc1), then compile each lib subdir with cross-gcc via GCC_FOR_TARGET.
+# to compiler + static libgcc: it builds NO runtime.  mkRuntimeLib then builds ONE runtime
+# lib against the WORKING glibc with cross-gcc, WITHOUT rebuilding cc1 - nixpkgs has no
+# standalone runtime builder (it builds the runtime inside the full gcc), so this drives a
+# partial gcc tree by hand: configure + emit libgcc's build glue (the host driver/gen-tools,
+# never cc1), then compile the lib subdir with cross-gcc via GCC_FOR_TARGET.
 #
-#   mkCompiler  cross-gcc-<arch>: cc1 + cc1plus + static libgcc.a, bound to the ref glibc
-#               for its posix thread model.  Never rebuilt on a WORKING-glibc hack.
-#   mkRuntime   cross-gcc-runtime-<arch>: the target runtime (libgcc/libstdc++/libatomic/
-#               ...) built against the WORKING glibc via the buildLib helper.
+#   mkCompiler    cross-gcc-<arch>: cc1 + cc1plus + static libgcc.a, bound to the ref glibc
+#                 for its posix thread model.  Never rebuilt on a WORKING-glibc hack.
+#   mkRuntimeLib  cross-gcc-rt-<lib>-<arch>: one target-runtime lib (libgcc standalone; the
+#                 rest -B the libgcc derivation) against the WORKING glibc, via buildLib.
 
 { nixpkgs, mkCrossPkgs, wrappedToolchain }:
 
@@ -64,18 +64,23 @@ in
       installTargets = [ "install-gcc" "install-target-libgcc" ];
     });
 
-  mkRuntime = system: target: { compiler, working }:
+  # Build ONE target-runtime lib as its own derivation: the shared base (partial gcc
+  # tree + libgcc.mvars/tconfig.h) + buildLib for that lib.  libgcc is standalone; the
+  # rest pass `libgccDrv` (the already-built libgcc derivation) so the wrapper -B's it
+  # and they link the WORK-built libgcc (GCC_FOR_TARGET).  Each lib re-does the cheap
+  # base; a shared-base derivation is a later optimisation.  Splitting per-lib lets the
+  # toolchain depend on libgcc alone (not a 7-lib monolith) and the rest build on demand.
+  mkRuntimeLib = system: target: { compiler, working, libName, extraFlags ? "--enable-shared", libgccDrv ? null }:
     let
       bp      = (mkCrossPkgs system target).buildPackages;
       tgt     = target.crossTarget;
       salt    = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tgt;
-      # cross-gcc wrapped around the working glibc: knows its headers and links the
-      # bare-name libc.so GROUP (the same wrapper the in-tree userland uses).
-      # GCC_FOR_TARGET, so the libs compile with cross-gcc's cc1.
-      wrapped = wrappedToolchain system target { cc = compiler; working = working; };
+      # cross-gcc wrapped around the working glibc; for the non-libgcc libs the wrapper
+      # also -B's the libgcc derivation so they link the WORK-built libgcc.
+      wrapped = wrappedToolchain system target { cc = compiler; working = working; libgcc = libgccDrv; };
     in
     bp.stdenv.mkDerivation ({
-      pname   = "cross-gcc-runtime-${tgt}";
+      pname   = "cross-gcc-rt-${libName}-${tgt}";
       version = compiler.version;
       src     = compiler.src;
       nativeBuildInputs = [ compiler bp.binutils-unwrapped bp.patchelf ];
@@ -138,18 +143,10 @@ in
         make -C gcc GCC_FOR_TARGET="$cc" tconfig.h libgcc.mvars
         mkdir -p gcc/include   # libgcc stages unwind.h here
 
-        # libgcc first (everything else links libgcc_s); the rest go through buildLib.
-        buildLib libgcc --enable-shared
-        buildLib libatomic --enable-shared
-        buildLib libssp --enable-shared
-        buildLib libquadmath --enable-shared
-        buildLib libitm --enable-shared
-        buildLib libstdc++-v3 --enable-shared
-        buildLib libvtv --enable-shared
-        # libgomp: --disable-werror because affinity-fmt.c trips -Werror=discarded-
-        # qualifiers against the Hurd glibc headers.  Build-enable only - OpenMP CPU
-        # affinity on Hurd is incomplete.
-        buildLib libgomp --enable-shared --disable-werror
+        # Build the one requested lib.  libgcc has no -B (it IS libgcc); the rest link
+        # the libgcc derivation via the wrapper's -B.  (libgomp passes --disable-werror -
+        # its affinity-fmt.c trips -Werror=discarded-qualifiers on the Hurd glibc headers.)
+        buildLib ${libName} ${extraFlags}
 
         runHook postBuild
       '';

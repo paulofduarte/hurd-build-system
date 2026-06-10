@@ -14,8 +14,8 @@
 #                     `mkGcc` (a complete cross-gcc vs a given target libc) /
 #                     `wrappedToolchain` / `hurdTargets` helpers.  The 2-pass
 #                     gcc/glibc chain is orchestrated in packages.nix.
-#   gcc-runtime.nix - `mkCompiler` (the nolibc cross-gcc) + `mkRuntime` (the target
-#                     runtime libs built from it, without rebuilding cc1).
+#   gcc-runtime.nix - `mkCompiler` (the posix cross-gcc) + `mkRuntimeLib` (one split
+#                     target-runtime lib built from it, without rebuilding cc1).
 #   glibc.nix       - `glibc-hurd-<arch>` (imported directly by packages.nix).
 #   hurd-config.nix - the configure flag set shared by the nix Hurd build
 #                     (flakes/hurd) and the dev shell.
