@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "build-rev": {
+      "flake": false,
+      "locked": {
+        "path": ".build-rev",
+        "type": "path"
+      },
+      "original": {
+        "path": ".build-rev",
+        "type": "path"
+      },
+      "parent": []
+    },
     "glibc-ref-src": {
       "flake": false,
       "locked": {
@@ -157,6 +169,7 @@
     },
     "root": {
       "inputs": {
+        "build-rev": "build-rev",
         "glibc-ref-src": "glibc-ref-src",
         "glibc-src": "glibc-src",
         "gnumach-ref-src": "gnumach-ref-src",

@@ -30,7 +30,7 @@
 # + a host qemu, which the sandbox can't provide; tests stay under the parent
 # Makefile's check-mach target.
 
-{ nixpkgs, system, targets, mig, toolchainFor, self, srcInput, forkUrl }:
+{ nixpkgs, system, targets, mig, toolchainFor, self, srcInput, forkUrl, buildRevToken ? null }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -43,7 +43,7 @@ let
 
   # PACKAGE_VERSION composed at eval time - see flakes/lib (composeVersion).
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl;
+    inherit upstreamVersion srcInput self forkUrl buildRevToken;
   };
 
   mkOne = name: target:

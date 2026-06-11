@@ -52,6 +52,19 @@
       flake = false;
     };
 
+    # The build-system rev token for the `+build.g<rev>` version field.  Any
+    # `--override-input` unmatches the committed lock and nix drops BOTH
+    # self.shortRev and self.dirtyShortRev on a CLEAN tree - so override-resolved
+    # nix builds baked `+build.gunknown` while everything else baked the real rev
+    # (caught by the 32-combo matrix: only the override-resolved corners diverged).
+    # The Makefile overrides this input with the real `<short>[-dirty]` token
+    # whenever it passes module overrides; the committed fallback stays "unknown"
+    # and composeVersion then falls back to self (correct for plain `nix build`).
+    build-rev = {
+      url   = "path:.build-rev";
+      flake = false;
+    };
+
     # Reference pins for the cross-toolchain.  gcc's libgcc_s / libstdc++ bind
     # the REFERENCE glibc, built from these *-ref-src trees (+ their headers /
     # mig).  See .claude/docs/build/TOOLCHAIN-LIBC-DECOUPLING.md.
@@ -97,8 +110,13 @@
 
   outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src
                    , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src
-                   , ... }:
+                   , build-rev, ... }:
     let
+      # The real build rev when the Makefile overrides `build-rev`; null when the
+      # committed "unknown" fallback is in place (composeVersion then uses self).
+      buildRevToken =
+        let raw = nixpkgs.lib.removeSuffix "\n" (builtins.readFile "${build-rev}/rev");
+        in if raw != "unknown" then raw else null;
       # Host systems this flake supports. The build target is cross-compiled
       # and chosen via `nix develop .#<target>` - independent of host.
       supportedSystems = [
@@ -131,7 +149,7 @@
       # so adding a sub-flake doesn't touch flake.nix / target-archs.nix and
       # thus doesn't retrigger the toolchain-cache CI.
       pkgOutputs = import ./packages.nix {
-        inherit nixpkgs self forAllSystems targets crossToolchain
+        inherit nixpkgs self forAllSystems targets crossToolchain buildRevToken
                 gnumach-src mig-src hurd-src glibc-src
                 gnumach-ref-src mig-ref-src hurd-ref-src glibc-ref-src;
       };

@@ -11,7 +11,8 @@
 # (nixpkgs, system, self, targets, crossToolchain, the `*-src` inputs); each
 # sub-flake instantiates its own pkgs/lib and imports its own flakes/lib.
 
-{ nixpkgs, self, forAllSystems, targets, crossToolchain, gnumach-src, mig-src, hurd-src, glibc-src
+{ nixpkgs, self, forAllSystems, targets, crossToolchain, buildRevToken ? null
+, gnumach-src, mig-src, hurd-src, glibc-src
 , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src }:
 
 let
@@ -227,7 +228,7 @@ in
       # GNU Mach kernel - built with the wrapped cross-cc (freestanding,
       # -nostdlib).  `toolchainFor` resolves each target onto its `toolchain-<arch>`.
       gnumach = import ./flakes/gnumach {
-        inherit nixpkgs system targets self toolchainFor;
+        inherit nixpkgs system targets self toolchainFor buildRevToken;
         mig = checkedMigFor;   # downstream of glibc -> the validated mig
         srcInput = gnumach-src;
         forkUrl = gnumachInfo.forkUrl;
@@ -236,7 +237,7 @@ in
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
       hurd = import ./flakes/hurd {
-        inherit nixpkgs system targets self;
+        inherit nixpkgs system targets self buildRevToken;
         mig = checkedMigFor;   # downstream of glibc -> the validated mig
         glibcHurd = bareGlibcHurd;
         hurdToolchain = hurdFinalPkgs;

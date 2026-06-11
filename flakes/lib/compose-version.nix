@@ -48,19 +48,24 @@ in
   inherit composeFromParts;
 
   # Args: upstreamVersion (from the parsers), srcInput (-> .shortRev +
-  # .lastModifiedDate), forkUrl (owner/repo from flakes/sources), self (-> buildRev).
+  # .lastModifiedDate), forkUrl (owner/repo from flakes/sources), self (-> buildRev),
+  # buildRevToken (optional: the Makefile-fed `build-rev` input token - any
+  # --override-input drops BOTH self.shortRev and self.dirtyShortRev on a clean
+  # tree, baking `+build.gunknown` into override-resolved nix builds; the explicit
+  # token keeps them identical to no-override/CI builds).
   composeVersion = {
     upstreamVersion,
     srcInput,
     forkUrl,
     self,
+    buildRevToken ? null,
   }:
     composeFromParts {
       inherit upstreamVersion;
       srcShort   = srcInput.shortRev or "unknown";
       srcDate    = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
       forkId     = shortUrl { url = forkUrl; };
-      buildShort = buildRev self;
+      buildShort = if buildRevToken != null then buildRevToken else buildRev self;
     };
 
   # Toolchain-block variant - composeVersion with no build-rev (and no `self`).

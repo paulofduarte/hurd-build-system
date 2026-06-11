@@ -335,7 +335,11 @@ _FLAG.hurd    := HURD_IN_TREE
 # clone-existence test - a truthy flag with absent src/<m> is caught by _need_src below.
 _override1 = $(if $($(_FLAG.$(1))),--override-input $(1)-src $(SRC)/$(1))
 # $(call _overrides,TARGET): the scoped --override-input set for a nix TARGET.
-_overrides = $(foreach d,$(_DEPS.$(1)),$(call _override1,$(d)))
+# When any module override is active, the build-rev input rides along: overriding
+# unmatches the lock and nix drops self's rev, so composeVersion needs the real
+# token explicitly (see the _BUILD_REV block) - else the overridden builds bake
+# `+build.gunknown` and diverge from the no-override/CI builds.
+_overrides = $(foreach d,$(_DEPS.$(1)),$(call _override1,$(d)))$(if $(strip $(foreach d,$(_DEPS.$(1)),$(call _override1,$(d)))), --override-input build-rev path:$(abspath $(BUILD_REV_DIR)))
 
 # module -> its in-tree clone dir (the staleness twin of _override1's src path).
 _SRCDIR.mig     := $(MIG_SRC)
@@ -434,6 +438,18 @@ endef
 _VERSION_FP := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet HEAD 2>/dev/null || echo .rdirty).m$(call _src_is_dirty,mig)g$(call _src_is_dirty,gnumach)h$(call _src_is_dirty,hurd)
 VERSION_FP_STAMP := $(WORK)/version-fp
 $(shell mkdir -p $(WORK) 2>/dev/null; [ "`cat $(VERSION_FP_STAMP) 2>/dev/null`" = "$(_VERSION_FP)" ] || printf %s "$(_VERSION_FP)" > $(VERSION_FP_STAMP))
+
+# The real `+build.g<rev>` token for override-resolved nix builds.  Any
+# `--override-input` unmatches the committed lock and nix drops BOTH self.shortRev
+# and self.dirtyShortRev on a CLEAN tree, so the overridden builds baked
+# `+build.gunknown` while everything else carried the real rev (the 32-combo
+# matrix caught it).  Maintain the token (`<short>[-dirty]`, matching nix's
+# dirtyShortRev shape) in a path-input dir and add it to every override set;
+# composeVersion prefers it over self.  Write-if-changed: the content (not mtime)
+# keys the nix path input.
+_BUILD_REV := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
+BUILD_REV_DIR := $(WORK)/build-rev
+$(shell mkdir -p $(BUILD_REV_DIR) 2>/dev/null; [ "`cat $(BUILD_REV_DIR)/rev 2>/dev/null`" = "$(_BUILD_REV)" ] || printf %s "$(_BUILD_REV)" > $(BUILD_REV_DIR)/rev)
 
 # $(call _bake_version,DEPKEY,ATTR,SRCDIR): stamp the in-tree build with the SAME
 # composed PACKAGE_VERSION the nix build bakes, so nix == in-tree byte-for-byte.

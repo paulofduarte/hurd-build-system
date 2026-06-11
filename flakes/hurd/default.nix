@@ -18,7 +18,7 @@
 # Source comes from the pinned `hurd-src` flake input.  Filtered to the non-xen
 # userland targets (i686, x86_64).
 
-{ nixpkgs, system, targets, mig, hurdToolchain, glibcHurd, self, srcInput, forkUrl }:
+{ nixpkgs, system, targets, mig, hurdToolchain, glibcHurd, self, srcInput, forkUrl, buildRevToken ? null }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -30,7 +30,7 @@ let
 
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl;
+    inherit upstreamVersion srcInput self forkUrl buildRevToken;
   };
 
   hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
