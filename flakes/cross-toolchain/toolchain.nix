@@ -50,6 +50,11 @@ let
     let
       bp   = (mkCrossPkgs system target).buildPackages;
       salt = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
+      # The deployed dynamic linker, exactly gcc's GNU_USER_DYNAMIC_LINKER spec value
+      # (i386 /lib/ld.so resolves via the packaging ld.so -> ld.so.1 symlink the dist
+      # ships; x86_64's loader name needs no bridge).
+      loader = if lib.hasPrefix "i686" target.crossTarget
+               then "/lib/ld.so" else "/lib/ld-x86-64.so.1";
     in
     bp.wrapCCWith {
       inherit cc;
@@ -62,6 +67,11 @@ let
       # carries the merged glibc + mach + hurd tree, so this is the whole system surface.
       extraBuildCommands = ''
         echo "-isystem ${working}/include" >> $out/nix-support/cc-cflags
+        # The -isystem above puts the working glibc's HOST-SPECIFIC store path into
+        # DWARF5 .debug_line_str (line-table include dirs) of everything compiled
+        # through this wrapper - map it to the shared canon name (build-flags.nix) at
+        # the same site that introduces it, so consumers stay cross-host identical.
+        echo "-ffile-prefix-map=${working}=${buildFlags.glibcCanonSysroot}" >> $out/nix-support/cc-cflags
       '' + lib.optionalString (libgcc != null) ''
         # Link the WORK-built libgcc.a/libgcc_eh.a/libgcc_s/crt*.o (against the working
         # glibc) instead of cc's REF-built copies: -B puts the runtime's lib/gcc/<tgt>/<ver>
@@ -90,10 +100,26 @@ let
         #
         # NIX_DONT_SET_RPATH: stop the ld-wrapper auto-baking a /nix/store rpath to
         # working/lib on anything linked through this wrapper; glibc's slibdir=/lib +
-        # SONAME NEEDED resolve via the target /lib.  (DRY: in the wrapper, not a
-        # per-build export in glibc.nix.)
+        # SONAME NEEDED resolve via the target /lib.  Set in BOTH channels: the
+        # add-local-ldflags-before.sh sourced by THIS wrapper's ld, AND an export
+        # appended to add-flags.sh (sourced by the consumer's setup hook) so the
+        # var reaches links that bypass this wrapper - cross-gcc's --with-ld runs the
+        # stage-1 ld-wrapper, which only honours the env var.  Without the env, the
+        # LINUX sandbox bakes a 4-entry store DT_RUNPATH darwin omits (cross-host
+        # divergence in every hurd binary).
+        #
+        # dynamic-linker: pin the deployed loader.  gcc's spec passes
+        # `-dynamic-linker ${loader}`, but the linux ld-wrapper's purity strip drops
+        # it (non-store path) and GNU ld falls back to its baked generic
+        # /usr/lib/libc.so.1 - an unbootable interp, and another darwin/linux split.
+        # The nix-support/dynamic-linker file feeds NIX_DYNAMIC_LINKER${salt}
+        # (add-flags.sh), which the ld-wrapper re-applies AFTER the purity strip -
+        # host-uniform /lib loader on every link.
         extraBuildCommands = ''
           echo "export NIX_DONT_SET_RPATH${salt}=1" >> $out/nix-support/add-local-ldflags-before.sh
+          echo "export NIX_DONT_SET_RPATH${salt}=1" >> $out/nix-support/add-flags.sh
+          echo "${loader}" > $out/nix-support/dynamic-linker
+          touch $out/nix-support/ld-set-dynamic-linker   # gates add-flags.sh's read of the file
         '';
       };
     };

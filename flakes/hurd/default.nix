@@ -41,6 +41,8 @@ let
       toolchain = hurdToolchain."toolchain-${name}";      # wrapped cross cc
       crossMig  = mig."mig-${name}";
       pname     = "hurd-${tp}";
+      # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
+      salt      = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
     in
     pkgs.stdenv.mkDerivation ({
       inherit pname;
@@ -174,9 +176,20 @@ let
       # console/pc_kbd/vga compile against the wrong iconv.h and leak the host
       # store path into DWARF (Linux glibc has iconv built in -> no leak).  A
       # cross-compile must resolve system headers from its own sysroot only.
+      # No /nix/store DT_RUNPATH in the shipped servers/libs (Debian GNU/Hurd
+      # parity; libs resolve from /lib via the loader).  Two injectors on LINUX
+      # (darwin has neither, hence the cross-host divergence):
+      #  - the ld-wrapper's per--L rpath derivation - gated by the env attr below
+      #    (same channel glibc.nix uses);
+      #  - the NATIVE stdenv cc-wrapper hook's explicit `-rpath $out/lib` in the
+      #    PLAIN NIX_LDFLAGS (mangleVarList folds it into the salted var at cross-
+      #    link time) - NOT covered by NIX_DONT_SET_RPATH (the dev shell verified
+      #    this on Linux), so sed it out of the plain var, mirroring dev-shell.nix.
       preBuild = ''
         ${buildFlags.detCflagsExport { inherit toolchain; canonBuild = buildFlags.hurdCanonBuild; stripIsystem = true; }}
+        export NIX_LDFLAGS="$(printf '%s' "''${NIX_LDFLAGS:-}" | sed "s@-rpath $out/lib@@g")"
       '';
+      "NIX_DONT_SET_RPATH${salt}" = "1";
     });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-${name}" (mkOne name target)) hurdTargets
