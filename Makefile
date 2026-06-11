@@ -401,6 +401,17 @@ $(if $(call _chain_dirty,$(1)),ver=$$(printf %s "$$ver" | sed -E 's/(-g[0-9a-f]+
 [ -n "$$ver" ] || { echo "ERROR: cannot resolve nix $(2).version"; exit 1; }
 endef
 
+# The baked version's staleness sentinel.  The composed version embeds the REPO's
+# buildRev (+ each module's -dirty flag), but the configure rules' prereqs only
+# watch module files - so a repo commit (or a dirty-flag flip) left a STALE
+# +build.<rev> baked in src/<m>/configure, diverging the in-tree build from nix
+# (which re-evals self.rev on every change) in everything that embeds the version:
+# version.texi, mach/hurd.info, the kernel banner, the version-printing servers.
+# Write-if-changed at parse time; the configure rules depend on it.
+_VERSION_FP := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet HEAD 2>/dev/null || echo .rdirty).m$(call _src_is_dirty,mig)g$(call _src_is_dirty,gnumach)h$(call _src_is_dirty,hurd)
+VERSION_FP_STAMP := $(WORK)/version-fp
+$(shell mkdir -p $(WORK) 2>/dev/null; [ "`cat $(VERSION_FP_STAMP) 2>/dev/null`" = "$(_VERSION_FP)" ] || printf %s "$(_VERSION_FP)" > $(VERSION_FP_STAMP))
+
 # $(call _bake_version,DEPKEY,ATTR,SRCDIR): stamp the in-tree build with the SAME
 # composed PACKAGE_VERSION the nix build bakes, so nix == in-tree byte-for-byte.
 # autoconf has no configure-time version override (hard-set via AC_INIT/version.m4),
@@ -1033,7 +1044,7 @@ _HURD_HDR_SRC := $(filter %.h %.defs,$(call _tracked_files,$(HURD_SRC)))
 # ./configure chain doesn't fire spuriously (-fi would touch every output).  Run on
 # demand.  (_bake_version then stamps the rich build-rev version into the
 # freshly-generated configure, matching the nix artefacts.)
-$(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4
+$(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4 $(VERSION_FP_STAMP)
 	cd $(GNUMACH_SRC) && autoreconf -i
 	$(call _bake_version,gnumach,gnumach-$(ARCH),$(GNUMACH_SRC))
 
@@ -1155,7 +1166,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES)
 	    TARGET_CPPFLAGS="-I$(SYSROOT)/include"
 	cd $(MIG_BUILD) && $(MAKE) CC=gcc install
 
-$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac
+$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac $(VERSION_FP_STAMP)
 	cd $(MIG_SRC) && autoreconf -i
 	$(call _bake_version,mig,mig-$(_TC_ARCH),$(MIG_SRC))
 endif
@@ -1380,7 +1391,7 @@ $(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 
 # _bake_version stamps the SAME composed build-rev version the nix build bakes, so
 # nix == in-tree; a dirty src/hurd additionally gets `-dirty` (nix can't see that).
-$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac
+$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac $(VERSION_FP_STAMP)
 	cd $(HURD_SRC) && autoreconf -i
 	$(call _bake_version,hurd,hurd-$(_TC_ARCH),$(HURD_SRC))
 

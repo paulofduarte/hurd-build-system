@@ -158,7 +158,11 @@
               crossToolchain.mkDevShell system name target {
                 toolchain = pkgsFor."toolchain-${tcName}";
                 gnumach   = pkgsFor."gnumach-${name}";
-                mig       = pkgsFor."mig-${name}";
+                # mig keyed by the CPU sibling (like the toolchain): a xen variant's
+                # shell reuses mig-<cpu> - mig is the same tool either way (the nix
+                # kernels already build with the sibling's checked mig), and the
+                # xen-keyed raw mig would only add a pointless extra build.
+                mig       = pkgsFor."mig-${tcName}";
                 headers   = pkgsFor."gnumach-headers-${name}";
               })
             targets;
