@@ -346,18 +346,41 @@ _SRCDIR.hurd    := $(HURD_SRC)
 # staleness watches can't drift from the override set.  Feeds _WATCH.<nix-half>.
 _intree_srcs = $(strip $(foreach d,$(_DEPS.$(1)),$(if $($(_FLAG.$(d))),$(_SRCDIR.$(d)))))
 
-# Always-run prereq for the store-path-stamped nix halves WHEN overrides are active:
-# an overridden input's staleness lives in src/<m>, invisible to the stamp's flake-file
-# prereqs - so force the recipe and let the store-path compare do the real skip.  With
-# no overrides the stamp fast-path stands.
+# Forces a stamped recipe to re-run (used via a conditional prereq when the goal's
+# sources fingerprint is stale - see below).
 .PHONY: _FORCE
 _FORCE:
 
-# The store-path-stamped nix halves.  Their _stale gate term mirrors _FORCE: mtime
-# can't see an override flip (the stamp records the PINNED resolve; src/<m> may be
-# older than it), so with overrides active they are always gate-stale - the dispatch
-# runs, the recipe re-resolves, and the store-path compare does the real skip.
+# The store-path-stamped nix halves.  mtime can't see what their resolve actually
+# reads: a repo COMMIT moves every drv's buildRev token without touching file
+# mtimes, an overridden src/<m> changes outside the stamp's prereq list, and a flag
+# FLIP changes the resolve while every file stays old.  So each goal records a
+# SOURCES FINGERPRINT beside its stamp (<stamp>.fp): the git-content state of
+# everything the resolve reads - the repo (HEAD + a hash of `git diff HEAD` when
+# dirty) and each OPTED-IN dep module likewise.  Untracked files are invisible to
+# nix's git fetcher AND to the fingerprint, so the two agree by construction.  A
+# fingerprint mismatch makes the goal gate-stale and _FORCEs its recipe (which
+# re-resolves; the store-path compare still guards the copy); a match is a true
+# "Nothing to be done".  Over-triggering (an irrelevant tracked edit -> one cheap
+# re-eval) is the only failure mode; a false skip cannot happen.
 _OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
+
+# $(call _git_fp,DIR): content fingerprint of what nix's git fetcher sees in DIR.
+_git_fp = $(shell git -C $(1) rev-parse --short HEAD 2>/dev/null)$(shell git -C $(1) diff --quiet HEAD 2>/dev/null || echo .d$$(git -C $(1) diff HEAD 2>/dev/null | sha256sum | cut -c1-12))
+# Memoized lazily (first use) so `make help`/plain parses don't pay the git cost.
+_FP_REPO    = $(or $(__fp_repo),$(eval __fp_repo := $(call _git_fp,.))$(__fp_repo))
+_FP.mig     = $(or $(__fp_mig),$(eval __fp_mig := $(call _git_fp,$(MIG_SRC)))$(__fp_mig))
+_FP.gnumach = $(or $(__fp_gnumach),$(eval __fp_gnumach := $(call _git_fp,$(GNUMACH_SRC)))$(__fp_gnumach))
+_FP.hurd    = $(or $(__fp_hurd),$(eval __fp_hurd := $(call _git_fp,$(HURD_SRC)))$(__fp_hurd))
+# $(call _goal_fp,GOAL): the goal's full fingerprint - repo + each opted-in dep.
+_goal_fp = repo=$(_FP_REPO)$(foreach d,$(_DEPS.$(1)),$(if $($(_FLAG.$(d))), $(d)=$(_FP.$(d))))
+# $(call _fp_stale,GOAL): non-empty iff GOAL has been built (its stamp exists) and
+# its recorded fingerprint differs.  A missing STAMP is deliberately not fp-stale:
+# make builds a missing target when requested anyway, and a never-built sibling
+# must not permanently _FORCE the dist-gcc pattern rule.
+_fp_stale = $(if $(filter $(1),$(_OVR_GOALS)),$(shell if [ -e $(_MARK.$(1)) ]; then [ "$$(cat $(_MARK.$(1)).fp 2>/dev/null)" = "$(call _goal_fp,$(1))" ] || echo $(1)-fp; fi))
+# $(call _fp_write,GOAL): recipe tail - record the fingerprint the resolve used.
+_fp_write = printf '%s' "$(call _goal_fp,$(1))" > $(_MARK.$(1)).fp
 
 # Dirtiness cascade (in-tree only).  $(call _src_is_dirty,MODULE) -> "1" if src/<m>
 # has uncommitted TRACKED changes; $(call _chain_dirty,TARGET) -> non-empty if TARGET
@@ -524,8 +547,8 @@ clean-dist:
 	@# the dist-*-nix / dist-gcc-<lib> store-path stamps live under work/ (survive this
 	@# rm); drop them too, else their "already shipped" record makes a later `make
 	@# dist` skip re-populating the freshly-cleaned tree.
-	rm -f $(DIST_GLIBC_STAMP) $(DIST_GNUMACH_NIX_STAMP) $(DIST_HURD_NIX_STAMP)
-	rm -f $(DIST_GCC_STAMP_DIR)/*.stamp
+	rm -f $(DIST_GLIBC_STAMP) $(DIST_GNUMACH_NIX_STAMP) $(DIST_HURD_NIX_STAMP) $(DIST_GLIBC_STAMP).fp $(DIST_GNUMACH_NIX_STAMP).fp $(DIST_HURD_NIX_STAMP).fp
+	rm -f $(DIST_GCC_STAMP_DIR)/*.stamp $(DIST_GCC_STAMP_DIR)/*.fp
 
 # mrproper nukes work/ wholesale - a deeper reset including configure state.
 # flakes/ holds tracked sources, so scrub only its gitignored result-* gc-roots,
@@ -840,7 +863,7 @@ _newer_tracked = $(strip $(foreach d,$(_WATCH.$(1)),$(call _newer_tracked_one,$(
 # with neither _MARK nor _SDEPS is conservatively stale (returns its own name).
 _stale = $(strip \
   $(if $(_MARK.$(1))$(_SDEPS.$(1)), \
-    $(if $(filter $(1),$(_OVR_GOALS)),$(if $(call _intree_srcs,$(1)),$(1))) \
+    $(call _fp_stale,$(1)) \
     $(if $(_MARK.$(1)),$(call _mark_missing,$(1)) $(call _newer_tracked,$(1))) \
     $(foreach d,$(_SDEPS.$(1)),$(call _stale,$(d))), \
     $(1)))
@@ -1217,13 +1240,14 @@ define _dist_nix_copy
 	  [ -e $(2)/share/info/$(6) ] && install-info --quiet --info-dir=$(2)/share/info $(2)/share/info/$(6) || true; \
 	  printf '%s' "$$pkg" > $(4); \
 	fi; \
+	$(call _fp_write,$(1)); \
 	$(call _dist_done,$(4)); \
 	$(call _assert_file,$(2)/$(5),$(5))
 endef
 
 dist-glibc: $(DIST_GLIBC_STAMP)
 
-$(DIST_GLIBC_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(call _overrides,dist-glibc)),_FORCE)
+$(DIST_GLIBC_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix $(if $(call _fp_stale,dist-glibc),_FORCE)
 	$(call _dist_nix_copy,dist-glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_STAMP),lib/libc.so.0.3,libc.info)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
@@ -1245,9 +1269,10 @@ $(DIST_GLIBC_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix fl
 .PHONY: $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
 $(addprefix dist-gcc-,$(_GCC_RT_LIBS)): dist-gcc-%: $(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp ;
 
-# Conditional _FORCE: all runtime libs share one dep set (_DC), so any lib's override
-# set stands in for the pattern (no $* in plain prereqs); the recipe still scopes per-goal.
-$(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: flake.lock flakes/cross-toolchain/gcc-runtime.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(call _overrides,dist-gcc-libgcc)),_FORCE)
+# Conditional _FORCE: no $* in plain prereqs, so the pattern forces when ANY lib's
+# fingerprint is stale (siblings then re-resolve too - cheap, and only when something
+# actually changed); the recipe still scopes its overrides + fp write per-goal.
+$(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: flake.lock flakes/cross-toolchain/gcc-runtime.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(foreach l,$(_GCC_RT_LIBS),$(call _fp_stale,dist-gcc-$(l)))),_FORCE)
 	@mkdir -p $(DIST)/lib $(dir $@)
 	@echo "  DIST-GCC     resolving nix cross-gcc-rt-$*-$(_TC_ARCH)..."
 	@set -e; \
@@ -1269,6 +1294,7 @@ $(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: flake.lock flakes/cross-toolch
 	  fi; \
 	  printf '%s' "$$out" > $@; \
 	fi
+	@$(call _fp_write,dist-gcc-$*)
 	@$(call _dist_done,$@)
 	@$(call _assert_file,$(DIST)/lib/$(_RT_SO.$*),$(_RT_SO.$*))
 	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
@@ -1357,7 +1383,7 @@ dist-gnumach: $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 # else.  Store-path-stamped; share/info/dir stashed/restored + merged (see dist-glibc).
 dist-gnumach-nix: $(DIST_GNUMACH_NIX_STAMP)
 
-$(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix $(if $(strip $(call _overrides,dist-gnumach-nix)),_FORCE)
+$(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix $(if $(call _fp_stale,dist-gnumach-nix),_FORCE)
 	$(call _dist_nix_copy,dist-gnumach-nix,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 
@@ -1436,7 +1462,7 @@ dist-hurd: $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 # Store-path-stamped; share/info/dir stashed/restored + hurd.info merged (see dist-glibc).
 dist-hurd-nix: $(DIST_HURD_NIX_STAMP)
 
-$(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix $(if $(strip $(call _overrides,dist-hurd-nix)),_FORCE)
+$(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix $(if $(call _fp_stale,dist-hurd-nix),_FORCE)
 	$(call _dist_nix_copy,dist-hurd-nix,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
 	@$(call _dist_finalize,$(EPOCH_HURD))
 
