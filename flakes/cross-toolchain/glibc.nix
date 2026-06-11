@@ -26,7 +26,7 @@
 #                                        hurd-headers + gnumach-headers
 #
 # Toolchain inputs come from the existing flake outputs:
-#   stage-1 gcc + cross-binutils      flakes/cross-toolchain (mkCrossPkgs)
+#   bootstrap-gcc + cross-binutils      flakes/cross-toolchain (mkCrossPkgs)
 #   gnumach-headers + hurd-headers    sibling flakes
 #   mig                               sibling flake
 #
@@ -35,17 +35,16 @@
 # `--with-headers=$sysroot/include` sees both as one GNU/Hurd installation.
 
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
-, srcInput, forkUrl
+, srcInput
   # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc is
   # referenced by absolute path for CC=/CXX=, so pass a derivation with bin/<tp>-gcc
-  # + bin/<tp>-g++).  Default = the libc-free nolibc stage-1 cc, used by the
+  # + bin/<tp>-g++).  Default = the libc-free bootstrap-gcc, used by the
   # reference glibc; the working glibc overrides it with the final ref-wrapped gcc.
 , buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc) }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
-  helpers = import ../lib { inherit lib; };
   # Shared cross-build determinism flags (the SAME source the dev-shell +
   # gnumach/hurd use), fed through NIX_CFLAGS_COMPILE below so the nix glibc comes
   # out byte-identical cross-host, like the in-tree build.
@@ -68,10 +67,6 @@ let
       m = builtins.match ".*define VERSION \"([0-9.]+)\".*" content;
     in
     if m == null then "unknown" else builtins.head m;
-
-  fullVersion = helpers.composeToolchainVersion {
-    inherit upstreamVersion srcInput forkUrl;
-  };
 
   # Userland targets only (the non-xen ones - i686, x86_64).
   hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
@@ -99,7 +94,7 @@ let
     # env vars in preConfigure (matches cross-hurd's bootstrap-funcs.sh).
     pkgs.stdenv.mkDerivation ({
       inherit pname;
-      version = fullVersion;
+      version = upstreamVersion;
       src = srcInput;
 
       # rtld.c: walk _environ directly in process_envvars_secure, else the ld.so

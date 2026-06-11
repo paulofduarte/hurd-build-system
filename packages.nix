@@ -24,7 +24,6 @@ let
   gnumachInfo = sourcesLib.info self "gnumach-src" gnumach-src;
   migInfo     = sourcesLib.info self "mig-src" mig-src;
   hurdInfo    = sourcesLib.info self "hurd-src" hurd-src;
-  glibcInfo   = sourcesLib.info self "glibc-src" glibc-src;
 
   # Userland targets (those that get a full toolchain): the non-xen ones.
   # The xen variants are kernel-only.
@@ -95,7 +94,6 @@ in
         hurdHeaders = hurdHeadersRef;
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-ref-src;
-        forkUrl  = glibcInfo.forkUrl;
       };
       # Expose the reference glibc as `glibc-ref-hurd-<arch>` - for the ABI gate
       # + `nix build` debugging.
@@ -112,7 +110,6 @@ in
         inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
-        forkUrl  = glibcInfo.forkUrl;
         # cross-gcc wrapped around the reference glibc (configure link-tests need
         # crt/libc; work != ref -> no cycle).
         buildCC = name: target: wrappedToolchain system target {
