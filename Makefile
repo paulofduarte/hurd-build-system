@@ -1195,7 +1195,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES)
 	@# MIG is a *native* host tool - runs on the build host, emits portable
 	@# .c/.h.  The dev-shell's $CC is the wrapped `<cpu>-gnu` cross cc, which
 	@# fails configure's "can create executables" test on the host.  Override
-	@# to the native pkgs.gcc; keep TARGET_CC (the stage-1 cross cc, exported
+	@# to the native pkgs.gcc; keep TARGET_CC (bootstrap-gcc, exported
 	@# by the dev shell) for the cpu.symc compile.
 	cd $(MIG_BUILD) && [ -f config.status ] || \
 	  CC=gcc LD= AR= NM= RANLIB= STRIP= OBJCOPY= \

@@ -33,7 +33,7 @@ let
   mkOne = name: target:
     let
       crossPkgs = mkCrossPkgs system target;
-      # The libc-free stage-1 cc (gccWithoutTargetLibc) - the `<cpu>-gnu` cross
+      # The libc-free bootstrap-gcc (gccWithoutTargetLibc) - the `<cpu>-gnu` cross
       # stdenv's own `.cc` would pull nixpkgs' meta-gated glibc.  install-data
       # compiles nothing; configure's AC_PROG_CC link test passes because
       # gnumach's configure.ac forces `-ffreestanding -nostdlib`, so no crt0/libc
@@ -49,14 +49,14 @@ let
       src = srcInput;
 
       # autoreconfHook supplies autoconf/automake/libtool/m4.  texinfo: `make
-      # install-data` builds doc/mach.info (makeinfo).  The stage-1 cc provides
+      # install-data` builds doc/mach.info (makeinfo).  bootstrap-gcc provides
       # ${tp}-gcc for configure's checks.  No bison/flex/perl - install-data
       # compiles nothing and stubs MIG.
       nativeBuildInputs = [ pkgs.autoreconfHook pkgs.texinfo cc ];
 
       CFLAGS = buildFlags.baseCflags;
 
-      # Pin CC to the stage-1 cross cc (host gcc would fail the --host=<cpu>-gnu
+      # Pin CC to the bootstrap-gcc cross cc (host gcc would fail the --host=<cpu>-gnu
       # configure).  USER_MIG is read via AC_CHECK_PROG but never invoked by
       # install-data, so a stub satisfies the check.
       preConfigure = ''

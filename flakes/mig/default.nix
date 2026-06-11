@@ -7,7 +7,7 @@
 # Two build modes, selected by the optional `checkToolchains` arg:
 #
 #   BOOTSTRAP (checkToolchains == null) - `mig-<name>`, built with the libc-free
-#     stage-1 cross cc, `doCheck = false`.  This is the mig that builds the
+#     bootstrap-gcc, `doCheck = false`.  This is the mig that builds the
 #     toolchain itself (hurd-headers, glibc-hurd), so it MUST precede any libc
 #     and can't run its tests (they compile stubs that #include <string.h>, a
 #     hosted-libc header the nolibc cc lacks).
@@ -62,7 +62,7 @@ let
     let
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
       crossPkgs = mkCrossPkgs system target;
-      # BOOTSTRAP: the libc-free stage-1 cc (gccWithoutTargetLibc) - the
+      # BOOTSTRAP: the libc-free bootstrap-gcc (gccWithoutTargetLibc) - the
       # `<cpu>-gnu` cross stdenv's own `.cc` would pull nixpkgs' meta-gated glibc
       # and break eval.  CHECKED: the wrapped cc, whose glibc-hurd sysroot gives
       # the test stubs their <string.h>.  Both share the same `<cpu>-gnu-`

@@ -10,7 +10,7 @@
 #                     `<cpu>-gnu` nixpkgs (lib/systems extension from
 #                     flakes/lib-systems-hurd) with `crossSystem` set, + the
 #                     gas-determinism chunksize overlay.
-#   toolchain.nix   - `mkAll` (cross-binutils + stage-1 cc per target), and the
+#   toolchain.nix   - `mkAll` (cross-binutils + bootstrap-gcc per target), and the
 #                     `wrappedToolchain` / `hurdTargets` helpers.  The gcc/glibc
 #                     chain is orchestrated in packages.nix.
 #   gcc-runtime.nix - `mkCompiler` (the posix cross-gcc) + `mkRuntimeLib` (one split

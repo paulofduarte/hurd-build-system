@@ -13,7 +13,7 @@
 # package's nativeBuildInputs and the shell picks it up.  The nix-built working
 # mig is added + exported as $MIG / $USER_MIG so mig is always available without a
 # `make mig`; `make src-mig` opts into an in-tree mig the Makefile builds instead.
-# The libc-free stage-1 cc is SUBTRACTED so its prefixed gcc can't shadow the
+# The libc-free bootstrap-gcc is SUBTRACTED so its prefixed gcc can't shadow the
 # wrapped cc on PATH.
 #
 # The cross compiler + binutils are wired by ABSOLUTE path in the shellHook
@@ -68,13 +68,13 @@ in
       detPrefixMap = lib.concatStringsSep " " (buildFlags.debugPrefixMap toolchain);
 
       # Build-tool deps inferred from this target's own derivations.  Subtract the
-      # own packages AND the libc-free stage-1 cc: mig is subtracted so a mig pulled
+      # own packages AND the libc-free bootstrap-gcc: mig is subtracted so a mig pulled
       # in via gnumach's build inputs doesn't sneak onto PATH through inference (the
-      # shell's mig is the `mig` arg, added + exported below).  The stage-1 cc comes
+      # shell's mig is the `mig` arg, added + exported below).  bootstrap-gcc comes
       # in via gnumach-headers' nativeBuildInputs but isn't the build cc here, and
       # its prefixed gcc must not shadow the wrapped cc on PATH - so subtracted.
-      stage1 = crossPkgs.buildPackages.gccWithoutTargetLibc;
-      ownDrvs = [ gnumach mig headers toolchain stage1 ];
+      bootstrapGcc = crossPkgs.buildPackages.gccWithoutTargetLibc;
+      ownDrvs = [ gnumach mig headers toolchain bootstrapGcc ];
       inferredBuildInputs = lib.subtractLists ownDrvs
         (lib.unique (lib.concatMap (d: d.nativeBuildInputs or []) [ gnumach mig headers ]));
     in
@@ -122,7 +122,7 @@ in
           else "unset GNUMACH_PLATFORM"}
 
         # Cross tools by ABSOLUTE path so configure + sub-makes use exactly
-        # these (never a host tool, never the stage-1 cc).  CC/CXX come from
+        # these (never a host tool, never bootstrap-gcc).  CC/CXX come from
         # the wrapped toolchain; the binutils from the unwrapped cross
         # binutils.  TARGET_CC is what MIG's cpu.symc compile uses.
         export CC=${toolchain}/bin/${tp}gcc
@@ -202,7 +202,7 @@ in
         #      abi-checked working glibc + gcc libdir, injected on every link).
         #      NIX_DONT_SET_RPATH gates exactly this.  It must be a REAL env var,
         #      not the wrapped bintools' add-local-ldflags-before.sh: gcc links
-        #      through its --with-ld bintools (the stage-1 wrapper), which never
+        #      through its --with-ld bintools (the bootstrap bintools wrapper), which never
         #      sources the working wrapper's suppression - same trap glibc.nix /
         #      gcc-runtime.nix hit, fixed the same way (a salted env var the real ld honours).
         export NIX_DONT_SET_RPATH${salt}=1

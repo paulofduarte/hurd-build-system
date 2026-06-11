@@ -232,16 +232,18 @@ make pin-src      # bump the pins to the forks' branch HEADs; then `make src`
 
 | Target | Action |
 |---|---|
-| `all` *(default)* | build the gnumach kernel (currently just `mach`; will grow) |
-| `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` - incremental compile, the path you want while iterating on `src/mig` inside `nix develop`.  For the clean nix-built wrapper, use `nix build .#mig-<ARCH>` directly - MIG is a host-arch tool, intentionally not bundled into `dist/` |
-| `mach` | build the gnumach kernel binary **in-tree** under `work/gnumach/$(ARCH)/` using the in-tree MIG from `make mig` - incremental compile, the path you want while iterating on `src/gnumach` |
-| `dist-mach` | copy clean nix-built kernel (`gnumach-<ARCH>`) into `dist/$(ARCH)/boot/gnumach`, plus the GNU Mach Info manual into `dist/$(ARCH)/share/info/mach.info*` and the RPC message-ID table into `dist/$(ARCH)/share/msgids/gnumach.msgids` |
-| `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-mach` + `dist-hurd` + `dist-glibc` + `dist-libgcc`; the Mach headers come from `dist-mach`'s `make install`, mig is host-arch, not bundled).  Real copies, not symlinks - `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
-| `glibc` | build glibc **in-tree** under `work/glibc/$(ARCH)/` - opt-in (run `make src-glibc` first; else a no-op).  Built against the Mach+Hurd sysroot with the libc-free stage-1 cc; with it, the in-tree userland links against your glibc instead of the toolchain's |
-| `dist-glibc` | install glibc into `dist/$(ARCH)/` - the single public glibc-shipment target.  When an in-tree glibc is opted in (`make src-glibc`) it installs that build; otherwise it ships the nix **deployable** glibc (`--prefix=/`) by verbatim-copying the resolved store output and store-path-stamping under `work/` so an unchanged glibc skips the copy.  `dist` includes it automatically |
-| `dist-libgcc` | install the **gcc base runtime** - `libgcc_s` + `libstdc++`, in runtime form (one SONAME-named real file per lib - `libgcc_s.so.1`, `libstdc++.so.6`, RUNPATH-scrubbed; no version/SONAME symlink pair, no dev `.so` symlinks, no `-gdb.py`, no situational `libatomic`/`libitm`/`libquadmath`/`libssp`) - from the nix cross-gcc into `dist/$(ARCH)/lib`.  Always sourced from nix (it's a gcc artefact, independent of the in-tree/nix glibc choice); `dist` includes it automatically |
+| `all` *(default)* | build the gnumach kernel + the Hurd userland (each in-tree if opted in, else the nix package) |
+| `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` - opt-in (run `make src-mig` first; else MIG is always available from the nix package).  For the clean nix-built wrapper, use `nix build .#mig-<ARCH>` directly - MIG is a host-arch tool, intentionally not bundled into `dist/` |
+| `gnumach` | build the gnumach kernel - **in-tree** under `work/gnumach/$(ARCH)/` if opted in (`make src-gnumach`), else realize the nix kernel (`gnumach-<ARCH>`) |
+| `hurd` | build the Hurd userland - **in-tree** under `work/hurd/$(ARCH)/` if opted in (`make src-hurd`), else realize the nix userland (`hurd-<ARCH>`) |
+| `dist-gnumach` | install the kernel into `dist/$(ARCH)/boot/gnumach` (+ the GNU Mach Info manual and the RPC message-ID table) - the in-tree build if opted in, else the nix kernel |
+| `dist-hurd` | install the Hurd userland into `dist/$(ARCH)/` - the in-tree build if opted in, else the nix userland |
+| `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-gnumach` + `dist-hurd` + `dist-glibc` + `dist-gcc-libgcc` + `dist-tzdata`; mig is host-arch, not bundled).  Real copies, not symlinks - `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
+| `glibc` | realize the nix glibc.  glibc is **nix-only** (the gcc model): version picking = edit the `glibc-src` input in `flake.nix`; patches live in `flakes/cross-toolchain/glibc.nix`.  In-tree gnumach/hurd/mig changes still reach it - their scoped `--override-input` set rebuilds the nix glibc (the Mach/Hurd RPC stubs live inside glibc) |
+| `dist-glibc` | install the nix **deployable** glibc (`--prefix=/`) into `dist/$(ARCH)/` by verbatim-copying the resolved store output, store-path-stamped under `work/` so an unchanged glibc skips the copy.  `dist` includes it automatically |
+| `dist-gcc-<lib>` | install ONE gcc runtime lib into `dist/$(ARCH)/lib` (`libgcc`, `libstdc++`, `libatomic`, `libitm`, `libquadmath`, `libssp`, `libgomp`) from its own nix derivation (`cross-gcc-rt-<lib>-<ARCH>`, built against the **working** glibc).  `make dist` ships only `libgcc` (glibc dlopens `libgcc_s.so.1` for unwinding); opt the rest in per-target or via `DIST_GCC_LIBS="libstdc++ ..."` |
 | `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
-| `check-mach` | the actual kernel-tests recipe `check` delegates to |
+| `check-gnumach` | the actual kernel-tests recipe `check` delegates to |
 | `run` | boot the built kernel in qemu - see the [Run](#3-run) section for scenarios/flags |
 | `run-help` | print all `make run` options (`ARCH`/`SCENARIO`/`RUN_*`) |
 | `sidekick` | build the helper VM (x86_64 Alpine - used by Hurd scenarios for ext2 extraction + grub-mkrescue ISO assembly; auto-built on demand) |

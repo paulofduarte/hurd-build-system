@@ -7,7 +7,7 @@
 # This imports the PATCHED nixpkgs source (the lib/systems extension from
 # flakes/lib-systems-hurd, which teaches nixpkgs to parse the `<cpu>-gnu`
 # Hurd triplet) with `crossSystem.config` set to the target's `<cpu>-gnu`
-# config.  One cross-pkgs set serves everything: the libc-free stage-1 cc
+# config.  One cross-pkgs set serves everything: the libc-free bootstrap-gcc
 # (gccWithoutTargetLibc) that builds gnumach-headers / mig / glibc-hurd,
 # and - via toolchain.nix's wrapCCWith - the final wrapped cc that builds
 # the gnumach kernel + the Hurd userland.

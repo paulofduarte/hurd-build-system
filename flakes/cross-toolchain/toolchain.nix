@@ -6,7 +6,7 @@
 # Outputs (per non-xen userland target):
 #   cross-binutils-<arch>     cross-binutils, target-prefixed (`i686-gnu-as`, ...).
 #                             No libc dep; safe to build first.
-#   cross-gcc-stage1-<arch>   bootstrap-gcc (gccWithoutTargetLibc) - bare driver +
+#   bootstrap-gcc-<arch>      the bootstrap compiler (gccWithoutTargetLibc) - bare driver +
 #                             cc1 + libgcc.a (no libgcc_s/libstdc++/libc).  The
 #                             libc-free cc that compiles gnumach-headers, mig, and
 #                             the REFERENCE glibc (gnumach's configure forces
@@ -104,7 +104,7 @@ let
         # add-local-ldflags-before.sh sourced by THIS wrapper's ld, AND an export
         # appended to add-flags.sh (sourced by the consumer's setup hook) so the
         # var reaches links that bypass this wrapper - cross-gcc's --with-ld runs the
-        # stage-1 ld-wrapper, which only honours the env var.  Without the env, the
+        # bootstrap bintools ld-wrapper, which only honours the env var.  Without the env, the
         # LINUX sandbox bakes a 4-entry store DT_RUNPATH darwin omits (cross-host
         # divergence in every hurd binary).
         #
@@ -129,7 +129,7 @@ in
   inherit wrappedToolchain hurdTargets;
 
   # Pre-libc components merged into packages.<system>: two outputs per hurd
-  # target (binutils + gcc-stage1).  The toolchain chain (bootstrap-gcc -> ref
+  # target (binutils + bootstrap-gcc).  The toolchain chain (bootstrap-gcc -> ref
   # glibc -> cross-gcc -> work glibc -> cross-gcc-rt-* + wrapped toolchain) is
   # orchestrated in packages.nix, since it interleaves glibc.nix calls (which
   # thread mig/headers) with gcc-runtime.nix's mkCompiler/mkRuntimeLib.
@@ -138,7 +138,7 @@ in
       hts = hurdTargets targets;
       pairs = lib.concatLists (lib.mapAttrsToList (name: target: [
         { name = "cross-binutils-${name}";   value = (mkCrossPkgs system target).buildPackages.binutils-unwrapped; }
-        { name = "cross-gcc-stage1-${name}"; value = (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc; }
+        { name = "bootstrap-gcc-${name}"; value = (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc; }
       ]) hts);
     in
     lib.listToAttrs pairs;

@@ -54,12 +54,12 @@ in
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 
       # Pre-libc cross-toolchain stages: per-target `cross-binutils-<arch>` +
-      # `cross-gcc-stage1-<arch>` (the libc-free cc that builds gnumach-headers
+      # `bootstrap-gcc-<arch>` (the libc-free cc that builds gnumach-headers
       # / mig / glibc-hurd).  See flakes/cross-toolchain/toolchain.nix.
       toolchainStagePkgs = mkAll system targets;
 
       # ----------------------------------------------------------------------
-      # 2-pass bootstrap.  Chain: stage-1 nolibc gcc -> ref glibc -> final gcc ->
+      # The toolchain chain: bootstrap-gcc -> ref glibc -> cross-gcc ->
       # work glibc.  The nolibc cc builds the reference glibc directly (a nolibc
       # gcc builds glibc fine); the final gcc binds the ref glibc's ABI, not its
       # bytes, so the dist stays byte-identical with no separate complete-gcc pass.
@@ -86,7 +86,7 @@ in
       };
 
       # Reference glibc - the ABI baseline the final gcc's runtime binds against.
-      # Built directly by the nolibc stage-1 cc (glibc.nix's default buildCC).
+      # Built directly by bootstrap-gcc (glibc.nix's default buildCC).
       # Never shipped or run: the final gcc binds its ABI/headers, not its bytes.
       glibcRefHurd = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
