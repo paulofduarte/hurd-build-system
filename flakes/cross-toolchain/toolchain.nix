@@ -80,6 +80,11 @@ let
         # header-using objects bake glibc/Mach types), so this is load-bearing, not cosmetic.
         echo "-B${libgcc}/lib/gcc/${target.crossTarget}/${cc.version}" >> $out/nix-support/cc-cflags
         echo "-L${libgcc}/lib" >> $out/nix-support/cc-ldflags
+        # The -B above makes gcc's internal include dir resolve INSIDE the libgcc
+        # package, and DWARF5 .debug_line_str records that dir on any TU touching a
+        # gcc-internal header (libstdc++exp.a, libitm) - map it to the shared canon
+        # name so those bytes survive a content-identical libgcc store-path move.
+        echo "-ffile-prefix-map=${libgcc}=${buildFlags.libgccCanonRoot}" >> $out/nix-support/cc-cflags
       '';
       bintools = bp.wrapBintoolsWith {
         bintools = bp.binutils-unwrapped;

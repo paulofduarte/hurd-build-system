@@ -94,4 +94,11 @@ rec {
   gccRuntimeCanonSrc     = "/gcc-runtime-src";
   gccRuntimeCanonBuild   = "/gcc-runtime-build";
   gccRuntimeCanonSysroot = "/gcc-runtime-sysroot";
+
+  # Canonical name for the split rt-libgcc package the wrapper -B's: gcc's
+  # internal include dir lives inside it, and DWARF .debug_line_str records
+  # that dir on any TU touching a gcc-internal header (libstdc++exp.a, libitm).
+  # Without the map those bytes shift whenever libgcc's STORE PATH moves, even
+  # content-identical rebuilds.  Consumed by toolchain.nix's wrapper.
+  libgccCanonRoot = "/libgcc";
 }
