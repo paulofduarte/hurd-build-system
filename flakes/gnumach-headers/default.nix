@@ -23,7 +23,14 @@
 # (needed at configure for AC_CHECK_PROG, never invoked) points at /bin/true so
 # the check passes without dragging MIG into the inputs.
 
-{ nixpkgs, system, targets, mkCrossPkgs, srcInput, contentAddressed ? false }:
+{ nixpkgs, system, targets, mkCrossPkgs, srcInput, contentAddressed ? false
+  # Ship include/ only - drop share/ (mach.info docs) from the output.  No
+  # consumer reads it (glibc/mig compile against include/; the dist gets its
+  # mach.info from the kernel package), and trimming makes the output - and
+  # with contentAddressed its CA path - independent of doc-only changes, so
+  # they stop the rebuild cascade AT the headers.  The ref twin keeps the
+  # default (trimming it would move the frozen toolchain drvs for nothing).
+, includeOnly ? false }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -87,6 +94,9 @@ let
         description = "GNU Mach public headers for ${target.crossTarget}";
         platforms = platforms.all;
       };
-    } // helpers.mkCaAttrs contentAddressed);
+    } // helpers.mkCaAttrs contentAddressed
+      # optionalAttrs, NOT optionalString: an empty-but-SET postInstall would
+      # still move the ref twin's drv hash (and the whole frozen toolchain).
+      // lib.optionalAttrs includeOnly { postInstall = ''rm -rf "$out/share"''; });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-headers-${name}" (mkOne name target)) targets

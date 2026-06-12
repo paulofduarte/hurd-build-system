@@ -45,6 +45,7 @@ in
         inherit nixpkgs system targets mkCrossPkgs;
         srcInput = gnumach-src;
         contentAddressed = true;
+        includeOnly = true;
       };
       mig = import ./flakes/mig {
         inherit nixpkgs system targets gnumachHeaders mkCrossPkgs;
@@ -57,6 +58,7 @@ in
         srcInput = hurd-src;
         forkUrl = hurdInfo.forkUrl;
         contentAddressed = true;
+        includeOnly = true;
       };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 
