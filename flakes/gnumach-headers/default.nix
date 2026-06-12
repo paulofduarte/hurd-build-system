@@ -23,11 +23,12 @@
 # (needed at configure for AC_CHECK_PROG, never invoked) points at /bin/true so
 # the check passes without dragging MIG into the inputs.
 
-{ nixpkgs, system, targets, mkCrossPkgs, srcInput }:
+{ nixpkgs, system, targets, mkCrossPkgs, srcInput, contentAddressed ? false }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
+  helpers = import ../lib { inherit lib; };
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   mkOne = name: target:
@@ -41,7 +42,7 @@ let
       cc = crossPkgs.buildPackages.gccWithoutTargetLibc;
       tp = target.crossTarget;
     in
-    pkgs.stdenv.mkDerivation {
+    pkgs.stdenv.mkDerivation ({
       pname   = "gnumach-headers-${tp}";
       version = "src";
 
@@ -86,6 +87,6 @@ let
         description = "GNU Mach public headers for ${target.crossTarget}";
         platforms = platforms.all;
       };
-    };
+    } // helpers.mkCaAttrs contentAddressed);
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-headers-${name}" (mkOne name target)) targets

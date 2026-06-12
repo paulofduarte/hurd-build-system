@@ -23,7 +23,7 @@
 #
 # Source comes from the pinned `hurd-src` flake input.
 
-{ nixpkgs, system, targets, mig, srcInput, forkUrl }:
+{ nixpkgs, system, targets, mig, srcInput, forkUrl, contentAddressed ? false }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -107,6 +107,7 @@ let
         description = "GNU Hurd public headers for ${target.crossTarget}";
         platforms = platforms.all;
       };
-    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
+    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; }
+      // helpers.mkCaAttrs contentAddressed);
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-headers-${name}" (mkOne name target)) hurdTargets

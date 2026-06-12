@@ -30,7 +30,10 @@ NIX_INSTALL_URL := https://nix.dev/install-nix
 NIX := $(shell command -v nix 2>/dev/null)
 
 # Enables nix-command + flakes per invocation so no global nix.conf is needed.
-NIX_FLAKE := $(NIX) --extra-experimental-features 'nix-command flakes'
+# ca-derivations: the working gnumach/hurd headers are content-addressed
+# (early cutoff for the glibc-hurd rebuild cascade) - anything evaluating
+# their closure needs the feature.
+NIX_FLAKE := $(NIX) --extra-experimental-features 'nix-command flakes ca-derivations'
 # -L streams full build logs (build-only; eval calls use $(NIX_FLAKE) directly).
 NIX_BUILD := $(NIX_FLAKE) build -L
 

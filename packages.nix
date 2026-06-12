@@ -36,9 +36,15 @@ in
 {
   packages = forAllSystems (system:
     let
+      # Working headers are content-addressed: a src change that leaves the
+      # installed headers byte-identical (.c-only edits) stops the rebuild
+      # cascade (glibc-hurd, the runtime libs) at the headers.  The ref twins
+      # below stay input-addressed - their pins are frozen, so CA would only
+      # add resolution overhead.
       gnumachHeaders = import ./flakes/gnumach-headers {
         inherit nixpkgs system targets mkCrossPkgs;
         srcInput = gnumach-src;
+        contentAddressed = true;
       };
       mig = import ./flakes/mig {
         inherit nixpkgs system targets gnumachHeaders mkCrossPkgs;
@@ -49,6 +55,7 @@ in
         inherit nixpkgs system targets mig;
         srcInput = hurd-src;
         forkUrl = hurdInfo.forkUrl;
+        contentAddressed = true;
       };
       sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
 
