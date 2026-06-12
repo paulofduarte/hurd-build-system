@@ -363,31 +363,62 @@ _FORCE:
 # mtimes, an overridden src/<m> changes outside the stamp's prereq list, and a flag
 # FLIP changes the resolve while every file stays old.  So each goal records a
 # SOURCES FINGERPRINT beside its stamp (<stamp>.fp): the git-content state of
-# everything the resolve reads - the repo (HEAD + a hash of `git diff HEAD` when
-# dirty) and each OPTED-IN dep module likewise.  Untracked files are invisible to
-# nix's git fetcher AND to the fingerprint, so the two agree by construction.  A
-# fingerprint mismatch makes the goal gate-stale and _FORCEs its recipe (which
-# re-resolves; the store-path compare still guards the copy); a match is a true
-# "Nothing to be done".  Over-triggering (an irrelevant tracked edit -> one cheap
-# re-eval) is the only failure mode; a false skip cannot happen.
+# everything the resolve reads, and each OPTED-IN dep module likewise.  Untracked
+# files are invisible to nix's git fetcher AND to the fingerprint, so the two agree
+# by construction.  A fingerprint mismatch makes the goal gate-stale and _FORCEs its
+# recipe (which re-resolves; the store-path compare still guards the copy); a match
+# is a true "Nothing to be done".  Over-triggering (an irrelevant tracked edit ->
+# one cheap re-eval) is the only failure mode; a false skip cannot happen.
 _OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix $(addprefix dist-gcc-,$(_GCC_RT_LIBS))
 
+# The repo fingerprint is SCOPED to the flake-eval read surface - the root nix
+# files, flakes/, the build-rev input dir, and the Makefile (recipe semantics) -
+# so tracked-noise edits (docs, cloud-init, CI) stop re-firing resolves.  The
+# audited eval surface: every readFile/import in the flake stays inside this set
+# (flakes/sources reads flake.lock; module reads come from the *-src INPUTS,
+# covered by the lock in-scope or the per-module fps below).  Two invariants
+# guard the scoping:
+#   - anything NEW the eval reads from the repo must live in (or be added to)
+#     $(_FP_SCOPE) - an out-of-scope read is a silent under-coverage;
+#   - artifacts that bake the +build.<rev> token (the kernel/userland dists)
+#     carry the token as an EXPLICIT fp term below, since out-of-scope commits
+#     legitimately move it.
+_FP_SCOPE := Makefile flake.nix flake.lock packages.nix target-archs.nix .build-rev flakes
+_REV_GOALS := dist-gnumach-nix dist-hurd-nix
+
 # $(call _git_fp,DIR): content fingerprint of what nix's git fetcher sees in DIR.
-_git_fp = $(shell git -C $(1) rev-parse --short HEAD 2>/dev/null)$(shell git -C $(1) diff --quiet HEAD 2>/dev/null || echo .d$$(git -C $(1) diff HEAD 2>/dev/null | sha256sum | cut -c1-12))
+_git_fp = $(shell git -C $(1) rev-parse --short HEAD 2>/dev/null)$(shell git -C $(1) diff --quiet HEAD 2>/dev/null || echo .d$$(git -C $(1) diff HEAD 2>/dev/null | git hash-object --stdin | cut -c1-12))
 # Memoized lazily (first use) so `make help`/plain parses don't pay the git cost.
-_FP_REPO    = $(or $(__fp_repo),$(eval __fp_repo := $(call _git_fp,.))$(__fp_repo))
+# Repo: committed blob ids (ls-tree) + the dirty delta, both path-scoped.
+_FP_REPO    = $(or $(__fp_repo),$(eval __fp_repo := $(shell { git ls-tree -r HEAD -- $(_FP_SCOPE); git diff HEAD -- $(_FP_SCOPE); } 2>/dev/null | git hash-object --stdin | cut -c1-16))$(__fp_repo))
 _FP.mig     = $(or $(__fp_mig),$(eval __fp_mig := $(call _git_fp,$(MIG_SRC)))$(__fp_mig))
 _FP.gnumach = $(or $(__fp_gnumach),$(eval __fp_gnumach := $(call _git_fp,$(GNUMACH_SRC)))$(__fp_gnumach))
 _FP.hurd    = $(or $(__fp_hurd),$(eval __fp_hurd := $(call _git_fp,$(HURD_SRC)))$(__fp_hurd))
-# $(call _goal_fp,GOAL): the goal's full fingerprint - repo + each opted-in dep.
-_goal_fp = repo=$(_FP_REPO)$(foreach d,$(_DEPS.$(1)),$(if $($(_FLAG.$(d))), $(d)=$(_FP.$(d))))
+# IN-TREE goals carry an ENV fingerprint: the scoped repo fp ONLY (recipes +
+# the dev-shell/toolchain eval surface).  Module srcs deliberately stay on the
+# fast mtime path - a .c edit must rebuild INCREMENTALLY, never trigger the
+# env-change clean below.  On env-fp mismatch the configure rules WIPE the
+# build dir first: artifacts compiled under a superseded env can't be trusted
+# and make's mtimes can't see flag changes (the 2026-06-12 naked-install
+# scatter; the long-deferred config-fingerprint sentinel).
+_ENV_GOALS := gnumach hurd mig gnumach-headers hurd-headers dist-gnumach-tree dist-hurd-tree
+_FP_GOALS  := $(_OVR_GOALS) $(_ENV_GOALS)
+# $(call _goal_fp,GOAL): the goal's full fingerprint - scoped repo, the build-rev
+# token for the version-bearing goals, + each opted-in dep module.
+_goal_fp = repo=$(_FP_REPO)$(if $(filter $(1),$(_REV_GOALS)), rev=$(_BUILD_REV))$(foreach d,$(_DEPS.$(1)),$(if $($(_FLAG.$(d))), $(d)=$(_FP.$(d))))
+# $(call _fp_of,GOAL): the fingerprint a goal records - env-only for in-tree
+# goals, the full composition for the override-resolving nix halves.
+_fp_of = $(if $(filter $(1),$(_ENV_GOALS)),repo=$(_FP_REPO),$(call _goal_fp,$(1)))
 # $(call _fp_stale,GOAL): non-empty iff GOAL has been built (its stamp exists) and
 # its recorded fingerprint differs.  A missing STAMP is deliberately not fp-stale:
 # make builds a missing target when requested anyway, and a never-built sibling
 # must not permanently _FORCE the dist-gcc pattern rule.
-_fp_stale = $(if $(filter $(1),$(_OVR_GOALS)),$(shell if [ -e $(_MARK.$(1)) ]; then [ "$$(cat $(_MARK.$(1)).fp 2>/dev/null)" = "$(call _goal_fp,$(1))" ] || echo $(1)-fp; fi))
-# $(call _fp_write,GOAL): recipe tail - record the fingerprint the resolve used.
-_fp_write = printf '%s' "$(call _goal_fp,$(1))" > $(_MARK.$(1)).fp
+_fp_stale = $(if $(filter $(1),$(_FP_GOALS)),$(shell if [ -e $(_MARK.$(1)) ]; then [ "$$(cat $(_MARK.$(1)).fp 2>/dev/null)" = "$(call _fp_of,$(1))" ] || echo $(1)-fp; fi))
+# $(call _fp_write,GOAL): recipe tail - record the fingerprint the build used.
+_fp_write = printf '%s' "$(call _fp_of,$(1))" > $(_MARK.$(1)).fp
+# $(call _env_clean,GOAL,DIRS): configure-rule head - on env-fp mismatch wipe
+# DIRS so the rebuild starts clean under the new env.
+_env_clean = if [ -n "$(call _fp_stale,$(1))" ]; then echo "  ENV-CLEAN  $(1)"; rm -rf $(2); fi
 
 # Dirtiness cascade (in-tree only).  $(call _src_is_dirty,MODULE) -> "1" if src/<m>
 # has uncommitted TRACKED changes; $(call _chain_dirty,TARGET) -> non-empty if TARGET
@@ -811,6 +842,12 @@ _BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache 
 #                  a nix module is a fixed external input (no edge).
 # A goal is stale if its mark is missing, a watched file out-dates the mark, or any
 # _SDEPS goal is stale.  A goal with neither _MARK nor _SDEPS is conservatively stale.
+#
+# CONTRACT: the gate watches the MARK, not every artifact beneath it - checking
+# the whole build tree per run would forfeit the short-circuit.  Hand-deleting an
+# individual artifact (a lib under work/hurd, an object dir) requires removing the
+# goal's mark too (e.g. work/hurd/<arch>/.built) so the inner make gets a chance
+# to re-derive it; `clean`/`mrproper` already do this for what they remove.
 
 # Marks - build outputs (NOT epoch-normalised, unlike the shipped dist tree) + the
 # dist work-side stamps.  GNUMACH_HDR_STAMP is the build-dir stamp, not the shared
@@ -948,7 +985,10 @@ else
 # GNU Make 3.81 doesn't expose `-j` there at all.  So read the parent's argv via `ps`
 # and filter option-like tokens (starting with `-`); goals + overrides pass separately.
 _PARENT_ARGV  := $(shell ps -p $$PPID -o args= 2>/dev/null)
-_PARENT_FLAGS := $(filter -%,$(_PARENT_ARGV))
+# Whitelist, not every dash token: the argv can contain option-like words that
+# are NOT make flags (a -f from a wrapper script, terms of a compound command);
+# forward only the flags worth propagating into the inner make.
+_PARENT_FLAGS := $(filter -j -j% -k -l% -n -q -s -B,$(filter -%,$(_PARENT_ARGV)))
 
 # Two things about the recipe below:
 #   - bare `make` (not $(MAKE)) inside the shell resolves via PATH to the nix-provided
@@ -1142,8 +1182,9 @@ else
 # Opted out of the in-tree kernel: populate the build sysroot from the NIX
 # gnumach-headers package (same cp -rs farm) so an in-tree glibc/mig still finds the
 # Mach headers and bakes the same paths.
-$(GNUMACH_HDR_STAMP): packages.nix flake.lock flakes/gnumach-headers/default.nix
+$(GNUMACH_HDR_STAMP): $(if $(call _fp_stale,gnumach-headers),_FORCE)
 	$(call _headers_nix,gnumach-headers,gnumach-headers-$(ARCH),$(GNUMACH_HDR_STAGE),$(GNUMACH_HDR_STAMP))
+	@$(call _fp_write,gnumach-headers)
 endif
 
 # ---- hurd-headers (private: the Hurd half of the in-tree glibc's sysroot) ----
@@ -1174,8 +1215,9 @@ else
 # Opted out of the in-tree userland: populate the build sysroot from the NIX
 # hurd-headers package (cp -rs farm).  Real-file vs cp -rs symlink is equivalent for
 # glibc's DWARF here (no shorter symlink target like mach/machine to collapse).
-$(HURD_HDR_STAMP): packages.nix flake.lock flakes/hurd-headers/default.nix
+$(HURD_HDR_STAMP): $(if $(call _fp_stale,hurd-headers),_FORCE)
 	$(call _headers_nix,hurd-headers,hurd-headers-$(_TC_ARCH),$(HURD_HDR_STAGE),$(HURD_HDR_STAMP))
+	@$(call _fp_write,hurd-headers)
 endif
 
 # ---- mig ----
@@ -1193,7 +1235,8 @@ MIG_SRC_FILES := $(call _tracked_files,$(MIG_SRC))
 # tracked src/hurd edit makes $(HURD_BUILD)/.built stale -> inner make re-runs.
 HURD_SRC_FILES := $(call _tracked_files,$(HURD_SRC))
 ifdef MIG_IN_TREE
-$(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES)
+$(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES) $(if $(call _fp_stale,mig),_FORCE)
+	@$(call _env_clean,mig,$(MIG_BUILD) $(MIG_INSTALL_DIR))
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool - runs on the build host, emits portable
 	@# .c/.h.  The dev-shell's $CC is the wrapped `<cpu>-gnu` cross cc, which
@@ -1206,7 +1249,13 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES)
 	    --target=$(MIG_TARGET) \
 	    --prefix=$(MIG_INSTALL_DIR) \
 	    TARGET_CPPFLAGS="-I$(SYSROOT)/include"
+	@# Scrub 0-byte cpu.* residue: mig's `gawk > cpu.symc` truncates the target
+	@# before running gawk and upstream has no .DELETE_ON_ERROR, so a failed run
+	@# leaves an empty file a resume would trust by mtime (empty cpu.h -> the
+	@# global.c "undeclared identifier" wall).
+	@find $(MIG_BUILD) -maxdepth 1 \( -name 'cpu.sym[co]' -o -name cpu.h \) -size 0 -delete 2>/dev/null || true
 	cd $(MIG_BUILD) && $(MAKE) CC=gcc install
+	@$(call _fp_write,mig)
 
 $(MIG_SRC)/configure: $(MIG_SRC)/configure.ac $(VERSION_FP_STAMP)
 	cd $(MIG_SRC) && autoreconf -i
@@ -1266,7 +1315,10 @@ endef
 
 dist-glibc: $(DIST_GLIBC_STAMP)
 
-$(DIST_GLIBC_STAMP): packages.nix flake.lock flakes/cross-toolchain/glibc.nix flakes/cross-toolchain/toolchain.nix $(if $(call _fp_stale,dist-glibc),_FORCE)
+# No file prereqs: the scoped fingerprint covers the whole flake-eval surface
+# (every file the old explicit prereq lists named, and more), so the _FORCE
+# conditional is the single staleness source for the fp-covered stamp rules.
+$(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
 	$(call _dist_nix_copy,dist-glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_STAMP),lib/libc.so.0.3,libc.info)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
@@ -1291,7 +1343,7 @@ $(addprefix dist-gcc-,$(_GCC_RT_LIBS)): dist-gcc-%: $(DIST_GCC_STAMP_DIR)/%-$(_V
 # Conditional _FORCE: no $* in plain prereqs, so the pattern forces when ANY lib's
 # fingerprint is stale (siblings then re-resolve too - cheap, and only when something
 # actually changed); the recipe still scopes its overrides + fp write per-goal.
-$(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: flake.lock flakes/cross-toolchain/gcc-runtime.nix flakes/cross-toolchain/toolchain.nix $(if $(strip $(foreach l,$(_GCC_RT_LIBS),$(call _fp_stale,dist-gcc-$(l)))),_FORCE)
+$(DIST_GCC_STAMP_DIR)/%-$(_VARIANT)$(ARCH).stamp: $(if $(strip $(foreach l,$(_GCC_RT_LIBS),$(call _fp_stale,dist-gcc-$(l)))),_FORCE)
 	@mkdir -p $(DIST)/lib $(dir $@)
 	@echo "  DIST-GCC     resolving nix cross-gcc-rt-$*-$(_TC_ARCH)..."
 	@set -e; \
@@ -1353,8 +1405,9 @@ $(DIST_TZDATA_STAMP): flake.lock
 ifdef GNUMACH_IN_TREE
 gnumach: $(GNUMACH_KERNEL)
 
-$(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG)
+$(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG) $(if $(call _fp_stale,gnumach),_FORCE)
 	@$(call _req_env,BASE_CFLAGS)
+	@$(call _env_clean,gnumach,$(GNUMACH_BUILD))
 	mkdir -p $(GNUMACH_BUILD)
 	cd $(GNUMACH_BUILD) && \
 	  USER_MIG=$(MIG) MIG=$(MIG) \
@@ -1371,23 +1424,40 @@ GNUMACH_SRC_FILES := $(call _tracked_files,$(GNUMACH_SRC))
 # directly (mtime only, git-invisible).  VERSION=<rich> overrides automake's $(VERSION)
 # - which it hardcodes into the Makefile from the plain version.m4, out of reach of
 # _bake_version's configure sed - so mach.info's "@set VERSION" is the rich version too.
-$(GNUMACH_KERNEL): $(MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
+# One inner-make invocation for BUILD and INSTALL: `make install` can RECOMPILE
+# stale objects and REGENERATE mach.info, so it must carry the exact same
+# determinism env as the build - a half-stale tree otherwise gets its rebuild
+# at install time NAKED (raw DWARF paths, automake's plain VERSION and the
+# build-date mdate in mach.info; seen on the 2026-06-12 linux matrix).
+# automake generates the info set INTO SRCDIR (gitignored), so one naked regen
+# poisons every later build on both hosts - the rm below forces a fresh regen
+# under THIS invocation's env every time (makeinfo is ~seconds), making the
+# shipped docs deterministic by construction instead of by mtime trust.
+define _gnumach_make
 	@$(call _req_env,GNUMACH_CANON_BUILD)
 	@$(call _nix_version,gnumach,gnumach-$(ARCH)); \
 	sde=$$(git -C $(GNUMACH_SRC) log -1 --format=%ct 2>/dev/null); \
 	[ -n "$$sde" ] && touch -d @$$sde $(GNUMACH_SRC)/doc/*.texi; \
+	rm -f $(GNUMACH_SRC)/doc/mach.info* $(GNUMACH_SRC)/doc/version.texi $(GNUMACH_SRC)/doc/stamp-vti; \
 	cd $(GNUMACH_BUILD) && \
 	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE $(call _det_maps,$(GNUMACH_BUILD),$(GNUMACH_SRC),$(GNUMACH_CANON_BUILD))" \
 	  NIX_HARDENING_ENABLE= \
-	  $(MAKE) VERSION="$$ver"
+	  $(MAKE) VERSION="$$ver" $(1)
+endef
+
+$(GNUMACH_KERNEL): $(MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
+	$(call _gnumach_make,)
+	@$(call _fp_write,gnumach)
 
 # In-tree install: `make install` the work/ build into $(DIST_GNUMACH); kernel under
 # boot/ + share/ docs.  gnumach's install is plain (no setuid), no fakeroot.
 dist-gnumach-tree: $(DIST_GNUMACH_TREE_STAMP)
 
 # Stamp target, not the epoch-stamped dist kernel (mtime-normalised by _dist_finalize).
-$(DIST_GNUMACH_TREE_STAMP): $(GNUMACH_KERNEL)
-	cd $(GNUMACH_BUILD) && $(MAKE) install prefix=$(DIST_GNUMACH)
+$(DIST_GNUMACH_TREE_STAMP): $(GNUMACH_KERNEL) $(if $(call _fp_stale,dist-gnumach-tree),_FORCE)
+	$(call _gnumach_make,install prefix=$(DIST_GNUMACH))
+	@$(call _assert_file,$(DIST_GNUMACH)/boot/gnumach,boot/gnumach)
+	@$(call _fp_write,dist-gnumach-tree)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 	@$(call _dist_done,$@)
 endif  # GNUMACH_IN_TREE - opted-out `gnumach`/`dist-gnumach-tree` stubs are top-level (above)
@@ -1402,7 +1472,7 @@ dist-gnumach: $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 # else.  Store-path-stamped; share/info/dir stashed/restored + merged (see dist-glibc).
 dist-gnumach-nix: $(DIST_GNUMACH_NIX_STAMP)
 
-$(DIST_GNUMACH_NIX_STAMP): packages.nix flake.lock flakes/gnumach/default.nix $(if $(call _fp_stale,dist-gnumach-nix),_FORCE)
+$(DIST_GNUMACH_NIX_STAMP): $(if $(call _fp_stale,dist-gnumach-nix),_FORCE)
 	$(call _dist_nix_copy,dist-gnumach-nix,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 
@@ -1427,12 +1497,20 @@ hurd: $(HURD_BUILD)/.built
 
 # The in-tree userland links against the wrapped cc's nix glibc (glibc is nix-only;
 # its headers/libs ride the toolchain's baked -isystem/-L).
-$(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
+# Same build/install env unification as _gnumach_make: hurd's `make install`
+# relinks/recompiles stale pieces, so it carries the canon maps too.  $(1) =
+# command wrapper (fakeroot for install), $(2) = extra goals/vars.
+define _hurd_make
 	@$(call _req_env,HURD_CANON_BUILD)
 	cd $(HURD_BUILD) && \
 	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE $(call _det_maps,$(HURD_BUILD),$(HURD_SRC),$(HURD_CANON_BUILD))" \
-	  $(MAKE) MIG=$(MIG) USER_MIG=$(MIG)
+	  $(1) $(MAKE) MIG=$(MIG) USER_MIG=$(MIG) $(2)
+endef
+
+$(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
+	$(call _hurd_make,,)
 	@touch $(HURD_BUILD)/.built
+	@$(call _fp_write,hurd)
 
 # _bake_version stamps the SAME composed build-rev version the nix build bakes, so
 # nix == in-tree; a dirty src/hurd additionally gets `-dirty` (nix can't see that).
@@ -1440,8 +1518,9 @@ $(HURD_SRC)/configure: $(HURD_SRC)/configure.ac $(VERSION_FP_STAMP)
 	cd $(HURD_SRC) && autoreconf -i
 	$(call _bake_version,hurd,hurd-$(_TC_ARCH),$(HURD_SRC))
 
-$(HURD_CONFIGURED): $(MIG) $(HURD_SRC)/configure
+$(HURD_CONFIGURED): $(MIG) $(HURD_SRC)/configure $(if $(call _fp_stale,hurd),_FORCE)
 	@$(call _req_env,BASE_CFLAGS HURD_EXTRA_CFLAGS HURD_DEPLOY_FLAGS)
+	@$(call _env_clean,hurd,$(HURD_BUILD))
 	mkdir -p $(HURD_BUILD)
 	cd $(HURD_BUILD) && \
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
@@ -1459,13 +1538,13 @@ dist-hurd-tree: $(DIST_HURD_TREE_STAMP)
 # fakeroot fakes the chown/setuid (cosmetic for a dev dist tree).  Keyed on the installed
 # ext2fs translator (headline output, analog of boot/gnumach) so dist/ holds only install
 # results, no completion stamp.  Stamp target, not the epoch-stamped ext2fs.
-$(DIST_HURD_TREE_STAMP): $(HURD_BUILD)/.built
-	cd $(HURD_BUILD) && fakeroot $(MAKE) install DESTDIR=$(DIST_HURD) \
-	  MIG=$(MIG) USER_MIG=$(MIG)
+$(DIST_HURD_TREE_STAMP): $(HURD_BUILD)/.built $(if $(call _fp_stale,dist-hurd-tree),_FORCE)
+	$(call _hurd_make,fakeroot,install DESTDIR=$(DIST_HURD))
 	@# hurd's `make install` doesn't merge hurd.info into the shared Info dir, so
 	@# add the Hurd entry explicitly (as dist-gnumach-tree does for mach.info and
 	@# dist-hurd-nix for the nix path) or the merged index loses "* Hurd: (hurd)".
 	@[ -e $(DIST_HURD)/share/info/hurd.info ] && install-info --quiet --info-dir=$(DIST_HURD)/share/info $(DIST_HURD)/share/info/hurd.info || true
+	@$(call _fp_write,dist-hurd-tree)
 	@$(call _dist_finalize,$(EPOCH_HURD))
 	@$(call _assert_file,$(DIST_HURD)/hurd/ext2fs,hurd/ext2fs)
 	@$(call _dist_done,$@)
@@ -1481,7 +1560,7 @@ dist-hurd: $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 # Store-path-stamped; share/info/dir stashed/restored + hurd.info merged (see dist-glibc).
 dist-hurd-nix: $(DIST_HURD_NIX_STAMP)
 
-$(DIST_HURD_NIX_STAMP): packages.nix flake.lock flakes/hurd/default.nix $(if $(call _fp_stale,dist-hurd-nix),_FORCE)
+$(DIST_HURD_NIX_STAMP): $(if $(call _fp_stale,dist-hurd-nix),_FORCE)
 	$(call _dist_nix_copy,dist-hurd-nix,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
 	@$(call _dist_finalize,$(EPOCH_HURD))
 
