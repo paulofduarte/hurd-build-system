@@ -158,6 +158,16 @@ write_files:
             # picker, M-c cd.
             command -v fzf >/dev/null 2>&1 && eval "$(fzf --bash)"
             command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
+            # Tab title: a remote shell never gets the local terminal's shell
+            # integration, so emit the OSC 0 title escapes ourselves via
+            # ble.sh's native hooks - the running command while it runs
+            # (PREEXEC passes it as $1), user@host:dir back at the prompt.
+            if [ -n "${BLE_VERSION:-}" ]; then
+              _title_preexec() { printf '\033]0;%s\007' "$1"; }
+              _title_precmd()  { printf '\033]0;%s@%s:%s\007' "${USER}" "${HOSTNAME%%.*}" "${PWD/#$HOME/\~}"; }
+              blehook PREEXEC+=_title_preexec
+              blehook PRECMD+=_title_precmd
+            fi
             [ -n "${BLE_VERSION:-}" ] && ble-attach
           fi
           ;;
