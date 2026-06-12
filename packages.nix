@@ -17,7 +17,7 @@
 
 let
   inherit (nixpkgs) lib;
-  inherit (crossToolchain) mkCrossPkgs mkAll mkCompiler mkRuntimeLib wrappedToolchain;
+  inherit (crossToolchain) mkCrossPkgs mkAll mkCompiler mkRuntimeBase mkRuntimeLib wrappedToolchain;
   # Fork-id metadata (owner/repo/ref) from the `*-src` inputs via flake.lock;
   # feeds the version string's fork field.  See flakes/sources.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -149,10 +149,18 @@ in
       # rebuild).  libgcc is standalone - the toolchain -B's it, so splitting it out
       # bounds the toolchain's glibc-hack rebuild to libgcc alone.  The rest -B the
       # per-arch libgcc and build on demand (dist + the C++ toolchain variant).
+      # The shared runtime-build base (partial gcc tree + libgcc.mvars glue), built
+      # once per arch; every cross-gcc-rt-<lib> copies it instead of re-doing it.
+      rtBaseByName = lib.mapAttrs (name: target:
+        mkRuntimeBase system target {
+          compiler = newCompilerByName.${name};
+          working  = bareGlibcHurd."glibc-hurd-${name}";
+        }) hurdTargets;
       libgccByName = lib.mapAttrs (name: target:
         mkRuntimeLib system target {
           compiler = newCompilerByName.${name};
           working  = bareGlibcHurd."glibc-hurd-${name}";
+          base     = rtBaseByName.${name};
           libName  = "libgcc";
         }) hurdTargets;
       # name -> configure flags for the remaining runtime libs.  (libstdc++ maps to
@@ -169,6 +177,7 @@ in
         mkRuntimeLib system target {
           compiler   = newCompilerByName.${name};
           working    = bareGlibcHurd."glibc-hurd-${name}";
+          base       = rtBaseByName.${name};
           inherit libName;
           extraFlags = flags;
           libgccDrv  = libgccByName.${name};
@@ -181,6 +190,7 @@ in
       hurdFinalPkgs = lib.listToAttrs (lib.concatLists (lib.mapAttrsToList (name: target:
         [
           { name = "cross-gcc-${name}";           value = newCompilerByName.${name}; }
+          { name = "cross-gcc-rt-base-${name}";   value = rtBaseByName.${name}; }
           { name = "cross-gcc-rt-libgcc-${name}"; value = libgccByName.${name}; }
           { name = "toolchain-${name}"; value = wrappedToolchain system target {
               cc      = newCompilerByName.${name};

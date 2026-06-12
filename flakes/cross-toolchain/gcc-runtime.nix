@@ -79,13 +79,67 @@ in
       };
     });
 
-  # Build ONE target-runtime lib as its own derivation: the shared base (partial gcc
-  # tree + libgcc.mvars/tconfig.h) + buildLib for that lib.  libgcc is standalone; the
-  # rest pass `libgccDrv` (the already-built libgcc derivation) so the wrapper -B's it
-  # and they link the WORK-built libgcc (GCC_FOR_TARGET).  Each lib re-does the cheap
-  # base; a shared-base derivation is a later optimisation.  Splitting per-lib lets the
+  # The shared runtime-build base: the partial gcc tree every cross-gcc-rt-<lib>
+  # needs - top-level configure + the host gen-tool libs + gcc/{libgcc.mvars,
+  # tconfig.h,include/} (never cc1) - built ONCE and shipped as a tree the per-lib
+  # derivations copy into their own sandbox.  Safe to relocate: the lib subdir
+  # builds reference the base only via RELATIVE paths (libgcc's Makefile includes
+  # $(gcc_objdir)/libgcc.mvars as ../../gcc/ from $bdir/$host/libgcc), and nothing
+  # re-invokes the top-level make (whose baked sandbox paths die with this sandbox).
+  mkRuntimeBase = system: target: { compiler, working }:
+    let
+      bp      = (mkCrossPkgs system target).buildPackages;
+      tgt     = target.crossTarget;
+      wrapped = wrappedToolchain system target { cc = compiler; working = working; };
+    in
+    bp.stdenv.mkDerivation ({
+      pname   = "cross-gcc-rt-base-${tgt}";
+      version = compiler.version;
+      src     = compiler.src;
+      nativeBuildInputs = [ compiler bp.binutils-unwrapped ];
+      # gcc's top-level configure hard-requires GMP/MPFR/MPC even though we never build cc1.
+      buildInputs = [ bp.gmp bp.mpfr bp.libmpc ];
+      hardeningDisable = runtimeHardening;
+      dontPatchELF = true;
+      dontFixup    = true;   # build-tree intermediate; nothing here ships
+
+      buildPhase = ''
+        runHook preBuild
+        gccdir=$PWD
+        host=${tgt}
+        build=${bp.stdenv.buildPlatform.config}
+        cc="${wrapped}/bin/$host-gcc"
+
+        mkdir -p ../b && cd ../b
+
+        # The gcc tree + libgcc's build glue (host driver/gen-tools + libgcc.mvars/
+        # tconfig.h, never cc1) - the base every lib needs.  --enable-threads=posix keeps
+        # this runtime gcc-tree's gthr-default.h posix to match cross-gcc's (belt-and-
+        # braces for libgcc's in-tree build; the libs otherwise take cross-gcc's via the
+        # wrapped GCC_FOR_TARGET).
+        "$gccdir/configure" \
+          --build="$build" --host="$build" --target="$host" \
+          --prefix=/ --disable-bootstrap --disable-multilib \
+          --enable-languages=c,c++ --enable-threads=posix --with-sysroot=${working}
+        make configure-gcc
+        make all-build-libiberty all-build-libcpp \
+             all-libiberty all-libcpp all-libdecnumber all-libbacktrace
+        make -C gcc GCC_FOR_TARGET="$cc" tconfig.h libgcc.mvars
+        mkdir -p gcc/include   # libgcc stages unwind.h here
+
+        mkdir -p $out
+        cp -a . $out/build
+        runHook postBuild
+      '';
+      dontInstall = true;
+    } // buildFlags.commonAttrs);
+
+  # Build ONE target-runtime lib as its own derivation: copy the shared `base` tree
+  # into the sandbox, then buildLib for this lib.  libgcc is standalone; the rest
+  # pass `libgccDrv` (the already-built libgcc derivation) so the wrapper -B's it and
+  # they link the WORK-built libgcc (GCC_FOR_TARGET).  Splitting per-lib lets the
   # toolchain depend on libgcc alone (not a 7-lib monolith) and the rest build on demand.
-  mkRuntimeLib = system: target: { compiler, working, libName, extraFlags ? "--enable-shared", libgccDrv ? null }:
+  mkRuntimeLib = system: target: { compiler, working, base, libName, extraFlags ? "--enable-shared", libgccDrv ? null }:
     let
       bp      = (mkCrossPkgs system target).buildPackages;
       tgt     = target.crossTarget;
@@ -120,8 +174,13 @@ in
         cc="${wrapped}/bin/$host-gcc"
         cxx="${wrapped}/bin/$host-g++"
 
+        # The shared base tree (configured top-level + host gen-tools + gcc/ glue),
+        # copied into this sandbox so the lib subdir's relative ../../gcc references
+        # resolve.  Store perms are read-only; the lib build writes beside them.
         mkdir -p ../b && cd ../b
         bdir=$PWD
+        cp -a ${base}/build/. "$bdir"/
+        chmod -R u+w "$bdir"
 
         # Determinism: pin the host-varying inputs the reproducible-builds hook would
         # otherwise bake into the target libs - the cross-toolchain store paths (DWARF),
@@ -147,21 +206,6 @@ in
           make install DESTDIR="$out"
           cd "$bdir"
         }
-
-        # The gcc tree + libgcc's build glue (host driver/gen-tools + libgcc.mvars/
-        # tconfig.h, never cc1) - the base every lib needs.  --enable-threads=posix keeps
-        # this runtime gcc-tree's gthr-default.h posix to match cross-gcc's (belt-and-
-        # braces for libgcc's in-tree build; the libs otherwise take cross-gcc's via the
-        # wrapped GCC_FOR_TARGET).
-        "$gccdir/configure" \
-          --build="$build" --host="$build" --target="$host" \
-          --prefix=/ --disable-bootstrap --disable-multilib \
-          --enable-languages=c,c++ --enable-threads=posix --with-sysroot=${working}
-        make configure-gcc
-        make all-build-libiberty all-build-libcpp \
-             all-libiberty all-libcpp all-libdecnumber all-libbacktrace
-        make -C gcc GCC_FOR_TARGET="$cc" tconfig.h libgcc.mvars
-        mkdir -p gcc/include   # libgcc stages unwind.h here
 
         # Build the one requested lib.  libgcc has no -B (it IS libgcc); the rest link
         # the libgcc derivation via the wrapper's -B.  (libgomp passes --disable-werror -
