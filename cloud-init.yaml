@@ -10,9 +10,11 @@
 #
 # Layout this script lays down:
 #   /nix/var/nix/profiles/system-tools/    cachix, git, gnumake,
-#                                          starship.
+#                                          starship, blesh, fzf,
+#                                          bash-completion.
 #   /etc/profile.d/nix-system-tools.sh     PATH + TERM + interactive
-#                                          starship hook.
+#                                          shell hooks (starship,
+#                                          ble.sh, completion, fzf).
 #
 # Apply: `orb create ubuntu my-vm --user-data cloud-init.yaml`.
 #
@@ -114,7 +116,10 @@ write_files:
           nixpkgs#cachix \
           nixpkgs#git \
           nixpkgs#gnumake \
-          nixpkgs#starship
+          nixpkgs#starship \
+          nixpkgs#blesh \
+          nixpkgs#fzf \
+          nixpkgs#bash-completion
 
       # ---- 3. /etc/profile.d entry - PATH + TERM + starship hook ----
       # /etc/profile sources /etc/profile.d/* for every login shell.
@@ -128,11 +133,32 @@ write_files:
       fi
       # Nix pure shells default TERM to "dumb" - force a sane default.
       export TERM="${TERM:-xterm-256color}"
+      # The login may inherit a TERM this image has no terminfo entry for
+      # (terminal emulators ship their own entries; the `:-` default above
+      # only covers an UNSET TERM) - fall back so ncurses apps work.
+      if command -v infocmp >/dev/null 2>&1 && ! infocmp "$TERM" >/dev/null 2>&1; then
+        export TERM=xterm-256color
+      fi
 
       case $- in
         *i*)
           if [ -n "${BASH_VERSION:-}" ]; then
+            # ble.sh: syntax highlighting + autosuggestions + enhanced
+            # completion for interactive bash.  Its documented composition
+            # pattern: source --noattach first, other rc hooks (fzf,
+            # starship) in between, ble-attach last.
+            if [ -f /nix/var/nix/profiles/system-tools/share/blesh/ble.sh ]; then
+              . /nix/var/nix/profiles/system-tools/share/blesh/ble.sh --noattach
+            fi
+            # Programmable completion (bash-completion).
+            if [ -f /nix/var/nix/profiles/system-tools/share/bash-completion/bash_completion ]; then
+              . /nix/var/nix/profiles/system-tools/share/bash-completion/bash_completion
+            fi
+            # fzf keybindings + completion: C-r history search, C-t file
+            # picker, M-c cd.
+            command -v fzf >/dev/null 2>&1 && eval "$(fzf --bash)"
             command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
+            [ -n "${BLE_VERSION:-}" ] && ble-attach
           fi
           ;;
       esac
