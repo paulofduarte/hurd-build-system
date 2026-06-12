@@ -205,6 +205,8 @@ let
         touch -d @${toString srcInput.lastModified} "$srcdir"/doc/*.texi
         ${buildFlags.detCflagsExport { inherit toolchain; canonBuild = buildFlags.gnumachCanonBuild; }}
       '';
-    });
+      # Content-addressed (flakes/lib/repro.nix mkCaAttrs): nothing consumes the
+      # kernel package yet, but future dependents get the early cutoff for free.
+    } // helpers.mkCaAttrs true);
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-${name}" (mkOne name target)) targets

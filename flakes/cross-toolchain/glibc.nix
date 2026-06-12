@@ -36,6 +36,10 @@
 
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
 , srcInput
+  # Content-address the output (see flakes/lib/repro.nix mkCaAttrs).  The
+  # WORKING glibc opts in; the reference glibc stays input-addressed (frozen
+  # pins never exercise a cutoff, and a CA ref would move cross-gcc's drv).
+, contentAddressed ? false
   # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc is
   # referenced by absolute path for CC=/CXX=, so pass a derivation with bin/<tp>-gcc
   # + bin/<tp>-g++).  Default = the libc-free bootstrap-gcc, used by the
@@ -45,6 +49,7 @@
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
+  helpers = import ../lib { inherit lib; };
   # Shared cross-build determinism flags (the SAME source the dev-shell +
   # gnumach/hurd use), fed through NIX_CFLAGS_COMPILE below so the nix glibc comes
   # out byte-identical cross-host, like the in-tree build.
@@ -290,6 +295,6 @@ let
       # scripts run on the TARGET, so disable the rewrite and keep the /-rooted
       # shebang (fixed at build, no dist sed).
       dontPatchShebangs = true;
-    });
+    } // helpers.mkCaAttrs contentAddressed);
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "glibc-hurd-${name}" (mkOne name target)) hurdTargets

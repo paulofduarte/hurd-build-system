@@ -36,11 +36,11 @@ in
 {
   packages = forAllSystems (system:
     let
-      # Working headers are content-addressed: a src change that leaves the
-      # installed headers byte-identical (.c-only edits) stops the rebuild
-      # cascade (glibc-hurd, the runtime libs) at the headers.  The ref twins
-      # below stay input-addressed - their pins are frozen, so CA would only
-      # add resolution overhead.
+      # The WORKING chain is content-addressed (headers, mig, glibc, the rt
+      # libs, gnumach, hurd): a change that leaves a package's output
+      # byte-identical stops the rebuild cascade right there (early cutoff).
+      # The ref twins below stay input-addressed - their pins are frozen, so
+      # CA would only add resolution overhead.
       gnumachHeaders = import ./flakes/gnumach-headers {
         inherit nixpkgs system targets mkCrossPkgs;
         srcInput = gnumach-src;
@@ -50,6 +50,7 @@ in
         inherit nixpkgs system targets gnumachHeaders mkCrossPkgs;
         srcInput = mig-src;
         forkUrl = migInfo.forkUrl;
+        contentAddressed = true;
       };
       hurdHeaders = import ./flakes/hurd-headers {
         inherit nixpkgs system targets mig;
@@ -117,6 +118,7 @@ in
         inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
+        contentAddressed = true;
         # cross-gcc wrapped around the reference glibc (configure link-tests need
         # crt/libc; work != ref -> no cycle).
         buildCC = name: target: wrappedToolchain system target {

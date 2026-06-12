@@ -38,7 +38,10 @@
 # $gnumach-headers/include.
 
 { nixpkgs, system, targets, gnumachHeaders, mkCrossPkgs, srcInput, forkUrl
-, checkToolchains ? null }:
+, checkToolchains ? null
+  # Content-address the output (flakes/lib/repro.nix mkCaAttrs).  The WORKING
+  # mig opts in; the ref twin stays input-addressed (frozen pins).
+, contentAddressed ? false }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -182,7 +185,8 @@ let
         export CFLAGS="-I${gnumach-headers}/include"
       '';
     }
-    // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
+    // helpers.mkReproAttrs { inherit pname; version = fullVersion; }
+    // helpers.mkCaAttrs contentAddressed);
 
   # BOOTSTRAP builds every target; CHECKED only the non-xen userland targets
   # (xen variants share a crossTarget, so a checked xen mig would be redundant).

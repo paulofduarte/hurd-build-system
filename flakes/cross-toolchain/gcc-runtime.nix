@@ -18,6 +18,7 @@
 let
   lib        = nixpkgs.lib;
   buildFlags = import ./build-flags.nix { inherit lib; };
+  helpers    = import ../lib { inherit lib; };
 
   # Mirrors nixpkgs' own gcc derivation (hardeningDisable = ["format" "stackclashprotection"]):
   # clang trips -Werror=format-security on gcc's host sources, and -fstack-clash-protection
@@ -132,6 +133,11 @@ in
         runHook postBuild
       '';
       dontInstall = true;
+      # NOT content-addressed (unlike the rt libs): the shipped build TREE is
+      # irreproducible (config.log timestamps et al - `nix build --rebuild`
+      # 2026-06-12), and a cutoff could never fire anyway - this drv only moves
+      # when an input store path moves, and those paths are embedded in the
+      # configured tree (config.status --with-sysroot), changing the bytes.
     } // buildFlags.commonAttrs);
 
   # Build ONE target-runtime lib as its own derivation: copy the shared `base` tree
@@ -214,5 +220,8 @@ in
 
         runHook postBuild
       '';
-    } // buildFlags.commonAttrs);
+      # Content-addressed (flakes/lib/repro.nix mkCaAttrs): a content-identical
+      # glibc/libgcc rebuild stops here instead of rippling into the dist copies
+      # and future consumers.
+    } // buildFlags.commonAttrs // helpers.mkCaAttrs true);
 }

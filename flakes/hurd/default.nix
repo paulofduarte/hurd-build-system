@@ -190,6 +190,8 @@ let
         export NIX_LDFLAGS="$(printf '%s' "''${NIX_LDFLAGS:-}" | sed "s@-rpath $out/lib@@g")"
       '';
       "NIX_DONT_SET_RPATH${salt}" = "1";
-    });
+      # Content-addressed (flakes/lib/repro.nix mkCaAttrs): nothing consumes the
+      # userland package yet, but future dependents get the early cutoff for free.
+    } // helpers.mkCaAttrs true);
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-${name}" (mkOne name target)) hurdTargets
