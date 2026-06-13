@@ -133,6 +133,22 @@ let
         ln -s libmachuser.so.1   $out/lib/libmachuser.so
         ln -s libhurduser.so.0.3 $out/lib/libhurduser.so
 
+        # Harvest the mig-GENERATED RPC headers - the .uh/.__h user stubs and the
+        # _server.h headers, i.e. the message-struct WIRE surface mig emits from the
+        # .defs (glibc's own rules computed the MIGFLAGS, so this is the exact codegen
+        # glibc/the kernel get).  The mig-drift gate diffs these pin-mig vs alias-mig:
+        # the .so floats with alias mig as the shipped stub, but the .uh layout is the
+        # PRECISE skew surface (a .so that moves while the .uh is stable is wire-safe
+        # codegen churn, not skew).  Ships alongside the libs in this same build.
+        genh=$out/share/rpc-stub-headers
+        find . \( -name '*.uh' -o -name '*.__h' -o -name '*_server.h' \) -type f \
+          | while IFS= read -r f; do
+              rel=''${f#./}
+              mkdir -p "$genh/$(dirname "$rel")"
+              cp "$f" "$genh/$rel"
+            done
+        [ "$(find "$genh" -name '*.uh' | head -1)" ] || { echo "ERROR: no mig-generated .uh harvested"; exit 1; }
+
         runHook postBuild
       '';
 
