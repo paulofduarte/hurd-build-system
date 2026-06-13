@@ -41,6 +41,12 @@
   # pins never exercise a cutoff, and a CA bootstrap glibc would move
   # cross-gcc's drv).
 , contentAddressed ? false
+  # buildTree mode (the stub-split base): instead of installing, ship the WRITABLE
+  # src + build tree (src/ with build/ inside) so flakes/cross-toolchain/hurd-stubs.nix
+  # can copy it, swap the alias RPC headers, and rebuild ONLY libmachuser/libhurduser
+  # (~30 s) without touching glibc.  Irreproducible (config.log timestamps + sandbox
+  # paths in the build tree), like the old gcc rt-base - input-addressed, never shipped.
+, buildTree ? false
   # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc is
   # referenced by absolute path for CC=/CXX=, so pass a derivation with bin/<tp>-gcc
   # + bin/<tp>-g++).  Default = the libc-free bootstrap-gcc, used by the
@@ -296,6 +302,22 @@ let
       # scripts run on the TARGET, so disable the rewrite and keep the /-rooted
       # shebang (fixed at build, no dist sed).
       dontPatchShebangs = true;
-    } // helpers.mkCaAttrs contentAddressed);
+    } // helpers.mkCaAttrs contentAddressed
+      // lib.optionalAttrs buildTree {
+        # Ship the writable src + build tree instead of installing.  PWD is the
+        # build dir (configurePhase cd'd there); its parent is the unpacked src
+        # root, which now contains build/.  hurd-stubs.nix copies $out/tree,
+        # swaps the alias headers, and rebuilds just the stubs.
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out
+          cd ..
+          cp -a . $out/tree
+          runHook postInstall
+        '';
+        postInstall = "";       # no install layout -> no header merge / GROUP augment
+        installFlags = [ ];     # no DESTDIR make-install
+        dontFixup = true;       # build-tree intermediate; nothing here ships
+      });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "glibc-hurd-${name}" (mkOne name target)) hurdTargets

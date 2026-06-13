@@ -130,6 +130,35 @@ in
         };
       };
 
+      # Stub-split (design doc phase 3): a glibc BUILD TREE (same inputs as
+      # glibcHurd, buildTree mode) that hurd-stubs copies to rebuild ONLY the
+      # Mach/Hurd RPC stub libs on an in-tree RPC change - ~30 s vs glibc's
+      # ~100 s.  The base is internal scaffolding (IA, heavy); hurd-stubs is the
+      # shipped artifact.
+      stubBuildCC = name: target: wrappedToolchain system target {
+        cc      = newCompilerByName.${name};
+        working = glibcBootstrap."glibc-hurd-${name}";
+      };
+      # Base = glibc built against the PIN (bootstrap) headers/mig, so an in-tree
+      # RPC override leaves it untouched (stable, cached).  hurd-stubs below
+      # overlays the ALIAS .defs onto a copy of this base, so ONLY it floats.
+      glibcStubBase = import ./flakes/cross-toolchain/glibc.nix {
+        inherit nixpkgs system targets;
+        mig = migBootstrap;
+        gnumachHeaders = gnumachHeadersBootstrap;
+        hurdHeaders = hurdHeadersBootstrap;
+        inherit (crossToolchain) mkCrossPkgs;
+        srcInput = glibc-src;
+        buildTree = true;
+        buildCC = stubBuildCC;
+      };
+      hurdStubs = import ./flakes/cross-toolchain/hurd-stubs.nix {
+        inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
+        inherit (crossToolchain) mkCrossPkgs;
+        base = glibcStubBase;
+        buildCC = stubBuildCC;
+      };
+
       # The bare-name glibc the wrapped cc + userland LINK against.  NO ABI gate:
       # the wrapper flip (user code + the runtime compile against THIS glibc) makes
       # the bootstrap-vs-shipped ABI consistent by construction, so there is nothing to gate.  We
@@ -239,6 +268,7 @@ in
     // sidekick
     // toolchainStagePkgs
     // glibcHurd
+    // hurdStubs
     // hurdFinalPkgs
     // migChecked
     # Timezone database for the dist (dist-tzdata copies its share/zoneinfo).
