@@ -1318,7 +1318,17 @@ dist-glibc: $(DIST_GLIBC_STAMP)
 # conditional is the single staleness source for the fp-covered stamp rules.
 $(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
 	$(call _dist_nix_copy,dist-glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_STAMP),lib/libc.so.0.3,libc.info)
+	@# Overlay the FLOATING RPC stubs (hurd-stubs, alias headers) over glibc's pin
+	@# ones, so the deployable carries the in-tree RPC surface the userland linked
+	@# against.  Runs whenever dist-glibc runs; the fp (gnumach/hurd/mig deps)
+	@# re-triggers dist-glibc on an in-tree change so this re-copies.  (alias==pin
+	@# off the matrix clones, so a no-override dist is byte-identical either way.)
+	@set -e; \
+	stubs=$$($(NIX_BUILD) $(call _overrides,dist-glibc) $(PROJ)\#hurd-stubs-$(_TC_ARCH) --no-link --print-out-paths); \
+	cp -a $$stubs/lib/libmachuser.* $$stubs/lib/libhurduser.* $(DIST_GLIBC)/lib/; \
+	$(call _make_writable,$(DIST_GLIBC)/lib)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
+	@$(call _assert_file,$(DIST_GLIBC)/lib/libmachuser.so.1,libmachuser.so.1)
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
 
 # ---- dist-gcc (gcc runtime) ----
