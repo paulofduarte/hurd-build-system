@@ -76,25 +76,30 @@ write_files:
         "extra-substituters = ${CACHIX_SUBSTITUTER}" \
         "extra-trusted-public-keys = ${CACHIX_PUBLIC_KEY}")
 
-      # Emulated x86_64 VMs (orbstack on an aarch64 host via rosetta)
-      # need `filter-syscalls = false` in the daemon's effective
-      # config from its very first start - the installer's bootstrap
-      # step runs the daemon before writing its own nix.conf, and
-      # rosetta can't honour seccomp BPF.  Pre-write nix.conf in that
-      # case so the setting is live before the daemon starts.  Native
-      # VMs keep the stricter default.
-      #
-      # `uname -m` disambiguates: orbstack registers the rosetta
-      # binfmt_misc handler on aarch64 VMs too (for x86_64 binaries
-      # inside an otherwise-native VM), and those don't need the
-      # workaround.
-      if [ "$(uname -m)" = "x86_64" ] && [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
+      # Rosetta (orbstack on an Apple-silicon host) lets the VM build & run
+      # x86_64 binaries.  Two consequences for the nix daemon:
+      #   * filter-syscalls = false - rosetta can't honour seccomp BPF for the
+      #     emulated x86_64 binaries, so the daemon must not install the filter.
+      #   * extra-platforms = x86_64-linux (aarch64 VMs only) - lets nix build
+      #     and RUN x86_64-linux derivations through the rosetta binfmt handler
+      #     (orbstack registers it on aarch64 VMs too).  This is how a single
+      #     aarch64 VM validates x86_64-linux without a second (emulated) VM -
+      #     e.g. tools upstream only ship for x86_64.
+      # On an emulated x86_64 VM the daemon needs filter-syscalls=false from its
+      # very first start (the installer runs the daemon before writing its own
+      # nix.conf), so pre-write nix.conf in that case.
+      if [ -e /proc/sys/fs/binfmt_misc/rosetta ]; then
         NIX_EXTRA_CONF="${NIX_EXTRA_CONF}
       filter-syscalls = false"
-
-        mkdir -p /etc/nix
-        printf '%s\n' "$NIX_EXTRA_CONF" > /etc/nix/nix.conf
-        echo "build-users-group = nixbld" >> /etc/nix/nix.conf
+        if [ "$(uname -m)" = "aarch64" ]; then
+          NIX_EXTRA_CONF="${NIX_EXTRA_CONF}
+      extra-platforms = x86_64-linux"
+        fi
+        if [ "$(uname -m)" = "x86_64" ]; then
+          mkdir -p /etc/nix
+          printf '%s\n' "$NIX_EXTRA_CONF" > /etc/nix/nix.conf
+          echo "build-users-group = nixbld" >> /etc/nix/nix.conf
+        fi
       fi
 
       # Process substitution `<(curl ...)` rather than `curl ... | sh`:
