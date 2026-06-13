@@ -101,47 +101,22 @@ in
         forkUrl = hurdInfo.forkUrl;
       };
 
-      # Bootstrap glibc - the ABI baseline cross-gcc binds (libcCross).  Built
-      # directly by bootstrap-gcc (glibc.nix's default buildCC).  Never shipped
-      # or run; collapses into THE glibc at the stub-split (design doc phase 4).
-      glibcBootstrap = import ./flakes/cross-toolchain/glibc.nix {
+      # THE single glibc (design doc phase 4): ONE derivation, built by
+      # bootstrap-gcc against the PIN headers, serving as cross-gcc's libcCross,
+      # the shipped libc, AND (via buildTree) the stub base.  Binds pin headers
+      # -> never rebuilt on an in-tree RPC hack (only hurd-stubs floats).
+      # shipStubs=false: the RPC stub libs come from hurd-stubs, not glibc.
+      glibc = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
         mig = migBootstrap;
         gnumachHeaders = gnumachHeadersBootstrap;
         hurdHeaders = hurdHeadersBootstrap;
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
-      };
-
-      # glibc-hurd (SHIPPED): the Hurd C library the wrapped cc + userland bind,
-      # from `glibc-src` + the alias headers/mig.  Built by CROSS-GCC, the same
-      # compiler the in-tree build uses, so nix and in-tree glibc match
-      # byte-for-byte.
-      glibcHurd = import ./flakes/cross-toolchain/glibc.nix {
-        inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
-        inherit (crossToolchain) mkCrossPkgs;
-        srcInput = glibc-src;
         contentAddressed = true;
-        # cross-gcc wrapped around the bootstrap glibc (configure link-tests
-        # need crt/libc; the bootstrap drv differs from this one -> no cycle).
-        buildCC = name: target: wrappedToolchain system target {
-          cc      = newCompilerByName.${name};
-          working = glibcBootstrap."glibc-hurd-${name}";
-        };
       };
-
-      # Stub-split (design doc phase 3): a glibc BUILD TREE (same inputs as
-      # glibcHurd, buildTree mode) that hurd-stubs copies to rebuild ONLY the
-      # Mach/Hurd RPC stub libs on an in-tree RPC change - ~30 s vs glibc's
-      # ~100 s.  The base is internal scaffolding (IA, heavy); hurd-stubs is the
-      # shipped artifact.
-      stubBuildCC = name: target: wrappedToolchain system target {
-        cc      = newCompilerByName.${name};
-        working = glibcBootstrap."glibc-hurd-${name}";
-      };
-      # Base = glibc built against the PIN (bootstrap) headers/mig, so an in-tree
-      # RPC override leaves it untouched (stable, cached).  hurd-stubs below
-      # overlays the ALIAS .defs onto a copy of this base, so ONLY it floats.
+      # The stub base: the SAME glibc build, shipping the build tree so hurd-stubs
+      # can rebuild just the RPC stubs.  Same pin headers + bootstrap-gcc builder.
       glibcStubBase = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
         mig = migBootstrap;
@@ -150,49 +125,58 @@ in
         inherit (crossToolchain) mkCrossPkgs;
         srcInput = glibc-src;
         buildTree = true;
-        buildCC = stubBuildCC;
       };
       hurdStubs = import ./flakes/cross-toolchain/hurd-stubs.nix {
         inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
         inherit (crossToolchain) mkCrossPkgs;
         base = glibcStubBase;
-        buildCC = stubBuildCC;
       };
 
-      # The bare-name glibc the wrapped cc + userland LINK against.  NO ABI gate:
-      # the wrapper flip (user code + the runtime compile against THIS glibc) makes
-      # the bootstrap-vs-shipped ABI consistent by construction, so there is nothing to gate.  We
-      # only rewrite the deployable libc.so GROUP to BARE NAMES (libc.so.0.3, libmachuser.so,
-      # ...) so the cross link resolves them via the wrapper's -L (this ld has no --sysroot
-      # for the absolute /lib GROUP).  The SHIPPED glibc (glibc-hurd-<arch> = glibcHurd)
-      # keeps its absolute /lib GROUP; this bare farm is the cross-LINK sysroot only.
-      bareGlibcHurd = lib.mapAttrs' (name: target:
+      # Bare-name cross-LINK sysroot: glibc with the libc.so GROUP rewritten to
+      # BARE NAMES (libc.so.0.3, libmachuser.so, ...) so the cross ld resolves
+      # them via the wrapper's -L (it has no --sysroot for the absolute /lib
+      # GROUP).  Two flavours, by which RPC stubs they carry:
+      #   PIN   - glibc's own (frozen) stubs.  Stable under an in-tree RPC change,
+      #           so the runtime + kernel that link through it never rebuild on
+      #           one (they don't CALL the stubs - only need the GROUP resolved).
+      #   ALIAS - hurd-stubs' (floating) stubs in place of glibc's, so the
+      #           userland link sees in-tree RPC additions.  Floats - but only the
+      #           cheap wrapper + the userland (which must rebuild anyway) ride it.
+      mkBareGlibc = name: stubs:
+        nixpkgs.legacyPackages.${system}.runCommand "glibc-hurd-${name}-bare" { } (''
+          mkdir -p "$out"
+          cp -as "${glibc."glibc-hurd-${name}"}"/. "$out"/
+          chmod -R u+w "$out/lib"
+        '' + lib.optionalString (stubs != null) ''
+          rm -f "$out"/lib/libmachuser.* "$out"/lib/libhurduser.*
+          cp -a "${stubs}"/lib/libmachuser.* "${stubs}"/lib/libhurduser.* "$out/lib"/
+          chmod -R u+w "$out/lib"
+        '' + ''
+          for so in "$out"/lib/*.so; do
+            [ -L "$so" ] && grep -q '^GROUP' "$so" 2>/dev/null || continue
+            tgt="$(readlink -f "$so")"; rm -f "$so"
+            sed 's@ /lib/@ @g' "$tgt" > "$so"; chmod u+w "$so"
+          done
+        '');
+      bareGlibcPin = lib.mapAttrs' (name: target:
+        lib.nameValuePair "glibc-hurd-${name}" (mkBareGlibc name null)) hurdTargets;
+      bareGlibcAlias = lib.mapAttrs' (name: target:
         lib.nameValuePair "glibc-hurd-${name}"
-          (nixpkgs.legacyPackages.${system}.runCommand "glibc-hurd-${name}-bare" { } ''
-            mkdir -p "$out"
-            cp -as "${glibcHurd."glibc-hurd-${name}"}"/. "$out"/
-            chmod u+w "$out/lib"
-            for so in "$out"/lib/*.so; do
-              [ -L "$so" ] && grep -q '^GROUP' "$so" 2>/dev/null || continue
-              tgt="$(readlink -f "$so")"; rm -f "$so"
-              sed 's@ /lib/@ @g' "$tgt" > "$so"; chmod u+w "$so"
-            done
-          ''))
-        hurdTargets;
+          (mkBareGlibc name hurdStubs."hurd-stubs-${name}")) hurdTargets;
 
       # The single nolibc C++ compiler - the one `cross-gcc-<arch>` going forward.
       # Binds the PINNED reference Hurd headers (gnumach+hurd+mig+glibc) for its posix
       # thread model only; never rebuilt on a working-glibc hack.  TODO: replace the full
       # bootstrap glibc's include with a headers-only derivation (no bootstrap libc binaries).
       newCompilerByName = lib.mapAttrs (name: target:
-        mkCompiler system target glibcBootstrap."glibc-hurd-${name}") hurdTargets;
+        mkCompiler system target glibc."glibc-hurd-${name}") hurdTargets;
       # The merged target runtime (libgcc + the six libs in one derivation, built
       # against the shipped glibc with cross-gcc, no xgcc rebuild).  The toolchain
       # -B's the whole tree; the dist selects which libs to ship at copy time.
       runtimeByName = lib.mapAttrs (name: target:
         mkRuntime system target {
           compiler = newCompilerByName.${name};
-          working  = bareGlibcHurd."glibc-hurd-${name}";
+          working  = bareGlibcPin."glibc-hurd-${name}";
         }) hurdTargets;
 
       # `cross-gcc-<arch>` = the cross compiler; `cross-gcc-runtime-<arch>` = the merged
@@ -202,11 +186,19 @@ in
         [
           { name = "cross-gcc-${name}";          value = newCompilerByName.${name}; }
           { name = "cross-gcc-runtime-${name}";  value = runtimeByName.${name}; }
+          # Userland toolchain: ALIAS stubs (hurd needs in-tree RPC additions).
           { name = "toolchain-${name}"; value = wrappedToolchain system target {
               cc      = newCompilerByName.${name};
-              working = bareGlibcHurd."glibc-hurd-${name}";
+              working = bareGlibcAlias."glibc-hurd-${name}";
               # Link the shipped runtime (libgcc + the rest) into every build, not cc's
               # bootstrap-built copy - the runtime is actually consumed + ABI-consistent.
+              libgcc  = runtimeByName.${name};
+            }; }
+          # Pin toolchain: PIN stubs, for the kernel (links -nostdlib, doesn't use
+          # the stubs) so it stays stable under an in-tree RPC change.
+          { name = "toolchain-pin-${name}"; value = wrappedToolchain system target {
+              cc      = newCompilerByName.${name};
+              working = bareGlibcPin."glibc-hurd-${name}";
               libgcc  = runtimeByName.${name};
             }; }
         ]
@@ -215,18 +207,25 @@ in
       # The wrapped cross-cc a given target's gnumach kernel builds with.  Xen
       # variants reuse their CPU sibling's (same `<cpu>-gnu` ABI - the kernel
       # links -nostdlib, so the shipped glibc-hurd sysroot is moot).
-      toolchainFor = target: hurdFinalPkgs."toolchain-${toolchainNameByCrossTarget.${target.crossTarget}}";
+      toolchainFor = target: hurdFinalPkgs."toolchain-pin-${toolchainNameByCrossTarget.${target.crossTarget}}";
 
       # CHECKED mig - built with the wrapped cc (carries glibc-hurd's <string.h>)
       # so `make check` can compile the generated stubs.  Byte-identical to the
       # bootstrap `mig` (migcom is native-host-cc, cpu.h -ffreestanding in both),
       # so a green check proves the bootstrap mig that built glibc is sound.  Sits
       # downstream of glibc -> built AFTER hurdFinalPkgs, no cycle.
+      # The mig check compiles generated stubs with a wrapped cc - route it through
+      # the PIN toolchain (stable) so migChecked, and hence the kernel that uses it,
+      # don't float on an in-tree hurd RPC change.  Re-key toolchain-pin-<name> ->
+      # toolchain-<name>, the name the mig flake looks up.
+      pinToolchains = lib.listToAttrs (lib.mapAttrsToList (name: target:
+        lib.nameValuePair "toolchain-${name}" hurdFinalPkgs."toolchain-pin-${name}")
+        hurdTargets);
       migChecked = import ./flakes/mig {
         inherit nixpkgs system targets gnumachHeaders mkCrossPkgs;
         srcInput = mig-src;
         forkUrl = migInfo.forkUrl;
-        checkToolchains = hurdFinalPkgs;
+        checkToolchains = pinToolchains;
       };
 
       # Consumer-facing mig: every target mapped to the CHECKED mig of its
@@ -254,7 +253,7 @@ in
       hurd = import ./flakes/hurd {
         inherit nixpkgs system targets self buildRevToken;
         mig = checkedMigFor;   # downstream of glibc -> the validated mig
-        glibcHurd = bareGlibcHurd;
+        glibcHurd = bareGlibcAlias;   # userland needs the floating (in-tree) RPC stubs
         hurdToolchain = hurdFinalPkgs;
         srcInput = hurd-src;
         forkUrl = hurdInfo.forkUrl;
@@ -267,7 +266,7 @@ in
     // hurd
     // sidekick
     // toolchainStagePkgs
-    // glibcHurd
+    // glibc
     // hurdStubs
     // hurdFinalPkgs
     // migChecked

@@ -21,7 +21,10 @@
 
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
 , base                                   # glibc-stub-base-<arch> (buildTree)
-, buildCC                                # name: target: cc (same cross-gcc glibc used)
+  # The cc that rebuilds the stubs - default bootstrap-gcc, the base's own
+  # builder (matches the base's libc.so the stubs link against; no cross-gcc
+  # dependency, so no cycle).
+, buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc)
 }:
 
 let
