@@ -17,7 +17,7 @@
 
 let
   inherit (nixpkgs) lib;
-  inherit (crossToolchain) mkCrossPkgs mkAll mkCompiler mkRuntimeBase mkRuntimeLib wrappedToolchain;
+  inherit (crossToolchain) mkCrossPkgs mkAll mkCompiler mkRuntime wrappedToolchain;
   # Fork-id metadata (owner/repo/ref) from the `*-src` inputs via flake.lock;
   # feeds the version string's fork field.  See flakes/sources.
   sourcesLib  = import ./flakes/sources { inherit lib; };
@@ -157,63 +157,30 @@ in
       # bootstrap glibc's include with a headers-only derivation (no bootstrap libc binaries).
       newCompilerByName = lib.mapAttrs (name: target:
         mkCompiler system target glibcBootstrap."glibc-hurd-${name}") hurdTargets;
-      # Per-lib target-runtime derivations (built against the shipped glibc, no xgcc
-      # rebuild).  libgcc is standalone - the toolchain -B's it, so splitting it out
-      # bounds the toolchain's glibc-hack rebuild to libgcc alone.  The rest -B the
-      # per-arch libgcc and build on demand (dist + the C++ toolchain variant).
-      # The shared runtime-build base (partial gcc tree + libgcc.mvars glue), built
-      # once per arch; every cross-gcc-rt-<lib> copies it instead of re-doing it.
-      rtBaseByName = lib.mapAttrs (name: target:
-        mkRuntimeBase system target {
+      # The merged target runtime (libgcc + the six libs in one derivation, built
+      # against the shipped glibc with cross-gcc, no xgcc rebuild).  The toolchain
+      # -B's the whole tree; the dist selects which libs to ship at copy time.
+      runtimeByName = lib.mapAttrs (name: target:
+        mkRuntime system target {
           compiler = newCompilerByName.${name};
           working  = bareGlibcHurd."glibc-hurd-${name}";
         }) hurdTargets;
-      libgccByName = lib.mapAttrs (name: target:
-        mkRuntimeLib system target {
-          compiler = newCompilerByName.${name};
-          working  = bareGlibcHurd."glibc-hurd-${name}";
-          base     = rtBaseByName.${name};
-          libName  = "libgcc";
-        }) hurdTargets;
-      # name -> configure flags for the remaining runtime libs.  (libstdc++ maps to
-      # gcc's historical libstdc++-v3 source dir inside mkRuntimeLib.)
-      otherRuntimeSpecs = {
-        "libstdc++"   = "--enable-shared";
-        "libatomic"   = "--enable-shared";
-        "libitm"      = "--enable-shared";
-        "libquadmath" = "--enable-shared";
-        "libssp"      = "--enable-shared";
-        "libgomp"     = "--enable-shared --disable-werror";
-      };
-      mkOtherRuntimeLib = name: target: libName: flags:
-        mkRuntimeLib system target {
-          compiler   = newCompilerByName.${name};
-          working    = bareGlibcHurd."glibc-hurd-${name}";
-          base       = rtBaseByName.${name};
-          inherit libName;
-          extraFlags = flags;
-          libgccDrv  = libgccByName.${name};
-        };
 
-      # `cross-gcc-<arch>` = the cross compiler; `cross-gcc-rt-<lib>-<arch>` = each split
-      # runtime lib (libgcc + the on-demand rest); `toolchain-<arch>` = THE toolchain
-      # (dev shell, kernel, userland, cache): cross-gcc wrapped around the bare working
-      # glibc, -B'd to link the shipped libgcc.
+      # `cross-gcc-<arch>` = the cross compiler; `cross-gcc-runtime-<arch>` = the merged
+      # runtime; `toolchain-<arch>` = THE toolchain (dev shell, kernel, userland, cache):
+      # cross-gcc wrapped around the bare shipped glibc, -B'd to link the shipped runtime.
       hurdFinalPkgs = lib.listToAttrs (lib.concatLists (lib.mapAttrsToList (name: target:
         [
-          { name = "cross-gcc-${name}";           value = newCompilerByName.${name}; }
-          { name = "cross-gcc-rt-base-${name}";   value = rtBaseByName.${name}; }
-          { name = "cross-gcc-rt-libgcc-${name}"; value = libgccByName.${name}; }
+          { name = "cross-gcc-${name}";          value = newCompilerByName.${name}; }
+          { name = "cross-gcc-runtime-${name}";  value = runtimeByName.${name}; }
           { name = "toolchain-${name}"; value = wrappedToolchain system target {
               cc      = newCompilerByName.${name};
               working = bareGlibcHurd."glibc-hurd-${name}";
-              # Link the shipped libgcc (the split libgcc derivation) into every build,
-              # not cc's bootstrap-built copy - the runtime is actually consumed + ABI-consistent.
-              libgcc  = libgccByName.${name};
+              # Link the shipped runtime (libgcc + the rest) into every build, not cc's
+              # bootstrap-built copy - the runtime is actually consumed + ABI-consistent.
+              libgcc  = runtimeByName.${name};
             }; }
-        ] ++ lib.mapAttrsToList (libName: flags:
-          { name  = "cross-gcc-rt-${libName}-${name}";
-            value = mkOtherRuntimeLib name target libName flags; }) otherRuntimeSpecs
+        ]
       ) hurdTargets));
 
       # The wrapped cross-cc a given target's gnumach kernel builds with.  Xen

@@ -13,7 +13,7 @@
 #   toolchain.nix   - `mkAll` (cross-binutils + bootstrap-gcc per target), and the
 #                     `wrappedToolchain` / `hurdTargets` helpers.  The gcc/glibc
 #                     chain is orchestrated in packages.nix.
-#   gcc-runtime.nix - `mkCompiler` (the posix cross-gcc) + `mkRuntimeLib` (one split
+#   gcc-runtime.nix - `mkCompiler` (the posix cross-gcc) + `mkRuntime` (the merged
 #                     target-runtime lib built from it, without rebuilding cc1).
 #   glibc.nix       - `glibc-hurd-<arch>` (imported directly by packages.nix).
 #   hurd-config.nix - the configure flag set shared by the nix Hurd build

@@ -135,10 +135,10 @@ in
   inherit wrappedToolchain hurdTargets;
 
   # Pre-libc components merged into packages.<system>: two outputs per hurd
-  # target (binutils + bootstrap-gcc).  The toolchain chain (bootstrap-gcc -> ref
-  # glibc -> cross-gcc -> work glibc -> cross-gcc-rt-* + wrapped toolchain) is
-  # orchestrated in packages.nix, since it interleaves glibc.nix calls (which
-  # thread mig/headers) with gcc-runtime.nix's mkCompiler/mkRuntimeLib.
+  # target (binutils + bootstrap-gcc).  The toolchain chain (bootstrap-gcc ->
+  # bootstrap glibc -> cross-gcc -> shipped glibc -> cross-gcc-runtime + wrapped
+  # toolchain) is orchestrated in packages.nix, since it interleaves glibc.nix
+  # calls (which thread mig/headers) with gcc-runtime.nix's mkCompiler/mkRuntime.
   mkAll = system: targets:
     let
       hts = hurdTargets targets;
