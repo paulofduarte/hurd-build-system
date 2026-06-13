@@ -415,7 +415,9 @@ _fp_of = $(if $(filter $(1),$(_ENV_GOALS)),repo=$(_FP_REPO),$(call _goal_fp,$(1)
 # must not permanently _FORCE the dist-gcc pattern rule.
 _fp_stale = $(if $(filter $(1),$(_FP_GOALS)),$(shell if [ -e $(_MARK.$(1)) ]; then [ "$$(cat $(_MARK.$(1)).fp 2>/dev/null)" = "$(call _fp_of,$(1))" ] || echo $(1)-fp; fi))
 # $(call _fp_write,GOAL): recipe tail - record the fingerprint the build used.
-_fp_write = printf '%s' "$(call _fp_of,$(1))" > $(_MARK.$(1)).fp
+# mkdir its own dir: a fresh ALT_BUILD variant's stamp dir may not exist yet
+# when this runs ahead of the stamp's own mkdir (dist-*-tree).
+_fp_write = mkdir -p $(dir $(_MARK.$(1))) && printf '%s' "$(call _fp_of,$(1))" > $(_MARK.$(1)).fp
 # $(call _env_clean,GOAL,DIRS): configure-rule head - on env-fp mismatch wipe
 # DIRS so the rebuild starts clean under the new env.
 _env_clean = if [ -n "$(call _fp_stale,$(1))" ]; then echo "  ENV-CLEAN  $(1)"; rm -rf $(2); fi
