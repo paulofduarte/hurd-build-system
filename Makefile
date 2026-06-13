@@ -1036,7 +1036,8 @@ _DIST_PASSTHROUGH := \
   _HOST_SYSTEM=$(_HOST_SYSTEM) \
   MIG_IN_TREE=$(MIG_IN_TREE) \
   GNUMACH_IN_TREE=$(GNUMACH_IN_TREE) \
-  HURD_IN_TREE=$(HURD_IN_TREE)
+  HURD_IN_TREE=$(HURD_IN_TREE) \
+  HEADER_DRIFT_WARN_ONLY=$(HEADER_DRIFT_WARN_ONLY)
 # _HOST_SYSTEM + ALT_BUILD: forward the variant infix's inputs so the inner make
 # computes the SAME work/ paths.  Forwarding the RESOLVED _HOST_SYSTEM means the inner
 # needn't re-run `nix eval` and can't disagree.  The *_IN_TREE flags: forward the
@@ -1311,6 +1312,70 @@ define _dist_nix_copy
 	$(call _assert_file,$(2)/$(5),$(5))
 endef
 
+# ---- header-drift gate (single-glibc <-> in-tree kernel ABI skew) ----
+# The one glibc binds the PIN mach/hurd RPC surface; an in-tree kernel/hurd builds
+# the ALIAS surface.  Additive alias changes are safe, but a MODIFIED or REMOVED
+# type/RPC that glibc itself consumes is silent libc<->kernel skew.  Diff the pin vs
+# alias header trees (pure text - no abidiff/sidekick), scoped to the surface glibc
+# actually consumes: the pin glibc's own include/{mach,hurd,device} is the oracle, so
+# only files present in all of {pin headers, alias headers, glibc-consumed} are
+# compared - kernel-internal headers glibc never includes are out of scope.  FAIL
+# "pin bump needed" on skew; HEADER_DRIFT_WARN_ONLY=1 downgrades to a warning.
+# Skipped when no gnumach/hurd is in-tree: nix then resolves alias==pin to the same
+# source, so the inputs are guaranteed identical and no check is needed.  (mig in-tree
+# alone is not header-visible - the header packages don't run mig - so it relies on
+# the pin-bump discipline, not this gate.)
+define _header_drift
+	@set -e; \
+	if [ -z "$(strip $(call _override1,gnumach))$(strip $(call _override1,hurd))" ]; then \
+	  echo "  HDR-DRIFT    skip: no in-tree gnumach/hurd (alias==pin, nix-guaranteed)"; \
+	else \
+	  gpin=$$($(NIX_BUILD) $(PROJ)\#glibc-hurd-$(_TC_ARCH) --no-link --print-out-paths); \
+	  skew=$$(mktemp); addl=$$(mktemp); \
+	  for m in gnumach hurd; do \
+	    case $$m in \
+	      gnumach) hattr=gnumach-headers-$(ARCH); ovr="$(call _overrides,gnumach-headers)";; \
+	      hurd)    hattr=hurd-headers-$(_TC_ARCH); ovr="$(call _overrides,hurd-headers)";; \
+	    esac; \
+	    pin=$$($(NIX_BUILD) $(PROJ)\#$$hattr --no-link --print-out-paths); \
+	    ali=$$($(NIX_BUILD) $$ovr $(PROJ)\#$$hattr --no-link --print-out-paths); \
+	    [ "$$pin" = "$$ali" ] && continue; \
+	    find $$ali/include \( -name '*.h' -o -name '*.defs' \) -type f | while IFS= read -r f; do \
+	      rel=$${f#$$ali/include/}; \
+	      [ -e "$$gpin/include/$$rel" ] || continue; \
+	      if [ ! -e "$$pin/include/$$rel" ]; then echo "    + $$rel (new, glibc-consumed)" >>$$skew; continue; fi; \
+	      cmp -s "$$pin/include/$$rel" "$$f" && continue; \
+	      if diff "$$pin/include/$$rel" "$$f" | grep -q '^<'; then echo "    ! $$rel (modified)" >>$$skew; \
+	      else echo "    ~ $$rel (lines added only)" >>$$addl; fi; \
+	    done; \
+	    find $$pin/include \( -name '*.h' -o -name '*.defs' \) -type f | while IFS= read -r f; do \
+	      rel=$${f#$$pin/include/}; \
+	      [ -e "$$gpin/include/$$rel" ] || continue; \
+	      [ -e "$$ali/include/$$rel" ] || echo "    - $$rel (removed)" >>$$skew; \
+	    done; \
+	  done; \
+	  na=$$(wc -l <$$addl | tr -d ' '); ns=$$(wc -l <$$skew | tr -d ' '); \
+	  [ $$na -gt 0 ] && { echo "  HDR-DRIFT    $$na additive change(s) to glibc-consumed headers (safe):"; cat $$addl; } || true; \
+	  if [ $$ns -gt 0 ]; then \
+	    echo "  HDR-DRIFT    $$ns glibc-consumed header(s) MODIFIED/REMOVED vs the pins - libc<->kernel skew:"; cat $$skew; \
+	    rm -f $$skew $$addl; \
+	    if [ -n "$$HEADER_DRIFT_WARN_ONLY" ]; then \
+	      echo "  HDR-DRIFT    (HEADER_DRIFT_WARN_ONLY) continuing despite skew - PIN BUMP NEEDED"; \
+	    else \
+	      echo "  HDR-DRIFT    PIN BUMP NEEDED (or HEADER_DRIFT_WARN_ONLY=1 to override)"; exit 1; \
+	    fi; \
+	  else \
+	    echo "  HDR-DRIFT    ok: glibc-consumed mach/hurd surface unchanged vs the pins"; \
+	    rm -f $$skew $$addl; \
+	  fi; \
+	fi
+endef
+
+.PHONY: header-drift
+# Standalone entry point; also run inside dist-glibc so a shipped deployable is gated.
+header-drift:
+	$(call _header_drift)
+
 dist-glibc: $(DIST_GLIBC_STAMP)
 
 # No file prereqs: the scoped fingerprint covers the whole flake-eval surface
@@ -1329,6 +1394,8 @@ $(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
 	$(call _make_writable,$(DIST_GLIBC)/lib)
 	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call _assert_file,$(DIST_GLIBC)/lib/libmachuser.so.1,libmachuser.so.1)
+	@# Gate the pin glibc against the in-tree (alias) RPC surface it ships alongside.
+	$(call _header_drift)
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
 
 # ---- dist-gcc (gcc runtime) ----
