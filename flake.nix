@@ -23,34 +23,58 @@
     # also feed PACKAGE_VERSION.  The local clones under src/ are a separate dev
     # convenience populated by `make src` - nix never reads them.  `make
     # pin-src` bumps the pin (flake.lock only - your format here is preserved).
+    # ONE pin set serves the whole chain (the former *-ref-src twins are gone):
+    # pinned to upstream RELEASE TAGS, so `nix flake update` leaves them put and
+    # a pin bump is a DELIBERATE event - it rebuilds the full toolchain (glibc
+    # is cross-gcc's libcCross).  Real hacking happens in-tree via the
+    # *-dev-src alias overrides below, which can never reach the pin-side
+    # consumers.  The savannah tags carry their resolved `rev`: it makes the
+    # lock resolvable from a local cache when savannah is unreachable (it is
+    # flaky; sourceware is reliable, so glibc stays tag-only).  mig is pinned
+    # to a COMMIT: its latest release tag (2023) predates the x86_64 support
+    # and the test-harness fixes the checked build needs - upstream just
+    # hasn't tagged since.
     gnumach-src = {
       type  = "git";
       url   = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
-      ref   = "master";
+      ref   = "refs/tags/v1.8+git20260224";
+      rev   = "004116a3a862e872df005e8f6af0d4ea87d506fe";
       flake = false;
     };
     mig-src = {
       type  = "git";
       url   = "https://git.savannah.gnu.org/git/hurd/mig.git";
       ref   = "master";
+      rev   = "cb48044b30fcfe10529ecc1129dd68e93ed73835";
       flake = false;
     };
     hurd-src = {
       type  = "git";
       url   = "https://git.savannah.gnu.org/git/hurd/hurd.git";
-      ref   = "master";
+      ref   = "refs/tags/v0.9.git20260527";
+      rev   = "d6a94f56ef421ca92f3cd573262f6a096191b240";
       flake = false;
     };
-    # GNU libc for the Hurd cross-toolchain.  Pinned to the release/2.43/master
-    # branch (stable tip with all backports) - x86_64-gnu support landed in 2.40
-    # and the active hurd-amd64 patch set lives in 2.40+.  Sourced from upstream
-    # sourceware (authoritative for glibc).
+    # GNU libc for the Hurd cross-toolchain AND the shipped libc (one glibc;
+    # x86_64-gnu support landed in 2.40, the active hurd-amd64 patch set lives
+    # in 2.40+).  Sourced from upstream sourceware (authoritative for glibc).
     glibc-src = {
       type  = "git";
       url   = "https://sourceware.org/git/glibc.git";
-      ref   = "release/2.43/master";
+      ref   = "refs/tags/glibc-2.43";
       flake = false;
     };
+
+    # Overridable ALIASES of the pins - what the Makefile's in-tree overrides
+    # rebind (--override-input <m>-dev-src src/<m>).  `follows` keeps them OUT
+    # of the lock (no second pin to maintain) and, unoverridden, they resolve
+    # to the very same source - the pin-side and alias-side instantiations
+    # then produce IDENTICAL drvs.  The explicit `flake = false` is required:
+    # follows does not inherit it, and overriding an alias without it makes
+    # nix demand a flake.nix in the override path.
+    gnumach-dev-src = { follows = "gnumach-src"; flake = false; };
+    mig-dev-src     = { follows = "mig-src";     flake = false; };
+    hurd-dev-src    = { follows = "hurd-src";    flake = false; };
 
     # The build-system rev token for the `+build.g<rev>` version field.  Any
     # `--override-input` unmatches the committed lock and nix drops BOTH
@@ -65,51 +89,10 @@
       flake = false;
     };
 
-    # Reference pins for the cross-toolchain.  gcc's libgcc_s / libstdc++ bind
-    # the REFERENCE glibc, built from these *-ref-src trees (+ their headers /
-    # mig).  See .claude/docs/build/TOOLCHAIN-LIBC-DECOUPLING.md.
-    #
-    # Pinned to upstream RELEASE TAGS: `nix flake update` moves the working
-    # branches but leaves the tags put, so gcc rebuilds only on a deliberate
-    # rebaseline.  mig's latest release tag predates our test-harness fixes, so
-    # the reference mig picks them up via the date-guarded patches in
-    # flakes/mig/default.nix.
-    #
-    # The savannah tags carry their resolved `rev` too: it makes the lock
-    # resolvable from a local cache when savannah is unreachable (it is flaky;
-    # sourceware is reliable, so glibc-ref stays tag-only).
-    gnumach-ref-src = {
-      type  = "git";
-      url   = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
-      ref   = "refs/tags/v1.8+git20260224";
-      rev   = "004116a3a862e872df005e8f6af0d4ea87d506fe";
-      flake = false;
-    };
-    mig-ref-src = {
-      type  = "git";
-      url   = "https://git.savannah.gnu.org/git/hurd/mig.git";
-      ref   = "refs/tags/v1.8+git20231217";
-      rev   = "3b1fcb2b83bb26d43dc912884499345f561d0b6a";
-      flake = false;
-    };
-    hurd-ref-src = {
-      type  = "git";
-      url   = "https://git.savannah.gnu.org/git/hurd/hurd.git";
-      ref   = "refs/tags/v0.9.git20260527";
-      rev   = "d6a94f56ef421ca92f3cd573262f6a096191b240";
-      flake = false;
-    };
-    glibc-ref-src = {
-      type  = "git";
-      url   = "https://sourceware.org/git/glibc.git";
-      ref   = "refs/tags/glibc-2.43";
-      flake = false;
-    };
-
   };
 
   outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src
-                   , gnumach-ref-src, mig-ref-src, hurd-ref-src, glibc-ref-src
+                   , gnumach-dev-src, mig-dev-src, hurd-dev-src
                    , build-rev, ... }:
     let
       # The real build rev when the Makefile overrides `build-rev`; null when the
@@ -151,7 +134,7 @@
       pkgOutputs = import ./packages.nix {
         inherit nixpkgs self forAllSystems targets crossToolchain buildRevToken
                 gnumach-src mig-src hurd-src glibc-src
-                gnumach-ref-src mig-ref-src hurd-ref-src glibc-ref-src;
+                gnumach-dev-src mig-dev-src hurd-dev-src;
       };
     in
     {

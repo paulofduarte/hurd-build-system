@@ -199,7 +199,7 @@ in
         # the target's own /lib + DT_NEEDED, no rpath wanted):
         #
         #  (a) auto-derived rpath from the wrapped cc's OWN -L<store> dirs (the
-        #      abi-checked working glibc + gcc libdir, injected on every link).
+        #      shipped glibc + gcc libdir, injected on every link).
         #      NIX_DONT_SET_RPATH gates exactly this.  It must be a REAL env var,
         #      not the wrapped bintools' add-local-ldflags-before.sh: gcc links
         #      through its --with-ld bintools (the bootstrap bintools wrapper), which never

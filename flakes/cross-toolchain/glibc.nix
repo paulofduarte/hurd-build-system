@@ -37,13 +37,14 @@
 { nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
 , srcInput
   # Content-address the output (see flakes/lib/repro.nix mkCaAttrs).  The
-  # WORKING glibc opts in; the reference glibc stays input-addressed (frozen
-  # pins never exercise a cutoff, and a CA ref would move cross-gcc's drv).
+  # shipped glibc opts in; the bootstrap glibc stays input-addressed (frozen
+  # pins never exercise a cutoff, and a CA bootstrap glibc would move
+  # cross-gcc's drv).
 , contentAddressed ? false
   # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc is
   # referenced by absolute path for CC=/CXX=, so pass a derivation with bin/<tp>-gcc
   # + bin/<tp>-g++).  Default = the libc-free bootstrap-gcc, used by the
-  # reference glibc; the working glibc overrides it with the final ref-wrapped gcc.
+  # bootstrap glibc; the shipped glibc overrides it with cross-gcc.
 , buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc) }:
 
 let
@@ -210,9 +211,9 @@ let
       # sensitive APFS (or any Linux fs).
       enableParallelBuilding = true;
 
-      # Keep glibc's `-g` DWARF (don't let stdenv strip it): the ABI gate needs
-      # DWARF on both the working + reference glibc for abidiff/pahole, so it
-      # analyses the real libraries directly instead of unstripped twins.
+      # Keep glibc's `-g` DWARF (don't let stdenv strip it): debugging /
+      # historical ABI analysis want DWARF on the real libraries directly
+      # instead of unstripped twins.
       # Stripping for a release artifact is a dist-phase concern (no dist-glibc
       # today - glibc is a toolchain component, not a shipped artifact).
       # See TOOLCHAIN-LIBC-DECOUPLING.md / task #197.

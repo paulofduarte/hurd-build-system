@@ -21,16 +21,13 @@ let
   inherit (import ./info.nix { inherit lib flakeLib; }) info;
 
   # `*-src` inputs that are NOT in-tree source projects: never cloned into src/
-  # by `make src`, never `--override-input`-ed by `make`.  The `*-ref-src`
-  # reference twins (frozen tags the reference glibc - and hence cross-gcc -
-  # binds; see TOOLCHAIN-LIBC-DECOUPLING.md) must stay un-overridable:
-  # --override-input is eval-global, so an in-tree clone would drag the
-  # reference glibc, and thus gcc, into every rebuild.  Bump them together via
-  # `make rebaseline-ref`.  glibc-src is here too: the working glibc is
-  # nix-only (the gcc model) - version picking = edit the input in flake.nix;
-  # patches live in flakes/cross-toolchain/glibc.nix.
+  # by `make src`.  glibc is nix-only (the gcc model) - version picking = edit
+  # the input in flake.nix; patches live in flakes/cross-toolchain/glibc.nix.
+  # The pins themselves stay clone sources (src/<m> baselines = the pinned
+  # tags); in-tree overrides rebind the *-dev-src ALIASES, which are filtered
+  # out below (follows refs - no lock node of their own).
   toolchainOnly = [
-    "gnumach-ref-src" "mig-ref-src" "hurd-ref-src" "glibc-ref-src" "glibc-src"
+    "glibc-src"
   ];
 in
 
@@ -48,7 +45,8 @@ in
       lock = builtins.fromJSON (builtins.readFile (self.outPath + "/flake.lock"));
       rootInputs = lock.nodes.${lock.root}.inputs or {};
       srcNames = builtins.filter
-        (n: lib.hasSuffix "-src" n && !(builtins.elem n toolchainOnly))
+        (n: lib.hasSuffix "-src" n && !(lib.hasSuffix "-dev-src" n)
+            && !(builtins.elem n toolchainOnly))
         (builtins.attrNames rootInputs);
     in
     lib.listToAttrs (map

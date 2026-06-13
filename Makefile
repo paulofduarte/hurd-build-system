@@ -302,7 +302,7 @@ _req_env = $(foreach v,$(1),[ -n "$($(v))" ] || { echo "ERROR: $(v) unset - buil
 # git-tree semantics: tracked + uncommitted edits) so nix builds the WORKING source
 # - what makes a dist-*-nix half match its in-tree twin.  Override ONLY when the
 # target consumes the input AND that module's <M>_IN_TREE is on, so a module's src is
-# never dragged in by an unrelated build.  The frozen `*-ref-src` twins are NEVER
+# never dragged in by an unrelated build.  The pin-side inputs (*-src) are NEVER
 # overridden, so a glibc/header/mig hack never rebuilds gcc.
 #
 # Dependency graph - the WORKING src inputs each nix target transitively consumes:
@@ -336,7 +336,7 @@ _FLAG.gnumach := GNUMACH_IN_TREE
 _FLAG.hurd    := HURD_IN_TREE
 # $(call _override1,MODULE): override <m>-src iff <M>_IN_TREE is truthy.  No
 # clone-existence test - a truthy flag with absent src/<m> is caught by _need_src below.
-_override1 = $(if $($(_FLAG.$(1))),--override-input $(1)-src $(SRC)/$(1))
+_override1 = $(if $($(_FLAG.$(1))),--override-input $(1)-dev-src $(SRC)/$(1))
 # $(call _overrides,TARGET): the scoped --override-input set for a nix TARGET.
 # When any module override is active, the build-rev input rides along: overriding
 # unmatches the lock and nix drops self's rev, so composeVersion needs the real
@@ -560,7 +560,6 @@ help:
 	@echo "  lint-reuse       REUSE license-compliance check (SPDX headers + LICENSES/ + REUSE.toml)"
 	@echo "  pin-src          bump the pinned source revs to their forks' branch HEADs (verbose)"
 	@echo "  pin-src-<name>   same, for ONE source only (e.g. 'make pin-src-mig')"
-	@echo "  rebaseline-ref   re-resolve the frozen reference-source pins"
 	@echo "                   (new gcc ABI baseline; ~25min)"
 	@echo "  clean            per-subdir 'make clean' - preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
@@ -775,15 +774,6 @@ dist-hurd-tree:
 	@echo "$@: opt-in - run 'make src-hurd' for the in-tree userland (dist-hurd ships the nix hurd)."
 endif
 
-# ---- rebaseline-ref (always-on, arch-independent) ----
-# The deliberate "the working ABI changed on purpose - accept it" action.
-# Re-resolves the frozen reference pins (*-ref-src) to their current rev, so gcc
-# rebuilds once against the new reference (~25 min) and the gate compares against it
-# thereafter.  For a NEW release baseline, bump the tag in flake.nix first.
-.PHONY: rebaseline-ref
-rebaseline-ref:
-	$(NIX_FLAKE) flake update glibc-ref-src gnumach-ref-src hurd-ref-src mig-ref-src
-
 # `hurd` / `dist-hurd` recipes live in the inner-make branch below, alongside `mach` /
 # `dist-gnumach` - _BUILD_GOALS dispatched through `nix develop`.  Defining them in the
 # inner branch avoids colliding with the `$(_BUILD_GOALS): _dispatch` stub.
@@ -832,7 +822,7 @@ endif
 # build); pulled in as a `run` prereq it still runs inside.  `mig` is a build goal
 # ONLY when src/mig opts in; otherwise filtered out (top-level no-op recipe, no
 # dispatch) - like src/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% glibc $(if $(MIG_IN_TREE),,mig) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree) rebaseline-ref,$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% glibc $(if $(MIG_IN_TREE),,mig) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree),$(_GOALS))
 
 # Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
 #   _MARK.<goal>   the completion marker - its stamp/output.  Existence is the

@@ -12,7 +12,7 @@
       },
       "parent": []
     },
-    "glibc-ref-src": {
+    "glibc-src": {
       "flake": false,
       "locked": {
         "lastModified": 1769201640,
@@ -29,24 +29,7 @@
         "url": "https://sourceware.org/git/glibc.git"
       }
     },
-    "glibc-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1780984593,
-        "narHash": "sha256-kESLUoGrZmyKoOOwwu5nBEsPEi+vFzKVRtNnAj2/EUg=",
-        "ref": "release/2.43/master",
-        "rev": "fe0ccc9564c3476f7171cb005884560da0699773",
-        "revCount": 43362,
-        "type": "git",
-        "url": "https://sourceware.org/git/glibc.git"
-      },
-      "original": {
-        "ref": "release/2.43/master",
-        "type": "git",
-        "url": "https://sourceware.org/git/glibc.git"
-      }
-    },
-    "gnumach-ref-src": {
+    "gnumach-src": {
       "flake": false,
       "locked": {
         "lastModified": 1771922911,
@@ -64,24 +47,7 @@
         "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
       }
     },
-    "gnumach-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1780261037,
-        "narHash": "sha256-wFFJiA/RmhGOXcX24dlSsZlk2ZHsyKElJfA/IbEhXL4=",
-        "ref": "master",
-        "rev": "e56301bd2528ed83bc695b4acb7c323521d2c6c3",
-        "revCount": 3095,
-        "type": "git",
-        "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
-      },
-      "original": {
-        "ref": "master",
-        "type": "git",
-        "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
-      }
-    },
-    "hurd-ref-src": {
+    "hurd-src": {
       "flake": false,
       "locked": {
         "lastModified": 1779884182,
@@ -99,41 +65,6 @@
         "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
       }
     },
-    "hurd-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1780954872,
-        "narHash": "sha256-Ohr/ZwRQKSNjjV0mqvqfrI315l3z/TQJ376QWvgQ1AI=",
-        "ref": "master",
-        "rev": "cbf1fb550c3606809482d87fd249f553e158a096",
-        "revCount": 13000,
-        "type": "git",
-        "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
-      },
-      "original": {
-        "ref": "master",
-        "type": "git",
-        "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
-      }
-    },
-    "mig-ref-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1702848101,
-        "narHash": "sha256-j7yiewPad1ombYPyOCUULyyZjtHGh0rvB5oX/nfhp9c=",
-        "ref": "refs/tags/v1.8+git20231217",
-        "rev": "3b1fcb2b83bb26d43dc912884499345f561d0b6a",
-        "revCount": 200,
-        "type": "git",
-        "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
-      },
-      "original": {
-        "ref": "refs/tags/v1.8+git20231217",
-        "rev": "3b1fcb2b83bb26d43dc912884499345f561d0b6a",
-        "type": "git",
-        "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
-      }
-    },
     "mig-src": {
       "flake": false,
       "locked": {
@@ -147,6 +78,7 @@
       },
       "original": {
         "ref": "master",
+        "rev": "cb48044b30fcfe10529ecc1129dd68e93ed73835",
         "type": "git",
         "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
       }
@@ -170,13 +102,18 @@
     "root": {
       "inputs": {
         "build-rev": "build-rev",
-        "glibc-ref-src": "glibc-ref-src",
         "glibc-src": "glibc-src",
-        "gnumach-ref-src": "gnumach-ref-src",
+        "gnumach-dev-src": [
+          "gnumach-src"
+        ],
         "gnumach-src": "gnumach-src",
-        "hurd-ref-src": "hurd-ref-src",
+        "hurd-dev-src": [
+          "hurd-src"
+        ],
         "hurd-src": "hurd-src",
-        "mig-ref-src": "mig-ref-src",
+        "mig-dev-src": [
+          "mig-src"
+        ],
         "mig-src": "mig-src",
         "nixpkgs": "nixpkgs"
       }

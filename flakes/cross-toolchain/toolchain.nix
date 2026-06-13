@@ -9,11 +9,11 @@
 #   bootstrap-gcc-<arch>      the bootstrap compiler (gccWithoutTargetLibc) - bare driver +
 #                             cc1 + libgcc.a (no libgcc_s/libstdc++/libc).  The
 #                             libc-free cc that compiles gnumach-headers, mig, and
-#                             the REFERENCE glibc (gnumach's configure forces
+#                             the bootstrap glibc (gnumach's configure forces
 #                             -ffreestanding -nostdlib, so its link test needs no libc).
 #   toolchain-<arch>          THE toolchain: the wrapped cross-cc (cross-gcc + the
-#                             WORKING glibc-hurd + a glibc-hurd-wrapped binutils,
-#                             -B'd to the work-built libgcc).  What the dev shell,
+#                             shipped glibc-hurd + a glibc-hurd-wrapped binutils,
+#                             -B'd to the shipped libgcc).  What the dev shell,
 #                             gnumach, and the Hurd userland build with, and what
 #                             the cache workflow builds.
 #
@@ -22,7 +22,7 @@
 #
 # `hurdTargets` filters target-archs.nix to the non-xen userland targets
 # (i686, x86_64).  The xen variants share their CPU sibling's toolchain (same
-# `<cpu>-gnu` ABI; the kernel links -nostdlib so the working glibc-hurd sysroot
+# `<cpu>-gnu` ABI; the kernel links -nostdlib so the shipped glibc-hurd sysroot
 # is irrelevant), so packages.nix maps them onto the sibling toolchain.
 
 { nixpkgs, mkCrossPkgs }:
@@ -34,17 +34,17 @@ let
   hurdTargets = targets:
     lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
 
-  # The wrapped cross-cc.  `cc` is cross-gcc (ref-bound, posix, no runtime); the
-  # cc-wrapper and bintools-wrapper point at the WORKING glibc (headers / crt /
+  # The wrapped cross-cc.  `cc` is cross-gcc (bootstrap-bound, posix, no runtime); the
+  # cc-wrapper and bintools-wrapper point at the shipped glibc (headers / crt /
   # ld.so / augmented libc.so GROUP).  Re-pointing `working` is a wrapper rebuild (seconds) -
-  # wrapCCWith never recompiles `cc`, so hacking the working glibc doesn't rebuild
+  # wrapCCWith never recompiles `cc`, so an in-tree glibc hack doesn't rebuild
   # gcc.  We wrap binutils-unwrapped rather than the default cross binutils wrapper
   # to avoid dragging in nixpkgs' own glibc, whose meta.platforms gate refuses the
   # Hurd target at eval time.
-  # libgcc (optional): a derivation providing the WORK-built libgcc/crt under
+  # libgcc (optional): a derivation providing the shipped libgcc/crt under
   # lib/gcc/<tgt>/<ver>/ (cross-gcc-runtime / the split libgcc).  When set, every link
-  # through this toolchain uses it instead of cc's own REF-built copy - the runtime is
-  # actually consumed + ABI-consistent with the working glibc.  Omitted for the wrapped
+  # through this toolchain uses it instead of cc's own bootstrap-built copy - the runtime is
+  # actually consumed + ABI-consistent with the shipped glibc.  Omitted for the wrapped
   # cc that BUILDS the runtime (no self-dependency).
   wrappedToolchain = system: target: { cc, working, libgcc ? null }:
     let
@@ -59,22 +59,23 @@ let
     bp.wrapCCWith {
       inherit cc;
       libc     = working;
-      # The FLIP: cross-gcc bakes the pinned REFERENCE glibc as its native sys-include
+      # The FLIP: cross-gcc bakes the bootstrap glibc as its native sys-include
       # (its libcCross), and the wrapper's own libc headers land at -idirafter (after it),
-      # so ref would win.  Add the WORKING glibc headers at -isystem (ahead of the gcc
-      # sys-include) so user code AND the runtime libs compile against WORKING - everything
-      # converges on the work ABI, so no ref-vs-work ABI gate is needed.  working/include
-      # carries the merged glibc + mach + hurd tree, so this is the whole system surface.
+      # so the bootstrap glibc would win.  Add the shipped glibc headers at -isystem
+      # (ahead of the gcc sys-include) so user code AND the runtime libs compile against
+      # the shipped glibc - everything converges on one ABI, so no gate is needed.
+      # working/include carries the merged glibc + mach + hurd tree, so this is the whole
+      # system surface.
       extraBuildCommands = ''
         echo "-isystem ${working}/include" >> $out/nix-support/cc-cflags
-        # The -isystem above puts the working glibc's HOST-SPECIFIC store path into
+        # The -isystem above puts the shipped glibc's HOST-SPECIFIC store path into
         # DWARF5 .debug_line_str (line-table include dirs) of everything compiled
         # through this wrapper - map it to the shared canon name (build-flags.nix) at
         # the same site that introduces it, so consumers stay cross-host identical.
         echo "-ffile-prefix-map=${working}=${buildFlags.glibcCanonSysroot}" >> $out/nix-support/cc-cflags
       '' + lib.optionalString (libgcc != null) ''
-        # Link the WORK-built libgcc.a/libgcc_eh.a/libgcc_s/crt*.o (against the working
-        # glibc) instead of cc's REF-built copies: -B puts the runtime's lib/gcc/<tgt>/<ver>
+        # Link the shipped libgcc.a/libgcc_eh.a/libgcc_s/crt*.o (against the shipped
+        # glibc) instead of cc's bootstrap-built copies: -B puts the runtime's lib/gcc/<tgt>/<ver>
         # ahead of the compiler's (-lgcc/-lgcc_eh + startfiles), and -L its lib/ so -lgcc_s
         # resolves there too.  libgcc.a is NOT uniformly ABI-neutral (the unwinder/__emutls/
         # header-using objects bake glibc/Mach types), so this is load-bearing, not cosmetic.

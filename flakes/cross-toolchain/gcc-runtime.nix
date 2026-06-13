@@ -1,17 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # cross-gcc + its split target RUNTIME.  cross-gcc (mkCompiler) is bootstrap-gcc rebuilt
-# against the pinned REFERENCE glibc (libcCross - so nixpkgs gives it posix) but trimmed
+# against the bootstrap glibc (libcCross - so nixpkgs gives it posix) but trimmed
 # to compiler + static libgcc: it builds NO runtime.  mkRuntimeLib then builds ONE runtime
-# lib against the WORKING glibc with cross-gcc, WITHOUT rebuilding cc1 - nixpkgs has no
+# lib against the shipped glibc with cross-gcc, WITHOUT rebuilding cc1 - nixpkgs has no
 # standalone runtime builder (it builds the runtime inside the full gcc), so this drives a
 # partial gcc tree by hand: configure + emit libgcc's build glue (the host driver/gen-tools,
 # never cc1), then compile the lib subdir with cross-gcc via GCC_FOR_TARGET.
 #
-#   mkCompiler    cross-gcc-<arch>: cc1 + cc1plus + static libgcc.a, bound to the ref glibc
-#                 for its posix thread model.  Never rebuilt on a WORKING-glibc hack.
+#   mkCompiler    cross-gcc-<arch>: cc1 + cc1plus + static libgcc.a, bound to the bootstrap
+#                 glibc for its posix thread model.  Never rebuilt on an in-tree hack.
 #   mkRuntimeLib  cross-gcc-rt-<lib>-<arch>: one target-runtime lib (libgcc standalone; the
-#                 rest -B the libgcc derivation) against the WORKING glibc, via buildLib.
+#                 rest -B the libgcc derivation) against the shipped glibc, via buildLib.
 
 { nixpkgs, mkCrossPkgs, wrappedToolchain }:
 
@@ -29,13 +29,13 @@ in
 
 {
   # cross-gcc: the second-pass compiler.  bootstrap-gcc (nixpkgs gccWithoutTargetLibc)
-  # rebuilt against the PINNED reference glibc (libcCross) - that is what makes it posix
-  # (the ref glibc supplies pthread.h + htl) - but STOPPED at the compiler + libgcc: no
-  # libstdc++/libatomic/...  cross-gcc-rt-* owns every SHIPPED runtime lib, built against
-  # the WORKING glibc with this compiler; cross-gcc's own ref-built libgcc/libgcc_s exist
-  # only for the glibc bootstrap + the link spec, and the wrapper's -B/-L always shadows
-  # them with the work-built runtime.  cross-gcc binds the ref ONLY, so a working-glibc
-  # hack never rebuilds it (a ref bump does).
+  # rebuilt against the bootstrap glibc (libcCross) - that is what makes it posix
+  # (the bootstrap glibc supplies pthread.h + htl) - but STOPPED at the compiler +
+  # libgcc: no libstdc++/libatomic/...  cross-gcc-rt-* owns every SHIPPED runtime lib,
+  # built against the shipped glibc with this compiler; cross-gcc's own bootstrap-built
+  # libgcc/libgcc_s exist only for the glibc bootstrap + the link spec, and the
+  # wrapper's -B/-L always shadows them with the shipped runtime.  cross-gcc binds the
+  # bootstrap glibc ONLY, so an in-tree hack never rebuilds it (a pin bump does).
   mkCompiler = system: target: refGlibc:
     let
       bp   = (mkCrossPkgs system target).buildPackages;
@@ -65,12 +65,12 @@ in
         # isn't guaranteed - so keep it explicit to ensure the DFP runtime is built.
         "--enable-decimal-float"
       ];
-      # Stop at compiler + libgcc (incl. the ref-built libgcc_s the shared spec needs at
+      # Stop at compiler + libgcc (incl. the bootstrap-built libgcc_s the shared spec needs at
       # its own build time).  The SHIPPED runtime (libstdc++/libatomic/... and the real
       # libgcc) comes from cross-gcc-rt-*, so cross-gcc must not build the rest.
       buildFlags     = [ "all-gcc" "all-target-libgcc" ];
       installTargets = [ "install-gcc" "install-target-libgcc" ];
-      # mechanism #2: the libgcc_s link binds the ref glibc, whose --prefix=/ libc.so
+      # mechanism #2: the libgcc_s link binds the bootstrap glibc, whose --prefix=/ libc.so
       # GROUP lists absolute /lib members - resolvable only via --sysroot, which the nix
       # ld-wrapper strips from the command line.  Feed it through the salted env var the
       # wrapped --with-ld honours (same channel glibc.nix uses).
@@ -143,7 +143,7 @@ in
   # Build ONE target-runtime lib as its own derivation: copy the shared `base` tree
   # into the sandbox, then buildLib for this lib.  libgcc is standalone; the rest
   # pass `libgccDrv` (the already-built libgcc derivation) so the wrapper -B's it and
-  # they link the WORK-built libgcc (GCC_FOR_TARGET).  Splitting per-lib lets the
+  # they link the shipped libgcc (GCC_FOR_TARGET).  Splitting per-lib lets the
   # toolchain depend on libgcc alone (not a 7-lib monolith) and the rest build on demand.
   mkRuntimeLib = system: target: { compiler, working, base, libName, extraFlags ? "--enable-shared", libgccDrv ? null }:
     let
@@ -155,8 +155,8 @@ in
       # and never will be - the ABI evolves in place), but every user-facing name
       # (attr, target, the installed libstdc++.so) is plain libstdc++.
       srcDir  = if libName == "libstdc++" then "libstdc++-v3" else libName;
-      # cross-gcc wrapped around the working glibc; for the non-libgcc libs the wrapper
-      # also -B's the libgcc derivation so they link the WORK-built libgcc.
+      # cross-gcc wrapped around the shipped glibc; for the non-libgcc libs the wrapper
+      # also -B's the libgcc derivation so they link the shipped libgcc.
       wrapped = wrappedToolchain system target { cc = compiler; working = working; libgcc = libgccDrv; };
     in
     bp.stdenv.mkDerivation ({
@@ -199,7 +199,7 @@ in
         export NIX_DONT_SET_RPATH${salt}=1
 
         # DRY: configure + build + install one target-lib subdir, compiled with the
-        # prebuilt cc1 (CC/CXX) against the working glibc.  Extra args ($@) are passed
+        # prebuilt cc1 (CC/CXX) against the shipped glibc.  Extra args ($@) are passed
         # to the subdir's configure (e.g. --enable-shared, a CFLAGS= override).
         buildLib() {
           local name=$1; shift
