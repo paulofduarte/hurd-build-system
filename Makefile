@@ -333,6 +333,10 @@ _DEPS.dist              := mig gnumach hurd
 _DEPS.all               := mig gnumach hurd
 # The split gcc runtime libs sit on the WORKING glibc -> same transitive srcs.
 _DEPS.dist-gcc          := $(_DC)
+# The floating RPC stubs re-run mig over the alias mach/hurd headers -> any of
+# mig/gnumach/hurd in-tree can shift their wire (mig codegen, or a .defs
+# renumber/type swap via the headers).  Same transitive srcs as the glibc.
+_DEPS.hurd-stubs        := $(_DC)
 
 # module -> its IN_TREE flag var.
 _FLAG.mig     := MIG_IN_TREE
@@ -1376,28 +1380,33 @@ endef
 header-drift:
 	$(call _header_drift)
 
-# ---- mig-drift gate (in-tree mig codegen <-> glibc's frozen pin stubs) ----
-# The header gate above catches .defs/source drift, but an in-tree MIG can change
-# the generated wire marshalling from byte-identical .defs - invisible to it (the
-# header packages don't run mig).  glibc bakes RPC stubs into libc.so at the PIN
-# mig (frozen - glibc isn't rebuilt on an in-tree mig hack); if alias mig emits a
-# different wire, those skew vs the alias-mig kernel.  mig codegen is GLOBAL, so
-# the cheap hurd-stubs IR is a faithful proxy: build it with pin mig (no override)
-# vs alias mig (mig-dev-src only, headers held at pin to ISOLATE mig) and compare
-# the per-function WIRE-FACT MANIFEST (mig-wire-manifest: order-independent set of
-# {field offset+type+value, msgh_id, mach_msg call args} - precise where a byte/IR
-# diff false-positives on a benign store reorder).  The tool prints the verdict and
-# exits non-zero on divergence; HEADER_DRIFT_WARN_ONLY -> --warn-only.  Skipped when
-# mig is not in-tree (CA collapses identical codegen to one IR path).
+# ---- mig-drift gate (in-tree RPC wire <-> glibc's frozen pin stubs) ----
+# The header gate above catches .defs/source SURFACE drift as text, but two wire
+# breakages slip past it: (a) an in-tree MIG changing the generated marshalling
+# from byte-identical .defs (the header packages don't run mig), and (b) a .defs
+# edit whose wire effect is INVISIBLE to a text diff - a mid-subsystem routine
+# insert renumbers every following msgh_id (msgids are positional), and an
+# equal-size type swap changes the packed type descriptor; both read as "lines
+# added only".  glibc bakes RPC stubs into libc.so at the PIN toolchain (frozen -
+# not rebuilt on an in-tree hack); if the alias wire differs, those skew vs the
+# alias kernel/userland.  The floating hurd-stubs re-run mig over the alias
+# mach/hurd headers, so their cheap IR is a faithful proxy for ALL three drift
+# sources: build it pin (no override) vs alias (mig/gnumach/hurd -dev-src per
+# _IN_TREE) and compare the per-function WIRE-FACT MANIFEST (mig-wire-manifest:
+# order-independent set of {field offset+type+value incl. type descriptor, msgh_id,
+# mach_msg/__mig_* marshalling-call args} - precise where a byte/IR diff
+# false-positives on a benign store reorder).  Exits non-zero on divergence;
+# HEADER_DRIFT_WARN_ONLY -> --warn-only.  Skipped when none of mig/gnumach/hurd is
+# in-tree (CA collapses identical codegen to one IR path).
 define _mig_drift
 	@set -e; \
-	if [ -z "$(strip $(call _override1,mig))" ]; then \
-	  echo "  MIG-DRIFT    skip: mig not in-tree (pin mig == alias mig, nix-guaranteed)"; \
+	if [ -z "$(strip $(call _overrides,hurd-stubs))" ]; then \
+	  echo "  MIG-DRIFT    skip: no in-tree mig/gnumach/hurd (alias stubs == pin, nix-guaranteed)"; \
 	else \
 	  pin=$$($(NIX_BUILD) $(PROJ)\#hurd-stubs-ir-$(_TC_ARCH) --no-link --print-out-paths); \
-	  ali=$$($(NIX_BUILD) $(call _override1,mig) $(PROJ)\#hurd-stubs-ir-$(_TC_ARCH) --no-link --print-out-paths); \
+	  ali=$$($(NIX_BUILD) $(call _overrides,hurd-stubs) $(PROJ)\#hurd-stubs-ir-$(_TC_ARCH) --no-link --print-out-paths); \
 	  if [ "$$pin" = "$$ali" ]; then \
-	    echo "  MIG-DRIFT    ok: alias mig stub IR byte-identical to pin (CA-collapsed)"; \
+	    echo "  MIG-DRIFT    ok: alias stub IR byte-identical to pin (CA-collapsed)"; \
 	  else \
 	    tool=$$($(NIX_BUILD) $(PROJ)\#mig-wire-manifest --no-link --print-out-paths)/bin/mig-wire-manifest; \
 	    "$$tool" $$pin/share/rpc-stub-ir/all.ll $$ali/share/rpc-stub-ir/all.ll $(if $(HEADER_DRIFT_WARN_ONLY),--warn-only); \
