@@ -37,6 +37,7 @@
 // Exit 0 if wire-equivalent (or --warn-only); 1 on divergence.
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -45,10 +46,12 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 using namespace llvm;
 
@@ -81,15 +84,40 @@ struct BaseNamer {
   }
 };
 
-// Walk the GEP chain, summing constant offsets; return (root, byte offset).
-std::pair<const Value *, int64_t> baseOff(const Value *v, const DataLayout &DL) {
-  int64_t off = 0;
+std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int depth);
+
+// Walk the GEP chain to the root pointer, accumulating a canonical byte-offset
+// EXPRESSION.  Constant indices fold into a running integer; a VARIABLE index
+// (runtime-positioned field - OOL data, a variable-length array) contributes a
+// "<stride>*<index-expr>" term instead of collapsing the whole pointer to an
+// opaque base.  Returns (root, offset-expr); for an all-constant GEP the expr is
+// just the integer, byte-identical to the old behaviour (so existing facts are
+// unchanged - only runtime-positioned ones gain precision).
+std::pair<const Value *, std::string> ptrParts(const Value *v,
+                                               const DataLayout &DL,
+                                               BaseNamer &bn) {
+  int64_t constOff = 0;
+  std::vector<std::string> terms;
   while (auto *G = dyn_cast<GEPOperator>(v)) {
-    APInt a(DL.getIndexSizeInBits(G->getPointerAddressSpace()), 0);
-    if (!G->accumulateConstantOffset(DL, a)) break;
-    off += a.getSExtValue();
+    for (auto GTI = gep_type_begin(G), E = gep_type_end(G); GTI != E; ++GTI) {
+      Value *idx = GTI.getOperand();
+      if (StructType *ST = GTI.getStructTypeOrNull()) {
+        constOff += DL.getStructLayout(ST)->getElementOffset(
+            cast<ConstantInt>(idx)->getZExtValue());
+      } else {
+        uint64_t stride = DL.getTypeAllocSize(GTI.getIndexedType());
+        if (auto *C = dyn_cast<ConstantInt>(idx))
+          constOff += (int64_t)stride * C->getSExtValue();
+        else
+          terms.push_back(std::to_string(stride) + "*" +
+                          valExpr(idx, DL, bn, 4));
+      }
+    }
     v = G->getPointerOperand();
   }
+  std::sort(terms.begin(), terms.end());
+  std::string off = std::to_string(constOff);
+  for (auto &t : terms) off += "+" + t;
   return {v, off};
 }
 
@@ -101,14 +129,14 @@ std::string tyStr(Type *t) {
 }
 
 std::string ptrExpr(const Value *p, const DataLayout &DL, BaseNamer &bn) {
-  auto bo = baseOff(p, DL);
-  return bn.of(bo.first) + "+" + std::to_string(bo.second);
+  auto bo = ptrParts(p, DL, bn);
+  return bn.of(bo.first) + "+" + bo.second;
 }
 
 // Just the GEP-root id (no offset) - used to tell whether a pointer aims at the
 // message buffer (a base that receives stores).
 std::string baseId(const Value *p, const DataLayout &DL, BaseNamer &bn) {
-  return bn.of(baseOff(p, DL).first);
+  return bn.of(ptrParts(p, DL, bn).first);
 }
 
 // Canonical, name-independent expression of a value (depth-capped).
