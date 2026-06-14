@@ -148,12 +148,23 @@ let
 
         ${lib.optionalString emitIR ''
           # Re-emit each stub TU as LLVM IR for the rpc-wire-drift gate's wire-fact
-          # manifest (flakes/tools/mig-wire-manifest.py).  glibc-native -O2 (glibc
+          # manifest (flakes/tools/mig-wire-manifest.cpp).  glibc-native -O2 (glibc
           # #errors without __OPTIMIZE__) - the wire facts (msgh_id / struct field
           # offsets+values / msgt descriptors) are -O-invariant; -g dropped so
           # debug line numbers don't perturb them.  Replays glibc's captured per-TU
           # flags from the matching logged cwd, then llvm-links to ONE text module
-          # (all.ll) so the gate's comparator is pure-python (no llvm at gate time).
+          # (all.ll) for the gate's comparator.
+          #
+          # Scope - BOTH RPC_*.c (user stubs) AND *_server.c are harvested.  glibc
+          # freezes server stubs only for the interfaces libc itself SERVES (exc,
+          # msg, ...); those _S_*_server demuxers ARE frozen-in-libc, so they belong
+          # in the gate (their reply-marshal stores + request-unmarshal icmp checks
+          # are wire surface).  Translator-side servers (io/fs/...) are NOT frozen -
+          # they rebuild with the kernel/translators under the in-tree mig - so the
+          # frozen-vs-alias model doesn't apply; their wire compatibility with the
+          # frozen libc client is the MIRROR of the user stub we already diff (same
+          # mig emits both directions from one .defs), so the user-side facts cover
+          # it.  Hence no separate translator-server harvest is needed.
           genir=$out/share/rpc-stub-ir; mkdir -p $genir
           clangbin=${pkgs.llvmPackages_19.clang-unwrapped}/bin/clang
           rep=$(grep -m1 -E 'RPC_[a-z].*\.c|_server\.c' /tmp/cc.log | cut -f2-)
