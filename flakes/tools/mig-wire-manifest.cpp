@@ -15,6 +15,8 @@
 //   "mc@<base>+<off>=<lenexpr><-<src>"   an llvm.memcpy (OOL / bulk copy)
 //   "call:<callee>(<argexprs>)"          a marshalling call: mach_msg* / __mig_*
 //                                        OR any call passing a ptr into the buffer
+//   "cmp:<pred>(<op0>,<op1>)"            an icmp vs a constant: the REPLY-side
+//                                        descriptor/msgid the stub expects to receive
 // where <valexpr> is a CANONICAL, name-independent expression of the value:
 //   constant -> c<N>, argument -> a<argno>, load -> ld(<base>+<off>),
 //   any other instruction -> <opcode>(<operand exprs>)  (depth-capped).
@@ -26,8 +28,10 @@
 // recomputation of variable fields (#2b), OOL/memcpy marshalling (#1, both the
 // llvm.memcpy intrinsic and __mig_memcpy/__mig_strncpy/__mig_{,de}allocate, plus
 // ANY non-llvm call passing a pointer into the message buffer - so an
-// un-enumerated payload helper is still caught), mach_msg call args (#3).  A
-// reorder permutes the set -> no change.
+// un-enumerated payload helper is still caught), mach_msg call args (#3), and the
+// reply-validation expectations (icmp vs constant - the descriptors/msgids the
+// stub expects back, the only wire surface mig encodes as a compare not a store).
+// A reorder permutes the set -> no change.
 //
 // Usage: mig-wire-manifest PIN.{bc,ll} ALIAS.{bc,ll} [--warn-only]
 // Exit 0 if wire-equivalent (or --warn-only); 1 on divergence.
@@ -190,6 +194,20 @@ std::set<std::string> manifest(Function &F) {
         }
         facts.insert(s + ")");
       }
+    } else if (auto *Ic = dyn_cast<ICmpInst>(&I)) {
+      // Reply-validation expectations: mig checks a RECEIVED descriptor / msgid
+      // by COMPARING it against an expected constant (icmp), not by storing it.
+      // Capture {predicate, both operand exprs} whenever one side is a constant,
+      // so a reply-side descriptor/msgid drift - e.g. an out-only type swap,
+      // invisible to the request stores - is caught, symmetric to the request
+      // descriptors we get for free as inline stores.  Only const-compares (the
+      // "expected value" pattern); reorder-stable as a set.
+      if (isa<ConstantInt>(Ic->getOperand(0)) ||
+          isa<ConstantInt>(Ic->getOperand(1)))
+        facts.insert("cmp:" +
+                     CmpInst::getPredicateName(Ic->getPredicate()).str() + "(" +
+                     valExpr(Ic->getOperand(0), DL, bn, 4) + "," +
+                     valExpr(Ic->getOperand(1), DL, bn, 4) + ")");
     }
   }
   return facts;
