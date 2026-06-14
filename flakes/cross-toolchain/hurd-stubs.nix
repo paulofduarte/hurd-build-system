@@ -179,7 +179,7 @@ let
           # mig emits both directions from one .defs), so the user-side facts cover
           # it.  Hence no separate translator-server harvest is needed.
           genir=$out/share/rpc-stub-ir; mkdir -p $genir
-          clangbin=${pkgs.llvmPackages_19.clang-unwrapped}/bin/clang
+          clangbin=${pkgs.llvmPackages.clang-unwrapped}/bin/clang
           rep=$(grep -m1 -E 'RPC_[a-z].*\.c|_server\.c' /tmp/cc.log | cut -f2-)
           repflags=$(printf '%s' "$rep" | sed -E 's#[^ ]*RPC_[^ ]*\.c##g; s#[^ ]*[^ ]_server\.c##g; s/-Werror//g; s/ -g / /g; s#-o /[^ ]+##g; s/-MD//g; s/-MP//g; s#-MF [^ ]+##g; s#-MT [^ ]+##g')
           cd $bdir
@@ -191,7 +191,7 @@ let
           done
           n=$(find $genir -name '*.bc' | wc -l)
           [ "$n" -gt 0 ] || { echo "ERROR: no stub IR emitted"; head $genir/clang-errs.log; exit 1; }
-          ${pkgs.llvmPackages_19.llvm}/bin/llvm-link $(find $genir -name '*.bc' | sort) -S -o $genir/all.ll
+          ${pkgs.llvmPackages.llvm}/bin/llvm-link $(find $genir -name '*.bc' | sort) -S -o $genir/all.ll
           rm -f $genir/*.bc $genir/clang-errs.log
           echo "emitted $n stub IR modules -> all.ll"
         ''}

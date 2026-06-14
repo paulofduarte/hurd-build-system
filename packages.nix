@@ -142,12 +142,13 @@ in
         emitIR = true;
       };
       # The rpc-wire-drift gate's comparator: the wire-fact manifest tool, an LLVM-API
-      # extractor (robust GEP offsets, def-expression + memcpy facts) built once
-      # against LLVM-19.  One source of truth (flakes/tools); the Makefile gate
-      # just resolves + calls it.
+      # extractor (robust GEP offsets, def-expression + memcpy facts) built against
+      # the pin's default llvmPackages - the SAME LLVM that hurd-stubs' emitIR uses
+      # to harvest the .ll, so emitter and reader always match.  One source of truth
+      # (flakes/tools); the Makefile gate just resolves + calls it.
       migWireManifest = let p = nixpkgs.legacyPackages.${system}; in
         p.runCommand "mig-wire-manifest"
-          { nativeBuildInputs = with p.llvmPackages_19; [ clang llvm.dev ]; }
+          { nativeBuildInputs = with p.llvmPackages; [ clang llvm.dev ]; }
           ''
             mkdir -p $out/bin
             clang++ $(llvm-config --cxxflags) ${./flakes/tools/mig-wire-manifest.cpp} \
