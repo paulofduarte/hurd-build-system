@@ -13,7 +13,8 @@
 // Per function the manifest is a sorted set of fact strings:
 //   "st@<base>+<off>:<ty>=<valexpr>"     a store into a message buffer
 //   "mc@<base>+<off>=<lenexpr><-<src>"   an llvm.memcpy (OOL / bulk copy)
-//   "call:<callee>(<argexprs>)"          a mach_msg* / __mig_* marshalling call
+//   "call:<callee>(<argexprs>)"          a marshalling call: mach_msg* / __mig_*
+//                                        OR any call passing a ptr into the buffer
 // where <valexpr> is a CANONICAL, name-independent expression of the value:
 //   constant -> c<N>, argument -> a<argno>, load -> ld(<base>+<off>),
 //   any other instruction -> <opcode>(<operand exprs>)  (depth-capped).
@@ -23,8 +24,10 @@
 //
 // Captures: msgh_id & constant fields (#0), arg->field remap (#2a), value
 // recomputation of variable fields (#2b), OOL/memcpy marshalling (#1, both the
-// llvm.memcpy intrinsic and __mig_memcpy/__mig_strncpy/__mig_{,de}allocate),
-// mach_msg call args (#3).  A reorder permutes the set -> no change.
+// llvm.memcpy intrinsic and __mig_memcpy/__mig_strncpy/__mig_{,de}allocate, plus
+// ANY non-llvm call passing a pointer into the message buffer - so an
+// un-enumerated payload helper is still caught), mach_msg call args (#3).  A
+// reorder permutes the set -> no change.
 //
 // Usage: mig-wire-manifest PIN.{bc,ll} ALIAS.{bc,ll} [--warn-only]
 // Exit 0 if wire-equivalent (or --warn-only); 1 on divergence.
@@ -98,6 +101,12 @@ std::string ptrExpr(const Value *p, const DataLayout &DL, BaseNamer &bn) {
   return bn.of(bo.first) + "+" + std::to_string(bo.second);
 }
 
+// Just the GEP-root id (no offset) - used to tell whether a pointer aims at the
+// message buffer (a base that receives stores).
+std::string baseId(const Value *p, const DataLayout &DL, BaseNamer &bn) {
+  return bn.of(baseOff(p, DL).first);
+}
+
 // Canonical, name-independent expression of a value (depth-capped).
 std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int depth) {
   if (auto *C = dyn_cast<ConstantInt>(v))
@@ -141,6 +150,16 @@ bool isWireCall(StringRef n) {
 std::set<std::string> manifest(Function &F) {
   const DataLayout &DL = F.getParent()->getDataLayout();
   BaseNamer bn(F);
+  // Pass 1: the bases that receive stores ARE the message buffer(s).  Any later
+  // call that passes a pointer into one of them is marshalling the wire, even if
+  // it is not on the isWireCall allow-list - this catches an OOL/payload helper
+  // we have not enumerated (a new __mig_*, a custom copy routine, ...) without a
+  // name list.  Bookkeeping calls (reply-port helpers take an i32, not a buffer
+  // pointer) stay out.
+  std::set<std::string> bufBases;
+  for (auto &I : instructions(F))
+    if (auto *S = dyn_cast<StoreInst>(&I))
+      bufBases.insert(baseId(S->getPointerOperand(), DL, bn));
   std::set<std::string> facts;
   for (auto &I : instructions(F)) {
     if (auto *S = dyn_cast<StoreInst>(&I)) {
@@ -153,8 +172,16 @@ std::set<std::string> manifest(Function &F) {
                    ptrExpr(M->getSource(), DL, bn));
     } else if (auto *Cl = dyn_cast<CallInst>(&I)) {
       const Function *cf = Cl->getCalledFunction();
-      if (cf && isWireCall(cf->getName())) {
-        std::string s = "call:" + cf->getName().str() + "(";
+      if (!cf) continue;
+      StringRef nm = cf->getName();
+      if (nm.starts_with("llvm.")) continue; // intrinsics: effect flows via args
+      bool wire = isWireCall(nm);
+      if (!wire)
+        for (const Use &u : Cl->args())
+          if (u.get()->getType()->isPointerTy() &&
+              bufBases.count(baseId(u.get(), DL, bn))) { wire = true; break; }
+      if (wire) {
+        std::string s = "call:" + nm.str() + "(";
         bool first = true;
         for (const Use &u : Cl->args()) {
           if (!first) s += ",";
