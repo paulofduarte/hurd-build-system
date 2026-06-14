@@ -25,6 +25,11 @@
   # builder (matches the base's libc.so the stubs link against; no cross-gcc
   # dependency, so no cycle).
 , buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc)
+  # emitIR: additionally emit the stub TUs as a single LLVM-IR text module
+  # ($out/share/rpc-stub-ir/all.ll) for the mig-drift gate's wire-fact manifest.
+  # Off by default (the harvest re-compiles every stub with clang, ~minutes) so
+  # only the gate - which builds the `hurd-stubs-ir-<arch>` variant - pays it.
+, emitIR ? false
 }:
 
 let
@@ -49,7 +54,7 @@ let
       salt          = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
     in
     pkgs.stdenv.mkDerivation ({
-      pname   = "hurd-stubs-${tp}";
+      pname   = "hurd-stubs${lib.optionalString emitIR "-ir"}-${tp}";
       version = "2.43";
 
       dontUnpack = true;
@@ -120,7 +125,15 @@ let
         # Plain `make` (NOT rm + targeted - rm'ing the objects breaks glibc's rules):
         # the fresh .defs make only the mach/hurd stubs stale, so make rebuilds just
         # them (~the spike's 8 s) and leaves the rest of the base tree untouched.
-        make -j"''${NIX_BUILD_CORES:-1}"
+        # With emitIR, CC is a transparent logging wrapper (execs the real gcc,
+        # identical build) so the harvest below can replay glibc's EXACT per-TU
+        # flags when re-emitting the stubs as LLVM IR.
+        ${lib.optionalString emitIR ''
+          printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> /tmp/cc.log\nexec %s "$@"\n' \
+            "${crossCC}/bin/${tp}-gcc" > /tmp/cclog; chmod +x /tmp/cclog
+          : > /tmp/cc.log
+        ''}
+        make -j"''${NIX_BUILD_CORES:-1}" ${lib.optionalString emitIR "CC=/tmp/cclog"}
 
         # Versioned install (glibc's install-time layout): the build emits an
         # unversioned mach/libmachuser.so carrying SONAME libmachuser.so.1 - ship it
@@ -133,21 +146,31 @@ let
         ln -s libmachuser.so.1   $out/lib/libmachuser.so
         ln -s libhurduser.so.0.3 $out/lib/libhurduser.so
 
-        # Harvest the mig-GENERATED RPC headers - the .uh/.__h user stubs and the
-        # _server.h headers, i.e. the message-struct WIRE surface mig emits from the
-        # .defs (glibc's own rules computed the MIGFLAGS, so this is the exact codegen
-        # glibc/the kernel get).  The mig-drift gate diffs these pin-mig vs alias-mig:
-        # the .so floats with alias mig as the shipped stub, but the .uh layout is the
-        # PRECISE skew surface (a .so that moves while the .uh is stable is wire-safe
-        # codegen churn, not skew).  Ships alongside the libs in this same build.
-        genh=$out/share/rpc-stub-headers
-        find . \( -name '*.uh' -o -name '*.__h' -o -name '*_server.h' \) -type f \
-          | while IFS= read -r f; do
-              rel=''${f#./}
-              mkdir -p "$genh/$(dirname "$rel")"
-              cp "$f" "$genh/$rel"
-            done
-        [ "$(find "$genh" -name '*.uh' | head -1)" ] || { echo "ERROR: no mig-generated .uh harvested"; exit 1; }
+        ${lib.optionalString emitIR ''
+          # Re-emit each stub TU as LLVM IR for the mig-drift gate's wire-fact
+          # manifest (flakes/tools/mig-wire-manifest.py).  glibc-native -O2 (glibc
+          # #errors without __OPTIMIZE__) - the wire facts (msgh_id / struct field
+          # offsets+values / msgt descriptors) are -O-invariant; -g dropped so
+          # debug line numbers don't perturb them.  Replays glibc's captured per-TU
+          # flags from the matching logged cwd, then llvm-links to ONE text module
+          # (all.ll) so the gate's comparator is pure-python (no llvm at gate time).
+          genir=$out/share/rpc-stub-ir; mkdir -p $genir
+          clangbin=${pkgs.llvmPackages_19.clang-unwrapped}/bin/clang
+          rep=$(grep -m1 -E 'RPC_[a-z].*\.c|_server\.c' /tmp/cc.log | cut -f2-)
+          repflags=$(printf '%s' "$rep" | sed -E 's#[^ ]*RPC_[^ ]*\.c##g; s#[^ ]*[^ ]_server\.c##g; s/-Werror//g; s/ -g / /g; s#-o /[^ ]+##g; s/-MD//g; s/-MP//g; s#-MF [^ ]+##g; s#-MT [^ ]+##g')
+          cd $bdir
+          find $bdir \( -name 'RPC_*.c' -o -name '*_server.c' \) -type f | while read -r c; do
+            nm=$(basename "$c" .c); sub=$(basename "$(dirname "$c")")
+            $clangbin -target ${tp} -Wno-unknown-warning-option -Wno-error $repflags \
+              -emit-llvm -c -o "$genir/$sub-$nm.bc" "$c" 2>>$genir/clang-errs.log \
+              || echo "CLANG-FAIL $sub/$nm" >> $genir/clang-errs.log
+          done
+          n=$(find $genir -name '*.bc' | wc -l)
+          [ "$n" -gt 0 ] || { echo "ERROR: no stub IR emitted"; head $genir/clang-errs.log; exit 1; }
+          ${pkgs.llvmPackages_19.llvm}/bin/llvm-link $(find $genir -name '*.bc' | sort) -S -o $genir/all.ll
+          rm -f $genir/*.bc $genir/clang-errs.log
+          echo "emitted $n stub IR modules -> all.ll"
+        ''}
 
         runHook postBuild
       '';
@@ -168,4 +191,4 @@ let
       };
     } // buildFlags.commonAttrs // helpers.mkCaAttrs true);
 in
-lib.mapAttrs' (name: target: lib.nameValuePair "hurd-stubs-${name}" (mkOne name target)) hurdTargets
+lib.mapAttrs' (name: target: lib.nameValuePair "hurd-stubs${lib.optionalString emitIR "-ir"}-${name}" (mkOne name target)) hurdTargets

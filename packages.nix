@@ -131,6 +131,22 @@ in
         inherit (crossToolchain) mkCrossPkgs;
         base = glibcStubBase;
       };
+      # IR-emitting variant (hurd-stubs-ir-<arch>) for the mig-drift gate: same
+      # stub build, plus the stub TUs as one LLVM-IR module (all.ll) for the
+      # wire-fact manifest.  Built only by the gate (pin-mig vs alias-mig); off by
+      # default so the shipped hurd-stubs pays no harvest cost.
+      hurdStubsIR = import ./flakes/cross-toolchain/hurd-stubs.nix {
+        inherit nixpkgs system targets mig gnumachHeaders hurdHeaders;
+        inherit (crossToolchain) mkCrossPkgs;
+        base = glibcStubBase;
+        emitIR = true;
+      };
+      # The mig-drift gate's comparator: the wire-fact manifest tool, wrapped with
+      # python3 (stdlib only).  One source of truth (flakes/tools); the Makefile
+      # gate just resolves + calls it.
+      migWireManifest = nixpkgs.legacyPackages.${system}.writeShellScriptBin
+        "mig-wire-manifest"
+        ''exec ${nixpkgs.legacyPackages.${system}.python3}/bin/python3 ${./flakes/tools/mig-wire-manifest.py} "$@"'';
 
       # Bare-name cross-LINK sysroot: glibc with the libc.so GROUP rewritten to
       # BARE NAMES (libc.so.0.3, libmachuser.so, ...) so the cross ld resolves
@@ -268,6 +284,8 @@ in
     // toolchainStagePkgs
     // glibc
     // hurdStubs
+    // hurdStubsIR
+    // { mig-wire-manifest = migWireManifest; }
     // hurdFinalPkgs
     // migChecked
     # Timezone database for the dist (dist-tzdata copies its share/zoneinfo).

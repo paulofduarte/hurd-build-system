@@ -1379,52 +1379,28 @@ header-drift:
 # ---- mig-drift gate (in-tree mig codegen <-> glibc's frozen pin stubs) ----
 # The header gate above catches .defs/source drift, but an in-tree MIG can change
 # the generated wire marshalling from byte-identical .defs - invisible to it (the
-# header packages don't run mig).  glibc's own internal RPC stubs are frozen at the
-# PIN mig (glibc isn't rebuilt on an in-tree mig hack), so alias-mig codegen that
-# diverges from pin = silent skew vs libc.  hurd-stubs runs mig over glibc's exact
-# .defs with glibc's exact MIGFLAGS and harvests the generated .uh/_server.h (the
-# message-struct WIRE surface) into share/rpc-stub-headers; build it with pin mig
-# (no override) vs alias mig (mig-dev-src only - headers held at pin to ISOLATE mig)
-# and diff that surface.  The .uh layout is the precise skew test: a .so that moves
-# while the .uh is stable is wire-safe codegen churn, not skew.  Same verdict scheme
-# and HEADER_DRIFT_WARN_ONLY override as the header gate.  Skipped when mig is not
-# in-tree (nix dedups pin==alias; CA collapses identical codegen to one path).
+# header packages don't run mig).  glibc bakes RPC stubs into libc.so at the PIN
+# mig (frozen - glibc isn't rebuilt on an in-tree mig hack); if alias mig emits a
+# different wire, those skew vs the alias-mig kernel.  mig codegen is GLOBAL, so
+# the cheap hurd-stubs IR is a faithful proxy: build it with pin mig (no override)
+# vs alias mig (mig-dev-src only, headers held at pin to ISOLATE mig) and compare
+# the per-function WIRE-FACT MANIFEST (mig-wire-manifest: order-independent set of
+# {field offset+type+value, msgh_id, mach_msg call args} - precise where a byte/IR
+# diff false-positives on a benign store reorder).  The tool prints the verdict and
+# exits non-zero on divergence; HEADER_DRIFT_WARN_ONLY -> --warn-only.  Skipped when
+# mig is not in-tree (CA collapses identical codegen to one IR path).
 define _mig_drift
 	@set -e; \
 	if [ -z "$(strip $(call _override1,mig))" ]; then \
 	  echo "  MIG-DRIFT    skip: mig not in-tree (pin mig == alias mig, nix-guaranteed)"; \
 	else \
-	  pin=$$($(NIX_BUILD) $(PROJ)\#hurd-stubs-$(_TC_ARCH) --no-link --print-out-paths); \
-	  ali=$$($(NIX_BUILD) $(call _override1,mig) $(PROJ)\#hurd-stubs-$(_TC_ARCH) --no-link --print-out-paths); \
+	  pin=$$($(NIX_BUILD) $(PROJ)\#hurd-stubs-ir-$(_TC_ARCH) --no-link --print-out-paths); \
+	  ali=$$($(NIX_BUILD) $(call _override1,mig) $(PROJ)\#hurd-stubs-ir-$(_TC_ARCH) --no-link --print-out-paths); \
 	  if [ "$$pin" = "$$ali" ]; then \
-	    echo "  MIG-DRIFT    ok: alias mig output byte-identical to pin (CA-collapsed)"; \
+	    echo "  MIG-DRIFT    ok: alias mig stub IR byte-identical to pin (CA-collapsed)"; \
 	  else \
-	    skew=$$(mktemp); addl=$$(mktemp); \
-	    pg=$$pin/share/rpc-stub-headers; ag=$$ali/share/rpc-stub-headers; \
-	    find $$ag -type f | while IFS= read -r f; do \
-	      rel=$${f#$$ag/}; \
-	      if [ ! -e "$$pg/$$rel" ]; then echo "    + $$rel (new)" >>$$skew; continue; fi; \
-	      cmp -s "$$pg/$$rel" "$$f" && continue; \
-	      if diff "$$pg/$$rel" "$$f" | grep -q '^<'; then echo "    ! $$rel (modified)" >>$$skew; \
-	      else echo "    ~ $$rel (lines added only)" >>$$addl; fi; \
-	    done; \
-	    find $$pg -type f | while IFS= read -r f; do \
-	      rel=$${f#$$pg/}; [ -e "$$ag/$$rel" ] || echo "    - $$rel (removed)" >>$$skew; \
-	    done; \
-	    na=$$(wc -l <$$addl | tr -d ' '); ns=$$(wc -l <$$skew | tr -d ' '); \
-	    [ $$na -gt 0 ] && { echo "  MIG-DRIFT    $$na additive change(s) to the mig wire surface (safe):"; cat $$addl; } || true; \
-	    if [ $$ns -gt 0 ]; then \
-	      echo "  MIG-DRIFT    $$ns mig-generated wire header(s) MODIFIED/REMOVED - alias mig diverges from glibc's pin stubs:"; cat $$skew; \
-	      rm -f $$skew $$addl; \
-	      if [ -n "$$HEADER_DRIFT_WARN_ONLY" ]; then \
-	        echo "  MIG-DRIFT    (HEADER_DRIFT_WARN_ONLY) continuing despite skew - PIN BUMP NEEDED"; \
-	      else \
-	        echo "  MIG-DRIFT    PIN BUMP NEEDED (or HEADER_DRIFT_WARN_ONLY=1 to override)"; exit 1; \
-	      fi; \
-	    else \
-	      echo "  MIG-DRIFT    ok: mig wire surface unchanged (only wire-safe codegen churn in the .so)"; \
-	      rm -f $$skew $$addl; \
-	    fi; \
+	    tool=$$($(NIX_BUILD) $(PROJ)\#mig-wire-manifest --no-link --print-out-paths)/bin/mig-wire-manifest; \
+	    "$$tool" $$pin/share/rpc-stub-ir/all.ll $$ali/share/rpc-stub-ir/all.ll $(if $(HEADER_DRIFT_WARN_ONLY),--warn-only); \
 	  fi; \
 	fi
 endef
