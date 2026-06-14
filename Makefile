@@ -1350,7 +1350,11 @@ define _header_drift
 	      if [ ! -e "$$pin/include/$$rel" ]; then echo "    + $$rel (new, glibc-consumed)" >>$$skew; continue; fi; \
 	      cmp -s "$$pin/include/$$rel" "$$f" && continue; \
 	      if diff "$$pin/include/$$rel" "$$f" | grep -q '^<'; then echo "    ! $$rel (modified)" >>$$skew; \
-	      else echo "    ~ $$rel (lines added only)" >>$$addl; fi; \
+	      else \
+	        nr=$$(diff "$$pin/include/$$rel" "$$f" | sed -n 's/^> *\(routine\|simpleroutine\)[ 	]*\([A-Za-z0-9_]*\).*/\2/p' | tr '\n' ' '); \
+	        if [ -n "$$nr" ]; then echo "    ~ $$rel (new RPC - additive iff appended, mig-drift gate authoritative on msgid renumber: $$nr)" >>$$addl; \
+	        else echo "    ~ $$rel (lines added only)" >>$$addl; fi; \
+	      fi; \
 	    done; \
 	    find $$pin/include \( -name '*.h' -o -name '*.defs' \) -type f | while IFS= read -r f; do \
 	      rel=$${f#$$pin/include/}; \
