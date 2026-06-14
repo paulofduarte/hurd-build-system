@@ -103,6 +103,10 @@ std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int dep
     return "c" + (C->getBitWidth() <= 64 ? std::to_string(C->getSExtValue())
                                          : std::string("big"));
   if (isa<ConstantPointerNull>(v)) return "null";
+  // Any pointer value (alloca / GEP / arg / global) -> base+offset, so a
+  // message-buffer pointer is keyed the same way a store's destination is and
+  // an offset/aliasing shift in a mach_msg buffer arg becomes visible.
+  if (v->getType()->isPointerTy()) return "p[" + ptrExpr(v, DL, bn) + "]";
   if (auto *A = dyn_cast<Argument>(v)) return "a" + std::to_string(A->getArgNo());
   if (auto *C = dyn_cast<Constant>(v)) return "C:" + tyStr(C->getType());
   if (depth <= 0) return "...";
@@ -142,7 +146,7 @@ std::set<std::string> manifest(Function &F) {
         for (const Use &u : Cl->args()) {
           if (!first) s += ",";
           first = false;
-          s += valExpr(u.get(), DL, bn, 3);
+          s += valExpr(u.get(), DL, bn, 6);
         }
         facts.insert(s + ")");
       }
