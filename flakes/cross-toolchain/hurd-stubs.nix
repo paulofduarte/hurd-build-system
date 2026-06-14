@@ -26,7 +26,7 @@
   # dependency, so no cycle).
 , buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc)
   # emitIR: additionally emit the stub TUs as a single LLVM-IR text module
-  # ($out/share/rpc-stub-ir/all.ll) for the mig-drift gate's wire-fact manifest.
+  # ($out/share/rpc-stub-ir/all.ll) for the rpc-wire-drift gate's wire-fact manifest.
   # Off by default (the harvest re-compiles every stub with clang, ~minutes) so
   # only the gate - which builds the `hurd-stubs-ir-<arch>` variant - pays it.
 , emitIR ? false
@@ -147,7 +147,7 @@ let
         ln -s libhurduser.so.0.3 $out/lib/libhurduser.so
 
         ${lib.optionalString emitIR ''
-          # Re-emit each stub TU as LLVM IR for the mig-drift gate's wire-fact
+          # Re-emit each stub TU as LLVM IR for the rpc-wire-drift gate's wire-fact
           # manifest (flakes/tools/mig-wire-manifest.py).  glibc-native -O2 (glibc
           # #errors without __OPTIMIZE__) - the wire facts (msgh_id / struct field
           # offsets+values / msgt descriptors) are -O-invariant; -g dropped so

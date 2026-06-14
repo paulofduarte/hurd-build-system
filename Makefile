@@ -1352,7 +1352,7 @@ define _header_drift
 	      if diff "$$pin/include/$$rel" "$$f" | grep -q '^<'; then echo "    ! $$rel (modified)" >>$$skew; \
 	      else \
 	        nr=$$(diff "$$pin/include/$$rel" "$$f" | sed -n 's/^> *\(routine\|simpleroutine\)[ 	]*\([A-Za-z0-9_]*\).*/\2/p' | tr '\n' ' '); \
-	        if [ -n "$$nr" ]; then echo "    ~ $$rel (new RPC - additive iff appended, mig-drift gate authoritative on msgid renumber: $$nr)" >>$$addl; \
+	        if [ -n "$$nr" ]; then echo "    ~ $$rel (new RPC - additive iff appended, rpc-wire-drift gate authoritative on msgid renumber: $$nr)" >>$$addl; \
 	        else echo "    ~ $$rel (lines added only)" >>$$addl; fi; \
 	      fi; \
 	    done; \
@@ -1384,7 +1384,7 @@ endef
 header-drift:
 	$(call _header_drift)
 
-# ---- mig-drift gate (in-tree RPC wire <-> glibc's frozen pin stubs) ----
+# ---- rpc-wire-drift gate (in-tree RPC wire <-> glibc's frozen pin stubs) ----
 # The header gate above catches .defs/source SURFACE drift as text, but two wire
 # breakages slip past it: (a) an in-tree MIG changing the generated marshalling
 # from byte-identical .defs (the header packages don't run mig), and (b) a .defs
@@ -1402,15 +1402,15 @@ header-drift:
 # false-positives on a benign store reorder).  Exits non-zero on divergence;
 # HEADER_DRIFT_WARN_ONLY -> --warn-only.  Skipped when none of mig/gnumach/hurd is
 # in-tree (CA collapses identical codegen to one IR path).
-define _mig_drift
+define _rpc_wire_drift
 	@set -e; \
 	if [ -z "$(strip $(call _overrides,hurd-stubs))" ]; then \
-	  echo "  MIG-DRIFT    skip: no in-tree mig/gnumach/hurd (alias stubs == pin, nix-guaranteed)"; \
+	  echo "  RPC-DRIFT    skip: no in-tree mig/gnumach/hurd (alias stubs == pin, nix-guaranteed)"; \
 	else \
 	  pin=$$($(NIX_BUILD) $(PROJ)\#hurd-stubs-ir-$(_TC_ARCH) --no-link --print-out-paths); \
 	  ali=$$($(NIX_BUILD) $(call _overrides,hurd-stubs) $(PROJ)\#hurd-stubs-ir-$(_TC_ARCH) --no-link --print-out-paths); \
 	  if [ "$$pin" = "$$ali" ]; then \
-	    echo "  MIG-DRIFT    ok: alias stub IR byte-identical to pin (CA-collapsed)"; \
+	    echo "  RPC-DRIFT    ok: alias stub IR byte-identical to pin (CA-collapsed)"; \
 	  else \
 	    tool=$$($(NIX_BUILD) $(PROJ)\#mig-wire-manifest --no-link --print-out-paths)/bin/mig-wire-manifest; \
 	    "$$tool" $$pin/share/rpc-stub-ir/all.ll $$ali/share/rpc-stub-ir/all.ll $(if $(HEADER_DRIFT_WARN_ONLY),--warn-only); \
@@ -1418,9 +1418,9 @@ define _mig_drift
 	fi
 endef
 
-.PHONY: mig-drift
-mig-drift:
-	$(call _mig_drift)
+.PHONY: rpc-wire-drift
+rpc-wire-drift:
+	$(call _rpc_wire_drift)
 
 dist-glibc: $(DIST_GLIBC_STAMP)
 
@@ -1443,7 +1443,7 @@ $(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
 	@# Gate the pin glibc against the in-tree (alias) RPC surface it ships alongside:
 	@# header-surface drift (gnumach/hurd) + mig codegen drift (in-tree mig).
 	$(call _header_drift)
-	$(call _mig_drift)
+	$(call _rpc_wire_drift)
 	@$(call _dist_finalize,$(EPOCH_GLIBC))
 
 # ---- dist-gcc (gcc runtime) ----

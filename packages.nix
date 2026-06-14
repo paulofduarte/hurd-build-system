@@ -131,7 +131,7 @@ in
         inherit (crossToolchain) mkCrossPkgs;
         base = glibcStubBase;
       };
-      # IR-emitting variant (hurd-stubs-ir-<arch>) for the mig-drift gate: same
+      # IR-emitting variant (hurd-stubs-ir-<arch>) for the rpc-wire-drift gate: same
       # stub build, plus the stub TUs as one LLVM-IR module (all.ll) for the
       # wire-fact manifest.  Built only by the gate (pin-mig vs alias-mig); off by
       # default so the shipped hurd-stubs pays no harvest cost.
@@ -141,7 +141,7 @@ in
         base = glibcStubBase;
         emitIR = true;
       };
-      # The mig-drift gate's comparator: the wire-fact manifest tool, an LLVM-API
+      # The rpc-wire-drift gate's comparator: the wire-fact manifest tool, an LLVM-API
       # extractor (robust GEP offsets, def-expression + memcpy facts) built once
       # against LLVM-19.  One source of truth (flakes/tools); the Makefile gate
       # just resolves + calls it.

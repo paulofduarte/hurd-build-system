@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// mig-drift gate comparator.  Reads two LLVM-IR modules (pin-mig vs alias-mig
+// rpc-wire-drift gate comparator.  Reads two LLVM-IR modules (pin-mig vs alias-mig
 // stub IR) and reports stub functions whose RPC WIRE FACTS differ.
 //
 // Why a fact MANIFEST rather than an IR diff: an in-tree mig is wire-safe when
@@ -236,7 +236,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  outs() << "  MIG-DRIFT    wire-fact manifest: " << diverge << "/" << common
+  outs() << "  RPC-DRIFT    wire-fact manifest: " << diverge << "/" << common
          << " stub functions diverge under alias mig\n";
   int shown = 0;
   for (const auto &n : diffNames) {
@@ -248,14 +248,14 @@ int main(int argc, char **argv) {
 
   if (diverge) {
     if (warn) {
-      outs() << "  MIG-DRIFT    (HEADER_DRIFT_WARN_ONLY) continuing despite skew "
+      outs() << "  RPC-DRIFT    (HEADER_DRIFT_WARN_ONLY) continuing despite skew "
                 "- PIN BUMP NEEDED\n";
       return 0;
     }
-    outs() << "  MIG-DRIFT    PIN BUMP NEEDED (or HEADER_DRIFT_WARN_ONLY=1 to "
+    outs() << "  RPC-DRIFT    PIN BUMP NEEDED (or HEADER_DRIFT_WARN_ONLY=1 to "
               "override)\n";
     return 1;
   }
-  outs() << "  MIG-DRIFT    ok: alias mig wire-equivalent to pin on every stub\n";
+  outs() << "  RPC-DRIFT    ok: alias mig wire-equivalent to pin on every stub\n";
   return 0;
 }
