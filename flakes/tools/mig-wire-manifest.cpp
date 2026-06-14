@@ -13,7 +13,7 @@
 // Per function the manifest is a sorted set of fact strings:
 //   "st@<base>+<off>:<ty>=<valexpr>"     a store into a message buffer
 //   "mc@<base>+<off>=<lenexpr><-<src>"   an llvm.memcpy (OOL / bulk copy)
-//   "call:<mach_msg-callee>(<argexprs>)" a mach_msg* call (sizes/options)
+//   "call:<callee>(<argexprs>)"          a mach_msg* / __mig_* marshalling call
 // where <valexpr> is a CANONICAL, name-independent expression of the value:
 //   constant -> c<N>, argument -> a<argno>, load -> ld(<base>+<off>),
 //   any other instruction -> <opcode>(<operand exprs>)  (depth-capped).
@@ -22,7 +22,8 @@
 // typed and i8 GEP chains both resolve.
 //
 // Captures: msgh_id & constant fields (#0), arg->field remap (#2a), value
-// recomputation of variable fields (#2b), OOL/memcpy marshalling (#1),
+// recomputation of variable fields (#2b), OOL/memcpy marshalling (#1, both the
+// llvm.memcpy intrinsic and __mig_memcpy/__mig_strncpy/__mig_{,de}allocate),
 // mach_msg call args (#3).  A reorder permutes the set -> no change.
 //
 // Usage: mig-wire-manifest PIN.{bc,ll} ALIAS.{bc,ll} [--warn-only]
@@ -125,6 +126,18 @@ std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int dep
   return "?";
 }
 
+// Calls that carry wire marshalling.  mach_msg* is the send/recv primitive
+// (sizes/options); the __mig_* helpers move the actual payload: __mig_memcpy /
+// __mig_strncpy do OOL & string copies, __mig_allocate / __mig_deallocate set
+// up OOL buffers.  Reply-port bookkeeping (__mig_{get,put,dealloc}_reply_port)
+// and llvm.lifetime.* are local, not wire - excluded.  Note "__mig_deallocate"
+// is NOT a substring of "__mig_dealloc_reply_port", so the contains() is safe.
+bool isWireCall(StringRef n) {
+  return n.contains("mach_msg") || n.contains("__mig_memcpy") ||
+         n.contains("__mig_strncpy") || n.contains("__mig_allocate") ||
+         n.contains("__mig_deallocate");
+}
+
 std::set<std::string> manifest(Function &F) {
   const DataLayout &DL = F.getParent()->getDataLayout();
   BaseNamer bn(F);
@@ -140,7 +153,7 @@ std::set<std::string> manifest(Function &F) {
                    ptrExpr(M->getSource(), DL, bn));
     } else if (auto *Cl = dyn_cast<CallInst>(&I)) {
       const Function *cf = Cl->getCalledFunction();
-      if (cf && cf->getName().contains("mach_msg")) {
+      if (cf && isWireCall(cf->getName())) {
         std::string s = "call:" + cf->getName().str() + "(";
         bool first = true;
         for (const Use &u : Cl->args()) {
