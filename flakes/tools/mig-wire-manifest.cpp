@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
   }
 
   outs() << "  RPC-DRIFT    wire-fact manifest: " << diverge << "/" << common
-         << " stub functions diverge under alias mig\n";
+         << " stub functions diverge in the alias build\n";
   int shown = 0;
   for (const auto &n : diffNames) {
     if (shown++ >= 20) break;
@@ -256,6 +256,6 @@ int main(int argc, char **argv) {
               "override)\n";
     return 1;
   }
-  outs() << "  RPC-DRIFT    ok: alias mig wire-equivalent to pin on every stub\n";
+  outs() << "  RPC-DRIFT    ok: alias build wire-equivalent to pin on every stub\n";
   return 0;
 }
