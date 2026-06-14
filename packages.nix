@@ -141,12 +141,20 @@ in
         base = glibcStubBase;
         emitIR = true;
       };
-      # The mig-drift gate's comparator: the wire-fact manifest tool, wrapped with
-      # python3 (stdlib only).  One source of truth (flakes/tools); the Makefile
-      # gate just resolves + calls it.
-      migWireManifest = nixpkgs.legacyPackages.${system}.writeShellScriptBin
-        "mig-wire-manifest"
-        ''exec ${nixpkgs.legacyPackages.${system}.python3}/bin/python3 ${./flakes/tools/mig-wire-manifest.py} "$@"'';
+      # The mig-drift gate's comparator: the wire-fact manifest tool, an LLVM-API
+      # extractor (robust GEP offsets, def-expression + memcpy facts) built once
+      # against LLVM-19.  One source of truth (flakes/tools); the Makefile gate
+      # just resolves + calls it.
+      migWireManifest = let p = nixpkgs.legacyPackages.${system}; in
+        p.runCommand "mig-wire-manifest"
+          { nativeBuildInputs = with p.llvmPackages_19; [ clang llvm.dev ]; }
+          ''
+            mkdir -p $out/bin
+            clang++ $(llvm-config --cxxflags) ${./flakes/tools/mig-wire-manifest.cpp} \
+              $(llvm-config --ldflags --libs irreader --system-libs) \
+              -Wl,-rpath,$(llvm-config --libdir) \
+              -o $out/bin/mig-wire-manifest
+          '';
 
       # Bare-name cross-LINK sysroot: glibc with the libc.so GROUP rewritten to
       # BARE NAMES (libc.so.0.3, libmachuser.so, ...) so the cross ld resolves
