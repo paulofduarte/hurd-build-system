@@ -97,12 +97,25 @@ let
             cp -L "$f" "$f.real" 2>/dev/null && mv -f "$f.real" "$f" 2>/dev/null || true
           done
         done
-        # Swap the base's baked sysroot path -> ours throughout config.make.
+        # Remap the base's dead sandbox sysroot path -> ours.  On linux nix's fixed
+        # /build sandbox makes the base and this build share the path (oldroot ==
+        # sysroot), so this is skipped; on darwin's per-build dirs it is needed.
+        # The path is baked across config.make AND the generated dependency files
+        # (*.udeps/*.o.d list <oldroot>/.../mach.defs as prereqs), so rewrite EVERY
+        # text file that carries it (grep -rlI skips binaries -> no DWARF damage).
+        # CRITICAL: do it MTIME-PRESERVING and non-in-place (sed to temp, touch -r,
+        # mv) - `sed -i` is BSD-incompatible (darwin sandbox sed is Apple's) AND
+        # bumps mtimes, which would make errno/config deps look fresh and trigger
+        # spurious regens (errnos' `mkdir bits`, config.make-from-config.status)
+        # that fail.  Preserving mtimes keeps the design's invariant: only the
+        # overlaid stub .defs are fresh, so only the stubs rebuild.
         oldsys=$(sed -n 's/.*-isystem \([^ ]*\/sysroot\/include\).*/\1/p' $bdir/config.make | head -1)
-        if [ -n "$oldsys" ]; then
-          oldroot=''${oldsys%/include}
-          grep -rl "$oldroot" $bdir/config.make $bdir/config.status 2>/dev/null \
-            | xargs -r sed -i "s@$oldroot@$sysroot@g"
+        oldroot=''${oldsys%/include}
+        if [ -n "$oldsys" ] && [ "$oldroot" != "$sysroot" ]; then
+          grep -rlI "$oldroot" $bdir 2>/dev/null | while IFS= read -r f; do
+            sed "s@$oldroot@$sysroot@g" "$f" > "$f.tmp$$" \
+              && touch -r "$f" "$f.tmp$$" && mv -f "$f.tmp$$" "$f" || rm -f "$f.tmp$$"
+          done
         fi
 
         cd $bdir
