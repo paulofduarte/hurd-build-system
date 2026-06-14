@@ -60,22 +60,25 @@ namespace {
 // Stable per-function id for a GEP root: args/allocas/globals don't move under a
 // store reorder, so these ids are reorder-invariant.
 struct BaseNamer {
+  const DataLayout &DL;
   std::map<const Value *, std::string> cache;
-  std::map<const AllocaInst *, int> allocaIdx;
-  explicit BaseNamer(const Function &F) {
-    int i = 0;
-    for (const auto &I : instructions(F))
-      if (auto *A = dyn_cast<AllocaInst>(&I)) allocaIdx[A] = i++;
-  }
+  explicit BaseNamer(const DataLayout &dl) : DL(dl) {}
   std::string of(const Value *v) {
     auto it = cache.find(v);
     if (it != cache.end()) return it->second;
     std::string s;
     if (auto *A = dyn_cast<Argument>(v))
       s = "a" + std::to_string(A->getArgNo());
-    else if (auto *Al = dyn_cast<AllocaInst>(v))
-      s = "k" + std::to_string(allocaIdx[Al]);
-    else if (auto *G = dyn_cast<GlobalValue>(v))
+    else if (auto *Al = dyn_cast<AllocaInst>(v)) {
+      // Key a local buffer by its allocated SIZE, not emission order, so two
+      // allocas swapping declaration order (a benign mig codegen change) do not
+      // diverge.  Same-size allocas collapse to one key - a swap between them is
+      // then invisible, but that is benign (same-size scratch buffers).
+      if (auto sz = Al->getAllocationSize(DL))
+        s = "k" + std::to_string(sz->getFixedValue());
+      else
+        s = "k?";
+    } else if (auto *G = dyn_cast<GlobalValue>(v))
       s = "g:" + G->getName().str();
     else
       s = "?";
@@ -181,7 +184,7 @@ bool isWireCall(StringRef n) {
 
 std::set<std::string> manifest(Function &F) {
   const DataLayout &DL = F.getParent()->getDataLayout();
-  BaseNamer bn(F);
+  BaseNamer bn(DL);
   // Pass 1: the bases that receive stores ARE the message buffer(s).  Any later
   // call that passes a pointer into one of them is marshalling the wire, even if
   // it is not on the isWireCall allow-list - this catches an OOL/payload helper
@@ -230,12 +233,19 @@ std::set<std::string> manifest(Function &F) {
       // invisible to the request stores - is caught, symmetric to the request
       // descriptors we get for free as inline stores.  Only const-compares (the
       // "expected value" pattern); reorder-stable as a set.
-      if (isa<ConstantInt>(Ic->getOperand(0)) ||
-          isa<ConstantInt>(Ic->getOperand(1)))
-        facts.insert("cmp:" +
-                     CmpInst::getPredicateName(Ic->getPredicate()).str() + "(" +
-                     valExpr(Ic->getOperand(0), DL, bn, 4) + "," +
-                     valExpr(Ic->getOperand(1), DL, bn, 4) + ")");
+      Value *o0 = Ic->getOperand(0), *o1 = Ic->getOperand(1);
+      if (isa<ConstantInt>(o0) || isa<ConstantInt>(o1)) {
+        // Canonicalise the constant to the RIGHT (flipping the predicate to
+        // match) so "icmp eq %t, C" and "icmp eq C, %t" - the same check, just
+        // operands swapped - produce one fact, not a false positive.
+        CmpInst::Predicate pr = Ic->getPredicate();
+        if (isa<ConstantInt>(o0) && !isa<ConstantInt>(o1)) {
+          std::swap(o0, o1);
+          pr = Ic->getSwappedPredicate();
+        }
+        facts.insert("cmp:" + CmpInst::getPredicateName(pr).str() + "(" +
+                     valExpr(o0, DL, bn, 4) + "," + valExpr(o1, DL, bn, 4) + ")");
+      }
     }
   }
   return facts;
