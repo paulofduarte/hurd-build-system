@@ -568,6 +568,7 @@ help:
 	@echo "  dist-tzdata      install the IANA timezone db (zoneinfo) into ./dist/$(ARCH)/share"
 	@echo "  check            run the kernel test suite (== check-gnumach)"
 	@echo "  check-gnumach    run gnumach's 'make check' (kernel tests under QEMU)"
+	@echo "  check-sysroot    link a hello-world against the dist's dev+runtime sysroot"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
 	@echo "  run-help         show all 'make run' options (ARCH/SCENARIO/RUN_*)"
 	@echo "  sidekick         build the helper VM (x86_64 Debian-tool dispatcher;"
@@ -1595,6 +1596,47 @@ $(DIST_SPLIT_STAMP):
 	done < "$$list"; rm -f "$$list"; \
 	echo "  runtime=$$(find "$$rt" -type f | wc -l | tr -d ' ') dev=$$(find "$$dev" -type f | wc -l | tr -d ' ') doc=$$(find "$$doc" -type f | wc -l | tr -d ' ') dbg=$$(find "$$dbg" -type f | wc -l | tr -d ' ')"
 	@$(call _dist_done,$(DIST_SPLIT_STAMP))
+
+# ---- check-sysroot (the dist as a consumable cross sysroot) ----
+# Prove the split dev+runtime trees form a working --sysroot: overlay them, link a
+# hello-world with the cross-gcc against it, and assert the result is a valid
+# <cpu>-gnu ELF whose interp AND libc resolve INSIDE the sysroot (i.e. on the
+# deployed target).  This is the payoff of the dist split: dev is the link-time
+# sysroot (headers + .a + unversioned .so + crt), runtime supplies the .so.N + the
+# loader; the libc.so GROUP ld script ties them via ld's sysroot-prefixing of its
+# absolute /lib paths.  The interp check is generic (i686 emits /lib/ld.so, bridged
+# by runtime's ld.so->ld.so.1 symlink; x86_64 emits /lib/ld-x86-64.so.1 directly) -
+# we just require it to resolve under the overlay.  Per-$(ARCH); needs the dev shell.
+#
+# The overlay is a HARDLINK farm (cp -al), NOT a symlink farm: GNU ld only sysroot-
+# prefixes the absolute /lib paths inside the libc.so GROUP script when it loaded
+# that script from WITHIN the sysroot.  A symlink would point the script's real path
+# back into dist/dev (outside the overlay), so ld would skip the prefixing and look
+# for a literal /lib/libc.so.0.3 - hardlinks keep the entry genuinely inside the
+# overlay with no data copy.  dist/ + work/ share a filesystem, so the links hold.
+SYSROOT_OVERLAY := $(WORK)/sysroot/$(_VARIANT)$(ARCH)
+.PHONY: check-sysroot
+check-sysroot: dist
+	@$(call _req_env,CC READELF)
+	@$(call _assert_file,$(DIST)/dev/lib/libc.so,dev/lib/libc.so)
+	@$(call _assert_file,$(DIST)/runtime/lib/libc.so.0.3,runtime/lib/libc.so.0.3)
+	@echo "  CHECK-SYSROOT  overlay $(DIST)/{dev,runtime} -> --sysroot link test ($(ARCH))"
+	@set -e; \
+	ov=$(SYSROOT_OVERLAY); rm -rf "$$ov"; mkdir -p "$$ov"; \
+	cp -al $(abspath $(DIST))/runtime/. "$$ov"/; \
+	cp -al $(abspath $(DIST))/dev/. "$$ov"/; \
+	t=$$(mktemp -d); \
+	printf '#include <stdio.h>\nint main(void){ printf("hello from the %s hurd dist sysroot\\n"); return 0; }\n' "$(_TC_ARCH)" > "$$t/hello.c"; \
+	$$CC --sysroot="$$ov" -o "$$t/hello" "$$t/hello.c"; \
+	mach=$$($$READELF -h "$$t/hello" | sed -n 's/.*Machine: *//p'); \
+	intp=$$($$READELF -p .interp "$$t/hello" | grep -oE '/[^ ]*ld[^ ]*\.so[^ ]*' | head -1); \
+	needc=$$($$READELF -d "$$t/hello" | grep -c 'libc\.so\.0\.3'); \
+	echo "    ELF machine : $$mach"; \
+	echo "    interp      : $$intp"; \
+	[ -n "$$intp" ] && [ -e "$$ov$$intp" ] || { echo "  CHECK-SYSROOT  FAIL: interp '$$intp' does not resolve in the sysroot"; exit 1; }; \
+	[ "$$needc" -ge 1 ] || { echo "  CHECK-SYSROOT  FAIL: libc.so.0.3 absent from NEEDED"; exit 1; }; \
+	rm -rf "$$t"; \
+	echo "  CHECK-SYSROOT  ok: hello-world links; interp ($$intp) + libc.so.0.3 resolve in-sysroot"
 
 # ---- gnumach (opt-in in-tree; else the nix kernel) ----
 # In-tree kernel build under $(GNUMACH_BUILD), using $(MIG) - the effective mig (nix
