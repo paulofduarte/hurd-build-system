@@ -118,13 +118,18 @@ endif
 # the inner make computes the same paths.
 _VARIANT := $(if $(_HOST_SYSTEM),$(_HOST_SYSTEM)/)$(if $(ALT_BUILD),$(ALT_BUILD)/)
 
-# DIST is the per-arch output tree; override to install elsewhere.  DIST_GNUMACH/
-# HURD/GLIBC each default to DIST (one shared tree) but can point elsewhere
-# independently.
+# DIST is the per-arch deliverable CONTAINER (override to install elsewhere): after
+# a build it holds ONLY the split trees $(DIST)/{runtime,dev,doc,dbg}.  The five
+# dist-* slices first write a single unified tree under $(DIST_STAGE) - an
+# INTERMEDIATE, so it lives under work/ (not shipped); `dist-split` then classifies
+# it into the deliverable trees (see dist-split + DIST-SPLIT-DESIGN.md).
+# DIST_GNUMACH/HURD/GLIBC each default to DIST_STAGE (one shared staging tree) but
+# can point elsewhere independently.
 DIST          ?= $(DIST_ROOT)/$(_VARIANT)$(ARCH)
-DIST_GNUMACH     ?= $(DIST)
-DIST_HURD     ?= $(DIST)
-DIST_GLIBC    ?= $(DIST)
+DIST_STAGE    := $(WORK)/dist-stage/$(_VARIANT)$(ARCH)
+DIST_GNUMACH     ?= $(DIST_STAGE)
+DIST_HURD     ?= $(DIST_STAGE)
+DIST_GLIBC    ?= $(DIST_STAGE)
 # Store-path stamps under work/ (NOT the shippable dist tree), per-variant-per-ARCH
 # so targets/variants don't clobber one stamp; an unchanged store path skips the
 # verbatim copy.  Keyed on $(ARCH) so i686 and i686-xen track copies independently.
@@ -151,6 +156,10 @@ _RT_SO.libgomp      := libgomp.so.1
 DIST_GCC_STAMP_DIR   := $(WORK)/dist-gcc
 DIST_GCC_STAMP       := $(DIST_GCC_STAMP_DIR)/$(_VARIANT)$(ARCH).stamp
 DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(_VARIANT)$(ARCH).stamp
+# dist-split: classifies the unified $(DIST_STAGE) into the deployable
+# $(DIST)/{runtime,dev,doc,dbg} trees.  Stamp under work/ (its outputs are
+# mtime-normalised, so they can't be the staleness baseline).
+DIST_SPLIT_STAMP     := $(WORK)/dist-split/$(_VARIANT)$(ARCH).stamp
 # In-tree dist install stamps.  The dist tree is mtime-normalised to the source
 # epoch by _dist_finalize, so it can't be the staleness baseline (always older than
 # src mtime -> permanently stale).  Each dist-*-tree touches its stamp on completion,
@@ -174,16 +183,16 @@ EPOCH_NIXPKGS := $(call _src_epoch,nixpkgs)
 DIST_BUILD_START := $(shell date +%s)
 
 # $(call _dist_finalize,<epoch>): normalise the files the calling dist-* just wrote
-# into $(DIST) - owner-writable PERMS + deterministic MTIME <epoch>.  Matches items
-# newer than DIST_BUILD_START (this build's installs) OR still at the nix store
+# into $(DIST_STAGE) - owner-writable PERMS + deterministic MTIME <epoch>.  Matches
+# items newer than DIST_BUILD_START (this build's installs) OR still at the nix store
 # epoch (mtime<=1, from `cp -a`); earlier components' files (1<date<start) are left
 # alone, so each owns its slice of the shared /lib, /share/info, /include.
 # Idempotent; no-op if <epoch> empty.  chmod targets files+dirs (bare chmod follows
 # symlinks); touch targets files+symlinks (-h).  Runs in the dev-shell (GNU find/touch).
 define _dist_finalize
 [ -z "$(1)" ] || { \
-  find $(DIST) \( -type f -o -type d \) \( -newermt @$(DIST_BUILD_START) -o ! -newermt @1 \) -exec chmod u+w {} + ; \
-  find $(DIST) \( -type f -o -type l \) \( -newermt @$(DIST_BUILD_START) -o ! -newermt @1 \) -exec touch -h -d @$(1) {} + ; \
+  find $(DIST_STAGE) \( -type f -o -type d \) \( -newermt @$(DIST_BUILD_START) -o ! -newermt @1 \) -exec chmod u+w {} + ; \
+  find $(DIST_STAGE) \( -type f -o -type l \) \( -newermt @$(DIST_BUILD_START) -o ! -newermt @1 \) -exec touch -h -d @$(1) {} + ; \
 }
 endef
 
@@ -601,15 +610,20 @@ clean:
 	@rm -f $(FLAKES)/mig/result-* $(FLAKES)/gnumach-headers/result-* $(FLAKES)/gnumach/result-*
 
 clean-dist:
-	@# dist/ may hold read-only trees copied from /nix/store (e.g. dist-glibc);
-	@# rm can't unlink inside a read-only dir, so make the tree writable first.
+	@# dist/ + the staging tree may hold read-only trees copied from /nix/store
+	@# (e.g. dist-glibc); rm can't unlink inside a read-only dir, so make them
+	@# writable first.  The deliverable trees ($(DIST)) AND the work/ staging tree
+	@# (the dist-* copy target) are both this target's dist - drop both.
 	@$(call _make_writable,$(DIST))
 	rm -rf $(DIST)
-	@# the dist-*-nix / dist-gcc store-path stamps live under work/ (survive this
-	@# rm); drop them too, else their "already shipped" record makes a later `make
-	@# dist` skip re-populating the freshly-cleaned tree.
+	@$(call _make_writable,$(DIST_STAGE))
+	rm -rf $(DIST_STAGE)
+	@# the dist-*-nix / dist-gcc store-path stamps + the dist-split stamp live under
+	@# work/ (survive the rm above); drop them too, else their "already shipped"
+	@# record makes a later `make dist` skip re-populating + re-splitting the tree.
 	rm -f $(DIST_GLIBC_STAMP) $(DIST_GNUMACH_NIX_STAMP) $(DIST_HURD_NIX_STAMP) $(DIST_GLIBC_STAMP).fp $(DIST_GNUMACH_NIX_STAMP).fp $(DIST_HURD_NIX_STAMP).fp
 	rm -f $(DIST_GCC_STAMP) $(DIST_GCC_STAMP).fp
+	rm -f $(DIST_SPLIT_STAMP)
 
 # mrproper nukes work/ wholesale - a deeper reset including configure state.
 # flakes/ holds tracked sources, so scrub only its gitignored result-* gc-roots,
@@ -867,6 +881,7 @@ _MARK.dist-hurd-nix     := $(DIST_HURD_NIX_STAMP)
 _MARK.dist-glibc        := $(DIST_GLIBC_STAMP)
 _MARK.dist-gcc          := $(DIST_GCC_STAMP)
 _MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
+_MARK.dist-split        := $(DIST_SPLIT_STAMP)
 
 # Direct src watches (transitive src flows through _SDEPS).  The nix dist halves watch
 # their flake + (via _intree_srcs) the src of every OPTED-IN module their overrides
@@ -893,7 +908,10 @@ _SDEPS.dist-hurd-tree    := hurd
 _SDEPS.dist-gnumach      := $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 _SDEPS.dist-hurd         := $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 _SDEPS.all               := gnumach hurd
-_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata
+# dist-split is stale iff its stamp is missing or any slice is stale; `dist`
+# carries it so a missing split (or a changed slice) re-dispatches the split.
+_SDEPS.dist-split        := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata
+_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-split
 
 # `git ls-files` enumerates "real source" - generated files (configure, Makefile.in,
 # autom4te.cache/, ...) shouldn't trigger staleness.  Authoritative: exactly what
@@ -1095,9 +1113,11 @@ $(foreach v,$(REQUIRED_VARS), \
 all: gnumach hurd
 
 # Lockstep with _SDEPS.dist (above): the components must match both lists or the
-# staleness gate and the recipe disagree (silent mis-ship).  No whole-tree post-step:
-# each dist-* finalises only its slice via $(call _dist_finalize,...).
-dist: dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata
+# staleness gate and the recipe disagree (silent mis-ship).  Each dist-* finalises
+# only its slice of the shared $(DIST_STAGE) via $(call _dist_finalize,...); then
+# dist-split (LAST - it reads the finished staging tree) classifies it into the
+# deployable $(DIST)/{runtime,dev,doc,dbg} trees.
+dist: dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-split
 
 # Serialize dist's components under `make -j` - they contend on a shared resource
 # and otherwise corrupt each other:
@@ -1476,35 +1496,35 @@ _RT_SHIP_BASE  = $(foreach l,$(DIST_GCC_SHIP),$(basename $(basename $(_RT_SO.$(l
 _RT_SHIP_SONAME = $(foreach l,$(DIST_GCC_SHIP),$(_RT_SO.$(l)))
 
 $(DIST_GCC_STAMP): $(if $(call _fp_stale,dist-gcc),_FORCE)
-	@mkdir -p $(DIST)/lib $(dir $@)
+	@mkdir -p $(DIST_STAGE)/lib $(dir $@)
 	@echo "  DIST-GCC     resolving nix cross-gcc-$(_TC_ARCH)..."
 	@set -e; \
 	out=$$($(NIX_BUILD) $(call _overrides,dist-gcc) $(PROJ)\#cross-gcc-$(_TC_ARCH) --no-link --print-out-paths); \
 	libdir=$$out/$(_TC_ARCH)-gnu/lib64; [ -e $$libdir/$(_RT_SO.libgcc) ] || libdir=$$out/$(_TC_ARCH)-gnu/lib; \
-	if $(call _stamp_skip,$@,$$out $(sort $(DIST_GCC_SHIP)),$(DIST)/lib/$(_RT_SO.libgcc)); then \
+	if $(call _stamp_skip,$@,$$out $(sort $(DIST_GCC_SHIP)),$(DIST_STAGE)/lib/$(_RT_SO.libgcc)); then \
 	  echo "  unchanged - skip copy"; \
 	else \
 	  for b in $(_RT_SHIP_BASE); do \
 	    for f in $$libdir/$$b.so*; do \
 	      case "$$f" in *-gdb.py) continue;; esac; \
-	      cp -a "$$f" $(DIST)/lib/; \
+	      cp -a "$$f" $(DIST_STAGE)/lib/; \
 	    done; \
 	  done; \
-	  $(call _make_writable,$(DIST)/lib); \
-	  echo "  shipped: $(DIST_GCC_SHIP) -> $(DIST)/lib"; \
-	  mkdir -p $(DIST)/share/info; \
+	  $(call _make_writable,$(DIST_STAGE)/lib); \
+	  echo "  shipped: $(DIST_GCC_SHIP) -> $(DIST_STAGE)/lib"; \
+	  mkdir -p $(DIST_STAGE)/share/info; \
 	  for l in $(DIST_GCC_SHIP); do \
-	    cp -L $$out/share/info/$$l.info* $(DIST)/share/info/ 2>/dev/null || true; \
+	    cp -L $$out/share/info/$$l.info* $(DIST_STAGE)/share/info/ 2>/dev/null || true; \
 	  done; \
-	  $(call _make_writable,$(DIST)/share/info); \
-	  for inf in $(DIST)/share/info/*.info; do \
-	    [ -e "$$inf" ] && install-info --quiet --info-dir=$(DIST)/share/info "$$inf" || true; \
+	  $(call _make_writable,$(DIST_STAGE)/share/info); \
+	  for inf in $(DIST_STAGE)/share/info/*.info; do \
+	    [ -e "$$inf" ] && install-info --quiet --info-dir=$(DIST_STAGE)/share/info "$$inf" || true; \
 	  done; \
 	  printf '%s' "$$out $(sort $(DIST_GCC_SHIP))" > $@; \
 	fi
 	@$(call _fp_write,dist-gcc)
 	@$(call _dist_done,$@)
-	@$(foreach so,$(_RT_SHIP_SONAME),$(call _assert_file,$(DIST)/lib/$(so),$(so));)
+	@$(foreach so,$(_RT_SHIP_SONAME),$(call _assert_file,$(DIST_STAGE)/lib/$(so),$(so));)
 	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
 
 # ---- dist-tzdata ----
@@ -1517,22 +1537,64 @@ $(DIST_GCC_STAMP): $(if $(call _fp_stale,dist-gcc),_FORCE)
 dist-tzdata: $(DIST_TZDATA_STAMP)
 
 $(DIST_TZDATA_STAMP): flake.lock
-	@mkdir -p $(DIST)/share $(DIST)/etc $(dir $(DIST_TZDATA_STAMP))
+	@mkdir -p $(DIST_STAGE)/share $(DIST_STAGE)/etc $(dir $(DIST_TZDATA_STAMP))
 	@echo "  DIST-TZDATA  resolving nix tzdata..."
 	@set -e; \
 	tz=$$($(NIX_BUILD) $(PROJ)\#tzdata^out --no-link --print-out-paths); \
-	if $(call _stamp_skip,$(DIST_TZDATA_STAMP),$$tz,$(DIST)/share/zoneinfo/UTC); then \
+	if $(call _stamp_skip,$(DIST_TZDATA_STAMP),$$tz,$(DIST_STAGE)/share/zoneinfo/UTC); then \
 	  echo "  unchanged ($$(basename $$tz)) - skip copy"; \
 	else \
-	  echo "  copying zoneinfo ($$(find $$tz/share/zoneinfo -type f | grep -c .) files) -> $(DIST)/share/zoneinfo"; \
-	  rm -rf $(DIST)/share/zoneinfo; \
-	  cp -a $$tz/share/zoneinfo $(DIST)/share/zoneinfo; \
-	  ln -sfn /share/zoneinfo/UTC $(DIST)/etc/localtime; \
+	  echo "  copying zoneinfo ($$(find $$tz/share/zoneinfo -type f | grep -c .) files) -> $(DIST_STAGE)/share/zoneinfo"; \
+	  rm -rf $(DIST_STAGE)/share/zoneinfo; \
+	  cp -a $$tz/share/zoneinfo $(DIST_STAGE)/share/zoneinfo; \
+	  ln -sfn /share/zoneinfo/UTC $(DIST_STAGE)/etc/localtime; \
 	  printf '%s' "$$tz" > $(DIST_TZDATA_STAMP); \
 	fi
 	@$(call _dist_done,$(DIST_TZDATA_STAMP))
-	@$(call _assert_file,$(DIST)/share/zoneinfo/UTC,zoneinfo/UTC)
+	@$(call _assert_file,$(DIST_STAGE)/share/zoneinfo/UTC,zoneinfo/UTC)
 	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
+
+# ---- dist-split (classify the staging tree into deployable trees) ----
+# Pure post-pass over the finished $(DIST_STAGE): partition it into
+# $(DIST)/{runtime,dev,doc,dbg} per the rule table in
+# .claude/docs/build/DIST-SPLIT-DESIGN.md.  runtime is the DEFAULT (a full clone
+# minus what dev/doc claim); each runtime ELF is stripped with its debug split into
+# dbg via --add-gnu-debuglink.  Determinism: the clone preserves staging's finalised
+# mtimes; stripped ELFs + their .debug are touch'd back to the source ELF's mtime;
+# strip/objcopy + the basename debuglink carry no host path.  Uses the cross-binutils
+# $(OBJCOPY)/$(STRIP) (run on the build host, operate on the target ELF -> cross-
+# platform).  Gated by the dispatch via _MARK/_SDEPS.dist-split; runs LAST under dist.
+.PHONY: dist-split
+dist-split: $(DIST_SPLIT_STAMP)
+
+$(DIST_SPLIT_STAMP):
+	@$(call _req_env,OBJCOPY STRIP)
+	@echo "  DIST-SPLIT   $(DIST_STAGE) -> runtime/dev/doc/dbg"
+	@set -e; \
+	stage=$(DIST_STAGE); rt=$(DIST)/runtime; dev=$(DIST)/dev; doc=$(DIST)/doc; dbg=$(DIST)/dbg; \
+	rm -rf "$$rt" "$$dev" "$$doc" "$$dbg"; mkdir -p "$$rt" "$$dev" "$$doc" "$$dbg"; \
+	cp -a "$$stage"/. "$$rt"/; \
+	if [ -d "$$rt/include" ]; then mv "$$rt/include" "$$dev"/; fi; \
+	if [ -d "$$rt/lib" ]; then mkdir -p "$$dev/lib"; \
+	  for f in "$$rt"/lib/*.a "$$rt"/lib/*.o; do [ -e "$$f" ] || continue; mv "$$f" "$$dev/lib"/; done; \
+	  for f in "$$rt"/lib/*.so; do { [ -e "$$f" ] || [ -L "$$f" ]; } || continue; \
+	    case "$$(basename "$$f")" in ld.so|ld-*.so) continue;; esac; \
+	    mv "$$f" "$$dev/lib"/; done; \
+	fi; \
+	for d in info man doc; do if [ -e "$$rt/share/$$d" ]; then mkdir -p "$$doc/share"; mv "$$rt/share/$$d" "$$doc/share"/; fi; done; \
+	list=$$(mktemp); find "$$rt" -type f | LC_ALL=C sort > "$$list"; seen=" "; \
+	while IFS= read -r f; do \
+	  [ "$$(od -An -tx1 -N4 "$$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] || continue; \
+	  ino=$$(stat -c %i "$$f"); case "$$seen" in *" $$ino "*) continue;; esac; seen="$$seen$$ino "; \
+	  rel=$${f#$$rt/}; mt=$$(stat -c %Y "$$f"); \
+	  dfile="$$dbg/lib/debug/$$rel.debug"; mkdir -p "$$(dirname "$$dfile")"; \
+	  $(OBJCOPY) --only-keep-debug "$$f" "$$dfile"; \
+	  $(STRIP) --strip-unneeded "$$f"; \
+	  $(OBJCOPY) --add-gnu-debuglink="$$dfile" "$$f"; \
+	  touch -d @"$$mt" "$$f" "$$dfile"; \
+	done < "$$list"; rm -f "$$list"; \
+	echo "  runtime=$$(find "$$rt" -type f | wc -l | tr -d ' ') dev=$$(find "$$dev" -type f | wc -l | tr -d ' ') doc=$$(find "$$doc" -type f | wc -l | tr -d ' ') dbg=$$(find "$$dbg" -type f | wc -l | tr -d ' ')"
+	@$(call _dist_done,$(DIST_SPLIT_STAMP))
 
 # ---- gnumach (opt-in in-tree; else the nix kernel) ----
 # In-tree kernel build under $(GNUMACH_BUILD), using $(MIG) - the effective mig (nix
