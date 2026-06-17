@@ -27,6 +27,8 @@ let
   # tags); in-tree overrides rebind the *-dev-src ALIASES, which are filtered
   # out below (follows refs - no lock node of their own).
   toolchainOnly = [
+    "binutils-src"
+    "gcc-src"
     "glibc-src"
   ];
 in

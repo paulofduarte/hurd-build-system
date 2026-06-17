@@ -58,10 +58,26 @@
     # GNU libc for the Hurd cross-toolchain AND the shipped libc (one glibc;
     # x86_64-gnu support landed in 2.40, the active hurd-amd64 patch set lives
     # in 2.40+).  Sourced from upstream sourceware (authoritative for glibc).
+    # The toolchain trio (binutils + gcc + glibc, in build order) is pinned from
+    # upstream RELEASE TARBALLS, not git: the tarball IS the release artifact
+    # (lighter than cloning gcc/glibc history or binutils-gdb's gdb), and each has
+    # its own from-source derivation (binutils.nix / gcc.nix / glibc.nix).  All
+    # `toolchainOnly` in flakes/sources (nix-only, never cloned into src/); version
+    # = edit the url.  gcc/binutils track latest stable; glibc stays 2.43 (the
+    # Hurd x86_64 support).
+    binutils-src = {
+      type  = "tarball";
+      url   = "https://ftp.gnu.org/gnu/binutils/binutils-2.46.1.tar.xz";
+      flake = false;
+    };
+    gcc-src = {
+      type  = "tarball";
+      url   = "https://ftp.gnu.org/gnu/gcc/gcc-16.1.0/gcc-16.1.0.tar.xz";
+      flake = false;
+    };
     glibc-src = {
-      type  = "git";
-      url   = "https://sourceware.org/git/glibc.git";
-      ref   = "refs/tags/glibc-2.43";
+      type  = "tarball";
+      url   = "https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz";
       flake = false;
     };
 
@@ -91,7 +107,8 @@
 
   };
 
-  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src, glibc-src
+  outputs = inputs@{ self, nixpkgs, gnumach-src, mig-src, hurd-src
+                   , binutils-src, gcc-src, glibc-src
                    , gnumach-dev-src, mig-dev-src, hurd-dev-src
                    , build-rev, ... }:
     let
@@ -118,22 +135,18 @@
       # Cross targets we know how to build for (see ./target-archs.nix).
       targets = import ./target-archs.nix;
 
-      # The lib/systems patch that teaches nixpkgs to PARSE the `<cpu>-gnu`
-      # Hurd triplet - consumed by the cross-toolchain's mkCrossPkgs.
-      libHurd = import ./flakes/lib-systems-hurd { inherit nixpkgs; };
-
-      # The cross-toolchain: THE `<cpu>-gnu` Hurd toolchain that builds the
-      # gnumach kernel, MIG, glibc-hurd, and the Hurd userland - plus the dev
-      # shell, the ABI gate, the gas-determinism patch, and the host-system ->
-      # default-target map.  See flakes/cross-toolchain.
-      crossToolchain = import ./flakes/cross-toolchain { inherit nixpkgs libHurd; };
+      # The cross-toolchain barrel: the dev shell (in-tree builds) + the
+      # host-system -> default-target map.  The `<cpu>-gnu` Hurd toolchain itself
+      # (binutils/gcc/glibc) is built from source in packages.nix.  See
+      # flakes/cross-toolchain.
+      crossToolchain = import ./flakes/cross-toolchain { inherit nixpkgs; };
 
       # packages.<system> + apps.<system> wiring.  Extracted to ./packages.nix
       # so adding a sub-flake doesn't touch flake.nix / target-archs.nix and
       # thus doesn't retrigger the toolchain-cache CI.
       pkgOutputs = import ./packages.nix {
         inherit nixpkgs self forAllSystems targets crossToolchain buildRevToken
-                gnumach-src mig-src hurd-src glibc-src
+                gnumach-src mig-src hurd-src binutils-src gcc-src glibc-src
                 gnumach-dev-src mig-dev-src hurd-dev-src;
       };
     in
@@ -157,14 +170,19 @@
             (name: target:
               let tcName = toolchainNameByCrossTarget.${target.crossTarget}; in
               crossToolchain.mkDevShell system name target {
-                toolchain = pkgsFor."toolchain-${tcName}";
-                gnumach   = pkgsFor."gnumach-${name}";
-                # mig keyed by the CPU sibling (like the toolchain): a xen variant's
-                # shell reuses mig-<cpu> - mig is the same tool either way (the nix
-                # kernels already build with the sibling's checked mig), and the
-                # xen-keyed raw mig would only add a pointless extra build.
-                mig       = pkgsFor."mig-${tcName}";
-                headers   = pkgsFor."gnumach-headers-${name}";
+                # The from-source unwrapped toolchain (cross-gcc + cross-binutils),
+                # the glibc-hurd sysroot it bakes, and the bootstrap-gcc (subtracted
+                # from PATH).  Keyed by the CPU sibling so a xen variant reuses it.
+                cc           = pkgsFor."cross-gcc-${tcName}";
+                binutils     = pkgsFor."cross-binutils-${tcName}";
+                sysroot      = pkgsFor."glibc-hurd-${tcName}";
+                bootstrapGcc = pkgsFor."bootstrap-gcc-${tcName}";
+                gnumach      = pkgsFor."gnumach-${name}";
+                # mig keyed by the CPU sibling: a xen variant's shell reuses mig-<cpu>
+                # - the same tool either way (the kernels build with the sibling's
+                # checked mig), so the xen-keyed raw mig would only add a pointless build.
+                mig          = pkgsFor."mig-${tcName}";
+                headers      = pkgsFor."gnumach-headers-${name}";
               })
             targets;
         in

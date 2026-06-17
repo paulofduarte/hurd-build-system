@@ -19,12 +19,15 @@
 # phase 5).  Cross-host reproducibility is via this derivation's OWN canon maps
 # (it need not byte-match glibc's in-tree stubs).
 
-{ nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
+{ nixpkgs, system, targets, mig, gnumachHeaders, hurdHeaders
+, binutils                               # cross-binutils-<name> attrset (absolute-path tools)
+, bootstrapGcc                           # bootstrap-gcc-<name> attrset (the base's builder)
 , base                                   # glibc-stub-base-<arch> (buildTree)
   # The cc that rebuilds the stubs - default bootstrap-gcc, the base's own
   # builder (matches the base's libc.so the stubs link against; no cross-gcc
-  # dependency, so no cycle).
-, buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc)
+  # dependency, so no cycle).  Unwrapped (bakes --with-as/--with-ld -> binutils),
+  # so determinism rides CPPFLAGS (config.make), not the gone wrapper channel.
+, buildCC ? (name: target: bootstrapGcc."bootstrap-gcc-${name}")
   # emitIR: additionally emit the stub TUs as a single LLVM-IR text module
   # ($out/share/rpc-stub-ir/all.ll) for the rpc-wire-drift gate's wire-fact manifest.
   # Off by default (the harvest re-compiles every stub with clang, ~minutes) so
@@ -35,23 +38,19 @@
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
-  helpers = import ../lib { inherit lib; };
   buildFlags = import ./build-flags.nix { inherit lib; };
-  toolchainPaths = import ./toolchain-paths.nix { inherit nixpkgs mkCrossPkgs; };
 
   hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
 
   mkOne = name: target:
     let
       crossCC       = buildCC name target;
-      tcPaths       = toolchainPaths system target;
-      crossBinuRaw  = tcPaths.binutils;
+      crossBinu     = binutils."cross-binutils-${name}";
       crossMig      = mig."mig-${name}";
       gnumach-hdrs  = gnumachHeaders."gnumach-headers-${name}";
       hurd-hdrs     = hurdHeaders."hurd-headers-${name}";
       stubBase      = base."glibc-hurd-${name}";
       tp            = target.crossTarget;
-      salt          = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
     in
     pkgs.stdenv.mkDerivation ({
       pname   = "hurd-stubs${lib.optionalString emitIR "-ir"}-${tp}";
@@ -118,22 +117,31 @@ let
           done
         fi
 
+        # Determinism: append THIS copy's canon maps to glibc's captured CPPFLAGS so
+        # the rebuilt stubs are cross-host identical.  The unwrapped bootstrap-gcc has
+        # no cc-wrapper NIX_CFLAGS_COMPILE channel; glibc bakes configure's CPPFLAGS
+        # into config.make's CPPFLAGS-config, which Makeconfig applies to every .c/.os
+        # compile (`CPPFLAGS = $(config-extra-cppflags) $(CPPFLAGS-config) ...`).  glibc
+        # ALREADY baked the gcc + binutils -fdebug-prefix-maps (the base used the SAME
+        # bootstrap-gcc + cross-binutils store paths) and the sysroot map was repointed
+        # to $sysroot by the remap above - so only $bdir/$srcdir (this copy's build/src
+        # dirs, disjoint from the base's dead sandbox paths, hence order-independent)
+        # need adding.  hurd/. comes last so -ffile-prefix-map's last-match-wins
+        # canonicalises the hurd subdir's `.` relative path after the broad $bdir map.
+        # No -frandom-seed (the raw cc's default output-name seed is deterministic, as
+        # in glibc.nix) and no NIX_DONT_SET_RPATH (the raw ld bakes no store rpath).
+        echo "CPPFLAGS-config += -ffile-prefix-map=$bdir=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$srcdir=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$bdir/hurd/.=${buildFlags.glibcCanonBuild}/hurd" >> $bdir/config.make
+
         cd $bdir
 
         export CC=${crossCC}/bin/${tp}-gcc
         export CXX=${crossCC}/bin/${tp}-g++
-        export AR=${crossBinuRaw}/bin/${tp}-ar
-        export AS=${crossBinuRaw}/bin/${tp}-as
-        export LD=${crossBinuRaw}/bin/${tp}-ld
-        export NM=${crossBinuRaw}/bin/${tp}-nm
-        export OBJCOPY=${crossBinuRaw}/bin/${tp}-objcopy
-        export RANLIB=${crossBinuRaw}/bin/${tp}-ranlib
-
-        # Same determinism canon maps as glibc.nix, for THIS copy's paths, so the
-        # rebuilt stubs are cross-host identical.  (The base's pre-built objects the
-        # link reuses were already canon-mapped by glibc.nix to the SAME names.)
-        export NIX_CFLAGS_COMPILE${salt}="${buildFlags.debugPrefixMapStr crossCC} -ffile-prefix-map=$bdir=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$srcdir=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$sysroot=${buildFlags.glibcCanonSysroot} -frandom-seed=${buildFlags.randomSeed} ''${NIX_CFLAGS_COMPILE${salt}:-} -ffile-prefix-map=$bdir/hurd/.=${buildFlags.glibcCanonBuild}/hurd"
-        export NIX_DONT_SET_RPATH${salt}=1
+        export AR=${crossBinu}/bin/${tp}-ar
+        export AS=${crossBinu}/bin/${tp}-as
+        export LD=${crossBinu}/bin/${tp}-ld
+        export NM=${crossBinu}/bin/${tp}-nm
+        export OBJCOPY=${crossBinu}/bin/${tp}-objcopy
+        export RANLIB=${crossBinu}/bin/${tp}-ranlib
 
         # Plain `make` (NOT rm + targeted - rm'ing the objects breaks glibc's rules):
         # the fresh .defs make only the mach/hurd stubs stale, so make rebuilds just
@@ -142,11 +150,15 @@ let
         # identical build) so the harvest below can replay glibc's EXACT per-TU
         # flags when re-emitting the stubs as LLVM IR.
         ${lib.optionalString emitIR ''
-          printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> /tmp/cc.log\nexec %s "$@"\n' \
-            "${crossCC}/bin/${tp}-gcc" > /tmp/cclog; chmod +x /tmp/cclog
-          : > /tmp/cc.log
+          # Log each cc invocation's cwd+args so the IR harvest below can replay glibc's
+          # exact per-TU flags.  Write under $TMPDIR (the sandbox build temp), NOT /tmp:
+          # the darwin nix sandbox forbids writing /tmp (linux maps it into the build).
+          # $TMPDIR is expanded HERE so the absolute path is baked into the cc wrapper.
+          printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> '"$TMPDIR"'/cc.log\nexec %s "$@"\n' \
+            "${crossCC}/bin/${tp}-gcc" > "$TMPDIR/cclog"; chmod +x "$TMPDIR/cclog"
+          : > "$TMPDIR/cc.log"
         ''}
-        make -j"''${NIX_BUILD_CORES:-1}" ${lib.optionalString emitIR "CC=/tmp/cclog"}
+        make -j"''${NIX_BUILD_CORES:-1}" ${lib.optionalString emitIR "CC=$TMPDIR/cclog"}
 
         # Versioned install (glibc's install-time layout): the build emits an
         # unversioned mach/libmachuser.so carrying SONAME libmachuser.so.1 - ship it
@@ -180,7 +192,7 @@ let
           # it.  Hence no separate translator-server harvest is needed.
           genir=$out/share/rpc-stub-ir; mkdir -p $genir
           clangbin=${pkgs.llvmPackages.clang-unwrapped}/bin/clang
-          rep=$(grep -m1 -E 'RPC_[a-z].*\.c|_server\.c' /tmp/cc.log | cut -f2-)
+          rep=$(grep -m1 -E 'RPC_[a-z].*\.c|_server\.c' "$TMPDIR/cc.log" | cut -f2-)
           repflags=$(printf '%s' "$rep" | sed -E 's#[^ ]*RPC_[^ ]*\.c##g; s#[^ ]*[^ ]_server\.c##g; s/-Werror//g; s/ -g / /g; s#-o /[^ ]+##g; s/-MD//g; s/-MP//g; s#-MF [^ ]+##g; s#-MT [^ ]+##g')
           cd $bdir
           find $bdir \( -name 'RPC_*.c' -o -name '*_server.c' \) -type f | while read -r c; do
@@ -207,12 +219,12 @@ let
         runHook postInstall
       '';
 
-      dontPatchELF = true;
+      # dontPatchELF rides commonAttrs.
       passthru = { inherit target; };
       meta = with lib; {
         description = "Extracted Mach/Hurd RPC stub libs for ${tp}";
         platforms = platforms.all;
       };
-    } // buildFlags.commonAttrs // helpers.mkCaAttrs true);
+    } // buildFlags.commonAttrs);
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-stubs${lib.optionalString emitIR "-ir"}-${name}" (mkOne name target)) hurdTargets

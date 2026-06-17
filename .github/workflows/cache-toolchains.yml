@@ -3,7 +3,9 @@
 name: Cache cross-toolchains
 
 # Populate the cachix cache with each target's cross-toolchain
-# (`packages.<host>.toolchain-<arch>`).  We deliberately do NOT build mig /
+# (`packages.<host>.cross-gcc-<arch>` - the from-source compiler whose build
+# closure spans the whole bootstrap chain: binutils -> bootstrap-gcc -> glibc ->
+# cross-gcc + runtime).  We deliberately do NOT build mig /
 # gnumach-headers / the kernel: those are cheap once the toolchain is cached,
 # and their source changes wouldn't retrigger this workflow anyway (the
 # sanity-check builds them).
@@ -72,12 +74,13 @@ jobs:
             row=$(echo "$hosts" | jq -c ".[$i]")
             sys=$(echo "$row" | jq -r .system)
             echo "::group::probe $sys"
-            # target -> toolchain outPath for this host (one cross-eval).
+            # target -> cross-gcc outPath for this host (one cross-eval).  "cross-gcc-"
+            # is 10 chars, like the old "toolchain-"; cross-binutils-* doesn't match.
             # shellcheck disable=SC2016  # ${n} is Nix, not bash - must not expand
             map=$(nix eval --json ".#packages.$sys" --apply '
               pkgs:
               let names = builtins.filter
-                    (n: builtins.substring 0 10 n == "toolchain-")
+                    (n: builtins.substring 0 10 n == "cross-gcc-")
                     (builtins.attrNames pkgs);
               in builtins.listToAttrs (map
                    (n: { name = builtins.substring 10 (-1) n; value = pkgs.${n}.outPath; })
@@ -161,7 +164,7 @@ jobs:
           # Only the targets `plan` found missing for this host - cached ones are
           # skipped, so we never download a closure just to re-push nothing.
           for t in $TARGETS; do
-            echo "::group::nix build .#toolchain-$t"
-            nix build ".#toolchain-$t" --no-link --print-out-paths
+            echo "::group::nix build .#cross-gcc-$t"
+            nix build ".#cross-gcc-$t" --no-link --print-out-paths
             echo "::endgroup::"
           done

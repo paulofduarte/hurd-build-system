@@ -4,34 +4,28 @@
 # for the repo: builds the gnumach kernel, MIG, glibc-hurd, and the Hurd
 # userland - one toolchain + one dev shell.
 #
-# Logic lives in sibling modules:
+# The toolchain proper is built FROM SOURCE, unwrapped, in sibling modules that
+# packages.nix imports directly (not through this barrel):
 #
-#   pkgs.nix        - `mkCrossPkgs`: the only importer of the patched
-#                     `<cpu>-gnu` nixpkgs (lib/systems extension from
-#                     flakes/lib-systems-hurd) with `crossSystem` set, + the
-#                     gas-determinism chunksize overlay.
-#   toolchain.nix   - `mkAll` (cross-binutils + bootstrap-gcc per target), and the
-#                     `wrappedToolchain` / `hurdTargets` helpers.  The gcc/glibc
-#                     chain is orchestrated in packages.nix.
-#   gcc-runtime.nix - `mkCompiler` (the posix cross-gcc) + `mkRuntime` (the merged
-#                     target-runtime lib built from it, without rebuilding cc1).
-#   glibc.nix       - `glibc-hurd-<arch>` (imported directly by packages.nix).
+#   binutils.nix    - `cross-binutils-<arch>` (from the pinned tarball).
+#   gcc.nix         - `bootstrap-gcc-<arch>` + the merged full `cross-gcc-<arch>`
+#                     (compiler + target runtime), unwrapped, against ownBinutils.
+#   glibc.nix       - `glibc-hurd-<arch>` (cross-gcc's libcCross + shipped libc).
+#   hurd-stubs.nix  - the extracted floating Mach/Hurd RPC stub libs.
+#
+# This barrel exposes only the host-facing bits keyed off (host, target):
+#
 #   hurd-config.nix - the configure flag set shared by the nix Hurd build
 #                     (flakes/hurd) and the dev shell.
 #   dev-shell.nix   - `mkDevShell`: the single per-(host, target)
 #                     `nix develop` shell for the in-tree builds.
 #   target.nix      - `defaultTargetName`: host CPU -> default cross-target.
 
-{ nixpkgs, libHurd }:
+{ nixpkgs }:
 
 let
-  pkgs       = import ./pkgs.nix       { inherit nixpkgs libHurd; };
-  inherit (pkgs) mkCrossPkgs;
-
-  toolchain  = import ./toolchain.nix  { inherit nixpkgs mkCrossPkgs; };
-  gccRuntime = import ./gcc-runtime.nix { inherit nixpkgs mkCrossPkgs; inherit (toolchain) wrappedToolchain; };
-  devShell   = import ./dev-shell.nix  { inherit nixpkgs mkCrossPkgs; };
-  target     = import ./target.nix     { inherit nixpkgs; };
+  devShell = import ./dev-shell.nix { inherit nixpkgs; };
+  target   = import ./target.nix    { inherit nixpkgs; };
 in
 
-pkgs // toolchain // gccRuntime // devShell // target
+devShell // target

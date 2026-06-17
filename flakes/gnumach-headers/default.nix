@@ -23,30 +23,24 @@
 # (needed at configure for AC_CHECK_PROG, never invoked) points at /bin/true so
 # the check passes without dragging MIG into the inputs.
 
-{ nixpkgs, system, targets, mkCrossPkgs, srcInput, contentAddressed ? false
+{ nixpkgs, system, targets, bootstrapGcc, srcInput
   # Ship include/ only - drop share/ (mach.info docs) from the output.  No
   # consumer reads it (glibc/mig compile against include/; the dist gets its
-  # mach.info from the kernel package), and trimming makes the output - and
-  # with contentAddressed its CA path - independent of doc-only changes, so
-  # they stop the rebuild cascade AT the headers.  The ref twin keeps the
-  # default (trimming it would move the frozen toolchain drvs for nothing).
+  # mach.info from the kernel package).
 , includeOnly ? false }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
-  helpers = import ../lib { inherit lib; };
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   mkOne = name: target:
     let
-      crossPkgs = mkCrossPkgs system target;
-      # The libc-free bootstrap-gcc (gccWithoutTargetLibc) - the `<cpu>-gnu` cross
-      # stdenv's own `.cc` would pull nixpkgs' meta-gated glibc.  install-data
-      # compiles nothing; configure's AC_PROG_CC link test passes because
-      # gnumach's configure.ac forces `-ffreestanding -nostdlib`, so no crt0/libc
-      # is needed.
-      cc = crossPkgs.buildPackages.gccWithoutTargetLibc;
+      # The from-source libc-free bootstrap-gcc.  install-data compiles nothing;
+      # configure's AC_PROG_CC link test passes because gnumach's configure.ac forces
+      # `-ffreestanding -nostdlib`, so no crt0/libc is needed.  The cc bakes
+      # --with-as/--with-ld -> our cross-binutils, so it needs no binutils on PATH.
+      cc = bootstrapGcc."bootstrap-gcc-${name}";
       tp = target.crossTarget;
     in
     pkgs.stdenv.mkDerivation ({
@@ -94,9 +88,6 @@ let
         description = "GNU Mach public headers for ${target.crossTarget}";
         platforms = platforms.all;
       };
-    } // helpers.mkCaAttrs contentAddressed
-      # optionalAttrs, NOT optionalString: an empty-but-SET postInstall would
-      # still move the ref twin's drv hash (and the whole frozen toolchain).
-      // lib.optionalAttrs includeOnly { postInstall = ''rm -rf "$out/share"''; });
+    } // lib.optionalAttrs includeOnly { postInstall = ''rm -rf "$out/share"''; });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-headers-${name}" (mkOne name target)) targets

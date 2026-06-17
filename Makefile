@@ -30,10 +30,10 @@ NIX_INSTALL_URL := https://nix.dev/install-nix
 NIX := $(shell command -v nix 2>/dev/null)
 
 # Enables nix-command + flakes per invocation so no global nix.conf is needed.
-# ca-derivations: the working gnumach/hurd headers are content-addressed
-# (early cutoff for the glibc-hurd rebuild cascade) - anything evaluating
-# their closure needs the feature.
-NIX_FLAKE := $(NIX) --extra-experimental-features 'nix-command flakes ca-derivations'
+# (ca-derivations dropped: the toolchain is input-addressed now - cachix can't serve
+# the realisations endpoint CA substitution needs; revisit if a realisation-serving
+# cache is adopted.)
+NIX_FLAKE := $(NIX) --extra-experimental-features 'nix-command flakes'
 # -L streams full build logs (build-only; eval calls use $(NIX_FLAKE) directly).
 NIX_BUILD := $(NIX_FLAKE) build -L
 
@@ -131,8 +131,8 @@ DIST_GLIBC    ?= $(DIST)
 DIST_GLIBC_STAMP       := $(WORK)/dist-glibc/$(_VARIANT)$(ARCH).stamp
 DIST_GNUMACH_NIX_STAMP := $(WORK)/dist-gnumach-nix/$(_VARIANT)$(ARCH).stamp
 DIST_HURD_NIX_STAMP    := $(WORK)/dist-hurd-nix/$(_VARIANT)$(ARCH).stamp
-# The gcc runtime libs - ONE nix derivation (cross-gcc-runtime-<arch>) holds them
-# all; `dist-gcc` selects which to SHIP at copy time.  `make dist` ships ONLY
+# The gcc runtime libs - the merged cross-gcc-<arch> derivation holds them all under
+# its target libdir; `dist-gcc` selects which to SHIP at copy time.  `make dist` ships ONLY
 # libgcc by default (glibc dlopens libgcc_s.so.1 for pthread_cancel unwinding);
 # DIST_GCC_LIBS="libstdc++ libgomp" folds more in (pure copies - no extra build).
 # _GCC_RT_LIBS is the shippable set (validates DIST_GCC_LIBS + keys _RT_SO).
@@ -658,9 +658,10 @@ $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 # Push the FULL BUILD CLOSURE of the current ARCH's toolchain + dev shell to cachix -
 # every intermediate derivation output, not just runtime refs.  Two roots, walked
 # with `nix-store --requisites --include-outputs`, then .drv filtered:
-#   toolchain-<arch>                          the wrapped cross-cc; its build graph
-#       already contains the whole bootstrap chain, so this one root caches every
-#       bootstrap piece (a fresh machine then PULLS the heavy seed compilers).
+#   cross-gcc-<arch>                          the from-source cross-cc; its build graph
+#       already contains the whole bootstrap chain (binutils -> bootstrap-gcc -> glibc
+#       -> cross-gcc + merged runtime), so this one root caches every bootstrap piece
+#       (a fresh machine then PULLS the heavy seed compilers).
 #   devShells.<sys>.<arch>.inputDerivation    the host build tools the shell adds
 #       (the shell's own outPath is never realised, so its inputDerivation is the
 #       buildable stand-in).
@@ -674,7 +675,7 @@ push-cache:
 	@command -v cachix >/dev/null 2>&1 || \
 	  { echo "push-cache: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
-	roots=".#toolchain-$(_TC_ARCH) .#devShells.$$system.$(ARCH).inputDerivation"; \
+	roots=".#cross-gcc-$(_TC_ARCH) .#devShells.$$system.$(ARCH).inputDerivation"; \
 	echo "==> Pushing build closure of toolchain + dev shell for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
 	echo "  realising $$roots"; \
 	$(NIX) --accept-flake-config build --no-link $$roots 2>/dev/null || \
@@ -1448,19 +1449,24 @@ $(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
 
 # ---- dist-gcc (gcc runtime) ----
 # Ship the selected gcc runtime libs (DIST_GCC_SHIP = libgcc + DIST_GCC_LIBS) into
-# the dist tree, COPIED out of the one cross-gcc-runtime-<arch> derivation (built
-# against the shipped glibc - see flakes/cross-toolchain/gcc-runtime.nix).  Copies
-# each shipped lib's shared objects in their native symlink layout and its info docs
-# (libgomp.info, ...); the compiler's gcc.info/man belong to a deployable-toolchain
-# artifact, not the runtime dist.  The libs carry NO RUNPATH (NIX_DONT_SET_RPATH,
-# matching Debian GNU/Hurd) and the nix output is byte-identical cross-host, so a
-# plain copy + the deterministic install-info keep the dist reproducible.
+# the dist tree, COPIED out of the merged cross-gcc-<arch> derivation (the runtime is
+# built alongside the compiler - see flakes/cross-toolchain/gcc.nix mkFull).  The
+# target runtime .so's live under $out/<cpu>-gnu/lib (a cross gcc's target libdir) -
+# lib64 for the 64-bit multilib (x86_64), lib for i686; probe libgcc_s to pick the
+# right one.  Copy each shipped lib's shared objects in their native symlink layout,
+# EXCLUDING the
+# libstdc++ *-gdb.py helper (it embeds the cross-gcc store path - non-deployable and
+# host-varying).  Info docs (libgomp.info, ...) come from $out/share/info; the
+# compiler's own gcc.info/man stay behind (they belong to a deployable-toolchain
+# artifact, not the runtime dist).  The libs carry NO RUNPATH (the unwrapped cross ld
+# bakes none, matching Debian GNU/Hurd) and the nix output is byte-identical cross-
+# host, so a plain copy + the deterministic install-info keep the dist reproducible.
 # `make dist` ships ONLY libgcc by default - glibc dlopen()s libgcc_s for
 # backtrace()/Hurd assert_backtrace (a DT_NEEDED scan misses it), so it MUST be
-# present; the rest are opt-in via DIST_GCC_LIBS - now pure copies from the already-
-# built runtime, not a per-lib build.  The stamp records the runtime path AND the
-# ship set, so growing DIST_GCC_LIBS re-copies.  Resolved via $(_TC_ARCH): a xen
-# variant reuses its CPU sibling's runtime.
+# present; the rest are opt-in via DIST_GCC_LIBS - pure copies from the already-built
+# cross-gcc, not a per-lib build.  The stamp records the gcc path AND the ship set, so
+# growing DIST_GCC_LIBS re-copies.  Resolved via $(_TC_ARCH): a xen variant reuses its
+# CPU sibling's cross-gcc.
 .PHONY: dist-gcc
 dist-gcc: $(DIST_GCC_STAMP)
 
@@ -1471,13 +1477,19 @@ _RT_SHIP_SONAME = $(foreach l,$(DIST_GCC_SHIP),$(_RT_SO.$(l)))
 
 $(DIST_GCC_STAMP): $(if $(call _fp_stale,dist-gcc),_FORCE)
 	@mkdir -p $(DIST)/lib $(dir $@)
-	@echo "  DIST-GCC     resolving nix cross-gcc-runtime-$(_TC_ARCH)..."
+	@echo "  DIST-GCC     resolving nix cross-gcc-$(_TC_ARCH)..."
 	@set -e; \
-	out=$$($(NIX_BUILD) $(call _overrides,dist-gcc) $(PROJ)\#cross-gcc-runtime-$(_TC_ARCH) --no-link --print-out-paths); \
+	out=$$($(NIX_BUILD) $(call _overrides,dist-gcc) $(PROJ)\#cross-gcc-$(_TC_ARCH) --no-link --print-out-paths); \
+	libdir=$$out/$(_TC_ARCH)-gnu/lib64; [ -e $$libdir/$(_RT_SO.libgcc) ] || libdir=$$out/$(_TC_ARCH)-gnu/lib; \
 	if $(call _stamp_skip,$@,$$out $(sort $(DIST_GCC_SHIP)),$(DIST)/lib/$(_RT_SO.libgcc)); then \
 	  echo "  unchanged - skip copy"; \
 	else \
-	  for b in $(_RT_SHIP_BASE); do cp -a $$out/lib/$$b.so* $(DIST)/lib/; done; \
+	  for b in $(_RT_SHIP_BASE); do \
+	    for f in $$libdir/$$b.so*; do \
+	      case "$$f" in *-gdb.py) continue;; esac; \
+	      cp -a "$$f" $(DIST)/lib/; \
+	    done; \
+	  done; \
 	  $(call _make_writable,$(DIST)/lib); \
 	  echo "  shipped: $(DIST_GCC_SHIP) -> $(DIST)/lib"; \
 	  mkdir -p $(DIST)/share/info; \
@@ -1527,6 +1539,15 @@ $(DIST_TZDATA_STAMP): flake.lock
 # mig, or the in-tree build under the mig opt-in).  USER_MIG/MIG point at it explicitly
 # so gnumach's AC_CHECK_TOOL needn't discover it via PATH.  Incremental.  Without
 # src/gnumach, `make gnumach` realizes the nix kernel (top-level).
+#
+# Determinism: the build/src -> canon -ffile-prefix-maps go in CPPFLAGS AT CONFIGURE
+# (below), mirroring the nix build's preConfigure - gnumach's automake Makefile bakes
+# `CPPFLAGS = @CPPFLAGS@` from configure and IGNORES a make-time env CPPFLAGS, so
+# adding the maps only at make time (as _gnumach_make still does, harmlessly) left the
+# $(GNUMACH_BUILD) path - which carries the per-variant infix - leaking into the kernel
+# DWARF, making every in-tree kernel diverge.  (Hurd's glibc-style Makeconf DOES append
+# the make-time env CPPFLAGS, so it needs the maps only there.)  The toolchain
+# -fdebug-prefix-maps already ride the dev-shell's exported CPPFLAGS, captured here too.
 ifdef GNUMACH_IN_TREE
 gnumach: $(GNUMACH_KERNEL)
 
@@ -1537,6 +1558,7 @@ $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG) $(if $(call _fp_stale,gnu
 	cd $(GNUMACH_BUILD) && \
 	  USER_MIG=$(MIG) MIG=$(MIG) \
 	  CFLAGS="$(BASE_CFLAGS) $(call _macro_prefix_map,$(GNUMACH_SRC))" \
+	  CPPFLAGS="$$CPPFLAGS $(call _det_maps,$(GNUMACH_BUILD),$(GNUMACH_SRC),$(GNUMACH_CANON_BUILD))" \
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST_GNUMACH) \
 	    $(if $(GNUMACH_PLATFORM),--enable-platform=$(GNUMACH_PLATFORM))
 
@@ -1565,7 +1587,7 @@ define _gnumach_make
 	[ -n "$$sde" ] && touch -d @$$sde $(GNUMACH_SRC)/doc/*.texi; \
 	rm -f $(GNUMACH_SRC)/doc/mach.info* $(GNUMACH_SRC)/doc/version.texi $(GNUMACH_SRC)/doc/stamp-vti; \
 	cd $(GNUMACH_BUILD) && \
-	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE $(call _det_maps,$(GNUMACH_BUILD),$(GNUMACH_SRC),$(GNUMACH_CANON_BUILD))" \
+	  CPPFLAGS="$$CPPFLAGS $(call _det_maps,$(GNUMACH_BUILD),$(GNUMACH_SRC),$(GNUMACH_CANON_BUILD))" \
 	  NIX_HARDENING_ENABLE= \
 	  $(MAKE) VERSION="$$ver" $(1)
 endef
@@ -1628,7 +1650,7 @@ hurd: $(HURD_BUILD)/.built
 define _hurd_make
 	@$(call _req_env,HURD_CANON_BUILD)
 	cd $(HURD_BUILD) && \
-	  NIX_CFLAGS_COMPILE="$$NIX_CFLAGS_COMPILE $(call _det_maps,$(HURD_BUILD),$(HURD_SRC),$(HURD_CANON_BUILD))" \
+	  CPPFLAGS="$$CPPFLAGS $(call _det_maps,$(HURD_BUILD),$(HURD_SRC),$(HURD_CANON_BUILD))" \
 	  $(1) $(MAKE) MIG=$(MIG) USER_MIG=$(MIG) $(2)
 endef
 

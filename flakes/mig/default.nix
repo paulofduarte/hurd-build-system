@@ -37,11 +37,10 @@
 # <name>" gives cpu.sym its <mach/message.h>.  TARGET_CPPFLAGS points at
 # $gnumach-headers/include.
 
-{ nixpkgs, system, targets, gnumachHeaders, mkCrossPkgs, srcInput, forkUrl
-, checkToolchains ? null
-  # Content-address the output (flakes/lib/repro.nix mkCaAttrs).  The WORKING
-  # mig opts in; the ref twin stays input-addressed (frozen pins).
-, contentAddressed ? false }:
+{ nixpkgs, system, targets, gnumachHeaders, bootstrapGcc, srcInput, forkUrl
+  # CHECKED mode: a `name -> cross-gcc` attrset (the from-source cross-gcc, whose
+  # --with-sysroot=glibc-hurd gives the test stubs their <string.h>).  null = BOOTSTRAP.
+, checkCC ? null }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -49,9 +48,9 @@ let
   helpers = import ../lib { inherit lib; };
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
-  # CHECKED pass when a wrapped-cc attrset is threaded in (built downstream
-  # of glibc-hurd in packages.nix); BOOTSTRAP pass otherwise.
-  checked = checkToolchains != null;
+  # CHECKED pass when a cross-gcc attrset is threaded in (built downstream of
+  # glibc-hurd in packages.nix); BOOTSTRAP pass otherwise.
+  checked = checkCC != null;
 
   # Upstream version parsed from configure.ac (AC_INIT line).
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
@@ -64,16 +63,13 @@ let
   mkOne = name: target:
     let
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
-      crossPkgs = mkCrossPkgs system target;
-      # BOOTSTRAP: the libc-free bootstrap-gcc (gccWithoutTargetLibc) - the
-      # `<cpu>-gnu` cross stdenv's own `.cc` would pull nixpkgs' meta-gated glibc
-      # and break eval.  CHECKED: the wrapped cc, whose glibc-hurd sysroot gives
-      # the test stubs their <string.h>.  Both share the same `<cpu>-gnu-`
-      # targetPrefix and compile cpu.symc identically (-ffreestanding), so the
-      # installed bytes match.
-      cc = if checked then checkToolchains."toolchain-${name}"
-           else crossPkgs.buildPackages.gccWithoutTargetLibc;
-      toolPrefix = cc.targetPrefix;
+      # BOOTSTRAP: the from-source libc-free bootstrap-gcc.  CHECKED: the from-source
+      # cross-gcc (--with-sysroot=glibc-hurd gives the test stubs their <string.h>).
+      # Both are plain derivations (raw `<cpu>-gnu-` prefix, no `.targetPrefix`) and
+      # compile cpu.symc identically (-ffreestanding), so the installed bytes match.
+      cc = if checked then checkCC.${name}
+           else bootstrapGcc."bootstrap-gcc-${name}";
+      toolPrefix = "${target.crossTarget}-";
       pname = "mig-${target.crossTarget}";
     in
     # Native stdenv: MIG itself is a host tool.  Cross tools come in via
@@ -185,8 +181,7 @@ let
         export CFLAGS="-I${gnumach-headers}/include"
       '';
     }
-    // helpers.mkReproAttrs { inherit pname; version = fullVersion; }
-    // helpers.mkCaAttrs contentAddressed);
+    // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
 
   # BOOTSTRAP builds every target; CHECKED only the non-xen userland targets
   # (xen variants share a crossTarget, so a checked xen mig would be redundant).

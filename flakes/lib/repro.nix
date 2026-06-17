@@ -29,16 +29,4 @@
       export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -fdebug-prefix-map=$NIX_BUILD_TOP=/build"
     '';
   };
-
-  # Content-addressed output (`ca-derivations` experimental feature): the
-  # store path derives from the OUTPUT hash, so downstream derivations resolve
-  # against what the package IS, not how it was built.  A source change that
-  # leaves the installed tree byte-identical (e.g. a .c-only edit upstream of
-  # a headers-only package) stops the rebuild cascade here (early cutoff).
-  # Precondition: the output must be byte-reproducible.
-  mkCaAttrs = enable: lib.optionalAttrs enable {
-    __contentAddressed = true;
-    outputHashMode = "recursive";
-    outputHashAlgo = "sha256";
-  };
 }

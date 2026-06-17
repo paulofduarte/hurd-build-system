@@ -36,10 +36,12 @@
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
-  # Which arches we expose as `nix run` targets.  Xen variants don't boot
-  # under qemu (gnumach disables tests + the boot harness on them) so
-  # they're intentionally skipped here.
-  archs = [ "aarch64" "i686" "x86_64" ];
+  # Which arches we expose as `nix run` targets - the non-xen userland targets
+  # that have a bootable `gnumach-<arch>`.  Xen variants don't boot under qemu
+  # (gnumach disables tests + the boot harness on them); aarch64-gnu isn't a
+  # target yet (no upstream Hurd port) - an aarch64 host runs the x86_64 image
+  # under TCG via the defaultArch fallback below.
+  archs = [ "i686" "x86_64" ];
 
   mkApp = arch:
     let
@@ -81,4 +83,4 @@ let
   # hosts but will still boot under TCG.
   defaultArch = crossToolchain.defaultTargetName system targets;
 in
-apps' // { default = apps'.${defaultArch} or apps'.aarch64; }
+apps' // { default = apps'.${defaultArch} or apps'.x86_64; }

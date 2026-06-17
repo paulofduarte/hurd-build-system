@@ -1,5 +1,18 @@
 {
   "nodes": {
+    "binutils-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780873200,
+        "narHash": "sha256-RGHnZZk4PbYOC9/OHQYM0s4/QpViSjeOAkdUhypcIK0=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/binutils/binutils-2.46.1.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/binutils/binutils-2.46.1.tar.xz"
+      }
+    },
     "build-rev": {
       "flake": false,
       "locked": {
@@ -12,21 +25,30 @@
       },
       "parent": []
     },
+    "gcc-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1777540041,
+        "narHash": "sha256-G5WM6jNn59R8xgIaER/jReEfX0QDyua6QrEEz5qp40k=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/gcc/gcc-16.1.0/gcc-16.1.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/gcc/gcc-16.1.0/gcc-16.1.0.tar.xz"
+      }
+    },
     "glibc-src": {
       "flake": false,
       "locked": {
         "lastModified": 1769201640,
         "narHash": "sha256-D9OhzlcKnEItGfEVqQVx4v54vS9ZKoWMNz4Rt2VRik0=",
-        "ref": "refs/tags/glibc-2.43",
-        "rev": "f762ccf84f122d1354f103a151cba8bde797d521",
-        "revCount": 43327,
-        "type": "git",
-        "url": "https://sourceware.org/git/glibc.git"
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz"
       },
       "original": {
-        "ref": "refs/tags/glibc-2.43",
-        "type": "git",
-        "url": "https://sourceware.org/git/glibc.git"
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz"
       }
     },
     "gnumach-src": {
@@ -85,11 +107,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1780902259,
-        "narHash": "sha256-q8yYEC5f1mFlQO9RGna4LTc9QrcvWunX6FYp83munkQ=",
+        "lastModified": 1781216227,
+        "narHash": "sha256-9mUW6gNwoN2SWc/l0fW4svPNOulXLl8ijqKyeSOGgJE=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "bd0ff2d3eac24699c3664d5966b9ef36f388e2ca",
+        "rev": "a0374025a863d007d98e3297f6aa46cc3141c2f0",
         "type": "github"
       },
       "original": {
@@ -101,7 +123,9 @@
     },
     "root": {
       "inputs": {
+        "binutils-src": "binutils-src",
         "build-rev": "build-rev",
+        "gcc-src": "gcc-src",
         "glibc-src": "glibc-src",
         "gnumach-dev-src": [
           "gnumach-src"

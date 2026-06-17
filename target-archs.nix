@@ -9,9 +9,8 @@
 # toolchain-cache CI can path-filter on it: changing the target set affects
 # which toolchains are built, but it stays separate from the package wiring.
 #
-#   crossTarget : the nixpkgs cross-system config for this target - the
-#                 `<cpu>-gnu` Hurd triplet (parsed by the lib/systems patch
-#                 from flakes/lib-systems-hurd).  Drives the one
+#   crossTarget : the `<cpu>-gnu` Hurd triplet passed to the from-source cross
+#                 toolchain (binutils/gcc `--target=`).  Drives the one
 #                 cross-toolchain that builds both the gnumach kernel
 #                 (freestanding, -nostdlib) and the Hurd userland.
 #   platform    : "at" / "xen" - gnumach's --enable-platform=.  The "xen"

@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-# GNU Hurd userland - per-target derivations.  Builds the core servers +
-# libraries with the cross-toolchain (wrapped cc, mig, glibc-hurd sysroot).
+# GNU Hurd userland - per-target derivations.  Builds the core servers + libraries
+# with the from-source cross-toolchain (unwrapped cross-gcc + cross-binutils, mig, and
+# the glibc-hurd sysroot baked via the cross-gcc's --with-sysroot).
 # Output layout (hurd's `make install prefix=$out`):
 #
 #   $out/hurd/...        translators (ext2fs, isofs, pflocal, exec, ...)
@@ -18,7 +19,7 @@
 # Source comes from the pinned `hurd-src` flake input.  Filtered to the non-xen
 # userland targets (i686, x86_64).
 
-{ nixpkgs, system, targets, mig, hurdToolchain, glibcHurd, self, srcInput, forkUrl, buildRevToken ? null }:
+{ nixpkgs, system, targets, mig, toolchainFor, self, srcInput, forkUrl, buildRevToken ? null }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
@@ -38,11 +39,16 @@ let
   mkOne = name: target:
     let
       tp        = target.crossTarget;                       # e.g. i686-gnu
-      toolchain = hurdToolchain."toolchain-${name}";      # wrapped cross cc
+      # The from-source toolchain: unwrapped cross-gcc + cross-binutils.  The cross-gcc
+      # bakes --with-sysroot=glibc-hurd (libc + merged mach/hurd headers + glibc's RPC
+      # stub libs), so the userland compiles+links against it directly - no wrapper, and
+      # no bare-name GROUP rewrite (the raw ld resolves the libc.so /lib GROUP under the
+      # sysroot).
+      tc        = toolchainFor target;
+      cc        = tc.cc;          # cross-gcc-<arch>      (${tp}-gcc/-g++, glibc sysroot)
+      binu      = tc.binutils;    # cross-binutils-<arch> (${tp}-ar/-ranlib/-nm)
       crossMig  = mig."mig-${name}";
       pname     = "hurd-${tp}";
-      # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
-      salt      = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
     in
     pkgs.stdenv.mkDerivation ({
       inherit pname;
@@ -61,12 +67,13 @@ let
       nativeBuildInputs =
         [ pkgs.autoreconfHook ]
         ++ (with pkgs; [ texinfo perl pkg-config patchelf fakeroot ])
-        ++ [ toolchain crossMig ];
+        ++ [ cc binu crossMig ];
 
       # CFLAGS go via configureFlags (below), NOT a derivation env var: an env
       # CFLAGS is seen by configure (-> config.make) AND make, so `-g/-O/-std` land
       # in DW_AT_producer twice vs the in-tree build (configure-only).  The
-      # toolchain debug-prefix-map moves to NIX_CFLAGS_COMPILE (preBuild).
+      # debug-prefix-maps go via CPPFLAGS (preConfigure) - the raw cross-gcc has no
+      # wrapper NIX_CFLAGS_COMPILE channel.
 
       postPatch = ''
         sed -i.bak \
@@ -88,6 +95,9 @@ let
         # survives - a plain configureFlags list element is word-split by nix.
         configureFlagsArray+=("CFLAGS=${buildFlags.hurdExtraCflags} ${buildFlags.baseCflags}")
         ${helpers.crossPkg.outOfTreePreConfigure}
+        # Determinism maps via CPPFLAGS (the raw cross-gcc ignores NIX_CFLAGS_COMPILE);
+        # after outOfTreePreConfigure so $srcdir is set and configure bakes it.
+        ${buildFlags.detCppflagsUnwrapped { gcc = cc; binutils = binu; canonBuild = buildFlags.hurdCanonBuild; sysroot = tc.sysroot; }}
       '';
 
       # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive rule uses
@@ -166,32 +176,17 @@ let
         license = licenses.gpl2Plus;
       };
 
-      # Determinism - make the nix userland BYTE-IDENTICAL to the in-tree build.
-      # hurd builds OUT-OF-TREE ($srcdir != $PWD), both mapped to the SINGLE
-      # canonical the in-tree build maps src+build to (build-flags.nix
-      # hurdCanonBuild) so DWARF paths agree.  Pin the shared -frandom-seed.
-      # ALSO strip host build-tool `-isystem /nix/store/*`: the native stdenv
-      # dumps every nativeBuildInput's include dir into NIX_CFLAGS_COMPILE, and on
-      # darwin the HOST libiconv-dev lands ahead of the target glibc, so
-      # console/pc_kbd/vga compile against the wrong iconv.h and leak the host
-      # store path into DWARF (Linux glibc has iconv built in -> no leak).  A
-      # cross-compile must resolve system headers from its own sysroot only.
-      # No /nix/store DT_RUNPATH in the shipped servers/libs (Debian GNU/Hurd
-      # parity; libs resolve from /lib via the loader).  Two injectors on LINUX
-      # (darwin has neither, hence the cross-host divergence):
-      #  - the ld-wrapper's per--L rpath derivation - gated by the env attr below
-      #    (same channel glibc.nix uses);
-      #  - the NATIVE stdenv cc-wrapper hook's explicit `-rpath $out/lib` in the
-      #    PLAIN NIX_LDFLAGS (mangleVarList folds it into the salted var at cross-
-      #    link time) - NOT covered by NIX_DONT_SET_RPATH (the dev shell verified
-      #    this on Linux), so sed it out of the plain var, mirroring dev-shell.nix.
-      preBuild = ''
-        ${buildFlags.detCflagsExport { inherit toolchain; canonBuild = buildFlags.hurdCanonBuild; stripIsystem = true; }}
-        export NIX_LDFLAGS="$(printf '%s' "''${NIX_LDFLAGS:-}" | sed "s@-rpath $out/lib@@g")"
-      '';
-      "NIX_DONT_SET_RPATH${salt}" = "1";
-      # Content-addressed (flakes/lib/repro.nix mkCaAttrs): nothing consumes the
-      # userland package yet, but future dependents get the early cutoff for free.
-    } // helpers.mkCaAttrs true);
+      # Determinism + cleanliness come for free from the unwrapped cross-gcc - no
+      # wrapper channels to fight:
+      #  - DWARF determinism: the maps ride CPPFLAGS (set in preConfigure), mapping the
+      #    out-of-tree $srcdir + $PWD to one canon root (hurdCanonBuild) + the gcc/binutils
+      #    store paths.  The raw cc ignores NIX_CFLAGS_COMPILE, so no detCflagsExport.
+      #  - No host -isystem leak: the cross-gcc resolves system headers ONLY from its
+      #    --with-sysroot glibc (the old wrapped cc read the native stdenv's host
+      #    -isystem, leaking darwin's libiconv into console/pc_kbd/vga; gone now).
+      #  - No /nix/store DT_RUNPATH: the raw cross-binutils ld bakes no rpath, so the
+      #    servers/libs resolve from /lib via the loader (Debian GNU/Hurd parity) with
+      #    no NIX_LDFLAGS / NIX_DONT_SET_RPATH suppression needed.
+    });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-${name}" (mkOne name target)) hurdTargets

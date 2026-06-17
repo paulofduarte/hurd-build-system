@@ -50,13 +50,14 @@ let
     let
       crossMig  = mig."mig-${name}";
       tp        = target.crossTarget;                 # e.g. i686-gnu
-      # The wrapped cross-cc - the SAME `toolchain-<arch>` the userland + dev
-      # shell use.  The kernel builds freestanding (configure.ac forces
-      # -ffreestanding -nostdlib) so glibc-hurd is never linked, but the wrapped
-      # cc keeps the kernel on the one toolchain.  Native stdenv: the `<cpu>-gnu`
-      # cross stdenv would pull nixpkgs' meta-gated glibc; cross tools come in by
-      # name below.
-      toolchain = toolchainFor target;
+      # The from-source toolchain: the unwrapped cross-gcc + cross-binutils (the same
+      # cross-gcc-<arch> the userland uses).  The kernel builds freestanding
+      # (configure.ac forces -ffreestanding -nostdlib) so glibc-hurd is never linked;
+      # the cross-gcc's baked sysroot is inert for -nostdlib.  Native stdenv: cross
+      # tools come in by name (on PATH) below.
+      tc        = toolchainFor target;
+      cc        = tc.cc;          # cross-gcc-<arch>      (provides ${tp}-gcc/-g++)
+      binu      = tc.binutils;    # cross-binutils-<arch> (provides ${tp}-ar/-ld/...)
       pname     = "gnumach-${tp}";
     in
     pkgs.stdenv.mkDerivation ({
@@ -82,7 +83,7 @@ let
       nativeBuildInputs =
         [ pkgs.autoreconfHook ]
         ++ (with pkgs; [ texinfo perl patchelf ])
-        ++ [ toolchain crossMig ];
+        ++ [ cc binu crossMig ];
 
       # CFLAGS go via configureFlags (below), NOT a derivation env var: an env
       # CFLAGS is seen by configure (-> config.make) AND make, so `-g/-O/-std`
@@ -107,6 +108,10 @@ let
         # survives - a plain configureFlags list element is word-split by nix.
         configureFlagsArray+=("CFLAGS=${buildFlags.baseCflags}")
         ${helpers.crossPkg.outOfTreePreConfigure}
+        # Determinism maps via CPPFLAGS (the raw cross-gcc ignores the wrapper's
+        # NIX_CFLAGS_COMPILE).  Set AFTER outOfTreePreConfigure so $srcdir is defined
+        # and configure bakes it; maps the gcc+binutils store paths + $srcdir/$PWD.
+        ${buildFlags.detCppflagsUnwrapped { gcc = cc; binutils = binu; canonBuild = buildFlags.gnumachCanonBuild; }}
       '';
 
       # Force the cross binutils into the recursive sub-makes - configure's
@@ -190,23 +195,14 @@ let
         platforms = platforms.all;
       };
 
-      # Determinism - make the nix kernel BYTE-IDENTICAL to the in-tree build.
-      # gnumach builds IN-SOURCE, so $PWD holds both source + generated files;
-      # map it to the SINGLE canonical the in-tree build maps its src+build dirs
-      # to (build-flags.nix gnumachCanonBuild) so DWARF paths agree.  Pin the
-      # shared -frandom-seed (stripping the reproducible-builds hook's
-      # $out-derived, host-varying one first).
+      # mach.info's "last updated ..." date comes from the doc .texi FILE MTIME via
+      # mdate-sh (which ignores SOURCE_DATE_EPOCH, despite its comment - true of
+      # automake 1.18's mdate-sh too).  Set the mtime to the source commit date so it's
+      # a MEANINGFUL, reproducible date, not the store mtime=1 (1 Jan 1970).  (The DWARF
+      # determinism maps live in CPPFLAGS, set in preConfigure.)
       preBuild = ''
-        # mach.info's "last updated ..." comes from the doc .texi FILE MTIME via
-        # mdate-sh (which ignores SOURCE_DATE_EPOCH, despite its comment - true of
-        # automake 1.18's mdate-sh too).  Set the mtime to the source commit date
-        # so it's a MEANINGFUL date that matches the in-tree build (which touches
-        # the same from `git log %ct`), not the store mtime=1 (1 Jan 1970).
         touch -d @${toString srcInput.lastModified} "$srcdir"/doc/*.texi
-        ${buildFlags.detCflagsExport { inherit toolchain; canonBuild = buildFlags.gnumachCanonBuild; }}
       '';
-      # Content-addressed (flakes/lib/repro.nix mkCaAttrs): nothing consumes the
-      # kernel package yet, but future dependents get the early cutoff for free.
-    } // helpers.mkCaAttrs true);
+    });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-${name}" (mkOne name target)) targets

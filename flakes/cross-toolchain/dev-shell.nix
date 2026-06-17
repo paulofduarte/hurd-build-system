@@ -4,84 +4,80 @@
 #
 # One shell drives every in-tree build: `make mach` (freestanding gnumach
 # kernel), `make mig` (host-side MIG codegen tool), `make hurd` (userland
-# servers).  All use the SAME wrapped `<cpu>-gnu` cross-cc (toolchain.nix ->
-# `toolchain-<arch>`): the kernel builds freestanding (gnumach's configure forces
-# `-ffreestanding -nostdlib`), the userland hosted against glibc-hurd.
+# servers).  All use the SAME from-source UNWRAPPED `<cpu>-gnu` cross-gcc +
+# cross-binutils (the same `cross-gcc-<arch>` / `cross-binutils-<arch>` the nix
+# builds use): the kernel builds freestanding (gnumach's configure forces
+# `-ffreestanding -nostdlib`), the userland hosted against the cross-gcc's
+# `--with-sysroot` glibc-hurd.
 #
 # Build TOOLS (autoreconf, bison/flex, perl, texinfo, ...) are INFERRED from this
 # target's own derivations (gnumach + mig + gnumach-headers) - add a tool to a
 # package's nativeBuildInputs and the shell picks it up.  The nix-built working
 # mig is added + exported as $MIG / $USER_MIG so mig is always available without a
 # `make mig`; `make src-mig` opts into an in-tree mig the Makefile builds instead.
-# The libc-free bootstrap-gcc is SUBTRACTED so its prefixed gcc can't shadow the
-# wrapped cc on PATH.
+# The libc-free bootstrap-gcc (pulled in via gnumach-headers) is SUBTRACTED so its
+# prefixed gcc can't shadow the cross-gcc on PATH.
 #
 # The cross compiler + binutils are wired by ABSOLUTE path in the shellHook
-# (CC/CXX from the wrapped toolchain; LD/AR/NM/... from the unwrapped cross
-# binutils) so configure + sub-makes resolve to exactly these regardless of PATH
-# ordering.  HURD_CONFIGURE_FLAGS carries the same flag set the nix Hurd build
-# uses (hurd-config.nix); the Makefile's hurd recipe adds `CFLAGS=-fcommon` at
-# configure time, scoping -fcommon to the userland - the kernel never sees it.
+# (CC/CXX from the cross-gcc; LD/AR/NM/... from the cross-binutils) so configure +
+# sub-makes resolve to exactly these regardless of PATH ordering.  Determinism: the
+# raw cross-gcc ignores the cc-wrapper's NIX_CFLAGS_COMPILE, so the DWARF maps ride
+# CPPFLAGS (the Makefile recipes append the per-build $srcdir/$PWD->canon maps to
+# it); no -frandom-seed, no host -isystem strip, no NIX_DONT_SET_RPATH dance - all
+# wrapper artifacts the unwrapped toolchain doesn't need.
 
-{ nixpkgs, mkCrossPkgs }:
+{ nixpkgs }:
 
 let
   lib = nixpkgs.lib;
   hurdConfig = import ./hurd-config.nix;
-  toolchainPaths = import ./toolchain-paths.nix { inherit nixpkgs mkCrossPkgs; };
   buildFlags = import ./build-flags.nix { inherit lib; };
 in
 
 {
-  # mkDevShell : system -> name -> target -> { toolchain, gnumach, mig, headers }
-  #              -> shell.  `toolchain` is the wrapped cc (toolchain-<arch>, or the
-  #              CPU sibling's for a xen variant).  gnumach/mig/headers are this
-  #              target's derivations, for build-tool inference (and subtraction).
-  #              glibc is nix-only - no in-tree glibc build env.
-  mkDevShell = system: name: target: { toolchain, gnumach, mig, headers }:
+  # mkDevShell : system -> name -> target ->
+  #   { cc, binutils, sysroot, bootstrapGcc, gnumach, mig, headers } -> shell.
+  #     cc           cross-gcc-<arch>      (unwrapped; provides ${tp}-gcc/-g++ + sysroot)
+  #     binutils     cross-binutils-<arch> (unwrapped; ${tp}-ld/-ar/-nm/...)
+  #     sysroot      glibc-hurd-<arch>     (the cc's --with-sysroot; mapped out of the
+  #                                         userland's DWARF; inert for the -nostdlib kernel)
+  #     bootstrapGcc bootstrap-gcc-<arch>  (SUBTRACTED from PATH - its ${tp}-gcc must not
+  #                                         shadow the cross-gcc)
+  #     gnumach/mig/headers  this target's derivations, for build-tool inference.
+  #   For a xen variant, cc/binutils/sysroot/etc. are the CPU sibling's.  glibc is
+  #   nix-only - no in-tree glibc build env.
+  mkDevShell = system: name: target: { cc, binutils, sysroot, bootstrapGcc, gnumach, mig, headers }:
     let
-      pkgs      = nixpkgs.legacyPackages.${system};
-      crossPkgs = mkCrossPkgs system target;
+      pkgs = nixpkgs.legacyPackages.${system};
 
       # Patched install-info (deterministic dir), shared with glibc.nix - see
       # texinfo-det.nix.  Replaces EVERY texinfo on PATH below so whichever
-      # install-info glibc/hurd's `make install` picks is deterministic - no
-      # post-dist dir regen.
+      # install-info glibc/hurd's `make install` picks is deterministic.
       texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
-      # Unwrapped cross binutils - absolute source of the prefixed
-      # ld/ar/nm/ranlib/strip/objcopy.  The wrapped `toolchain` supplies cc/c++;
-      # the unwrapped binutils for the rest sidesteps any ambiguity about what the
-      # cc-wrapper re-exports.
-      tcPaths = toolchainPaths system target;
-      binu  = tcPaths.binutils;
-      # The wrapped cc's target prefix ("i686-gnu-") - drives both the toolchain
-      # bin names and binu's (same crossSystem).
-      tp    = toolchain.targetPrefix;
-      # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
-      salt  = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] target.crossTarget;
+      tp = "${target.crossTarget}-";    # raw prefix (the unwrapped cc has no .targetPrefix)
+      buildTriple = pkgs.stdenv.hostPlatform.config;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
       hurdDeployFlags = lib.concatStringsSep " " hurdConfig.deployFlags;
-      # DWARF store-path maps for the cc the in-tree builds invoke: the
-      # working-wrapped `toolchain` (mach + hurd).  Shared with the nix builds via
-      # build-flags.nix.
-      detPrefixMap = lib.concatStringsSep " " (buildFlags.debugPrefixMap toolchain);
 
-      # Build-tool deps inferred from this target's own derivations.  Subtract the
-      # own packages AND the libc-free bootstrap-gcc: mig is subtracted so a mig pulled
-      # in via gnumach's build inputs doesn't sneak onto PATH through inference (the
-      # shell's mig is the `mig` arg, added + exported below).  bootstrap-gcc comes
-      # in via gnumach-headers' nativeBuildInputs but isn't the build cc here, and
-      # its prefixed gcc must not shadow the wrapped cc on PATH - so subtracted.
-      bootstrapGcc = crossPkgs.buildPackages.gccWithoutTargetLibc;
-      ownDrvs = [ gnumach mig headers toolchain bootstrapGcc ];
+      # Fixed toolchain DWARF maps for the in-tree builds (the SAME maps the nix
+      # gnumach/hurd builds apply): the cross-gcc + cross-binutils store paths, plus the
+      # glibc sysroot (needed by the userland, inert for the -nostdlib kernel).  The
+      # Makefile gnumach/hurd recipes append the per-build $srcdir/$PWD->canon maps.
+      detCppMaps = buildFlags.debugPrefixMapUnwrappedStr { gcc = cc; binutils = binutils; }
+        + " -ffile-prefix-map=${sysroot}=${buildFlags.glibcCanonSysroot}";
+
+      # Build-tool deps inferred from this target's own derivations.  Subtract the own
+      # packages AND the libc-free bootstrap-gcc (pulled in via gnumach-headers): its
+      # prefixed gcc must not shadow the cross-gcc on PATH.
+      ownDrvs = [ gnumach mig headers cc binutils bootstrapGcc ];
       inferredBuildInputs = lib.subtractLists ownDrvs
         (lib.unique (lib.concatMap (d: d.nativeBuildInputs or []) [ gnumach mig headers ]));
     in
     pkgs.mkShell {
       # Inferred tools (autoreconfHook + bison/flex/perl/texinfo) come via
-      # inferredBuildInputs.  Here we add the toolchain + binutils (for PATH) and
-      # the dev/run-only extras the packages don't declare:
+      # inferredBuildInputs.  Here we add the cross-gcc + cross-binutils + mig (for PATH)
+      # and the dev/run-only extras the packages don't declare:
       #   gcc        native compiler for in-tree `make mig` (a host tool)
       #   pkg-config hurd's optional PKG_CHECK probes
       #   git/nix    source ops + Makefile re-dispatch into a target shell
@@ -92,14 +88,13 @@ in
       #   python3/gettext/gawk/bison/perl/texinfo  glibc's host build tools, for the
       #              opt-in `make glibc` (mirrors glibc.nix); the dedup handles the
       #              overlap with inferredBuildInputs.
-      #   reuse      `reuse lint` - the REUSE license-compliance check the CI
-      #              reuse-lint workflow runs (LICENSES/ + REUSE.toml).
+      #   reuse      `reuse lint` - the REUSE license-compliance check the CI runs.
       # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo` strips
       # the unpatched texinfo wherever it appears, then texinfoDet is added once - so
       # the only install-info on PATH is the deterministic one.
       nativeBuildInputs =
         lib.remove pkgs.texinfo (
-          [ toolchain binu mig ]
+          [ cc binutils mig ]
           ++ inferredBuildInputs
           ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
                            python3 jq gettext gawk bison perl texinfo reuse ])
@@ -115,103 +110,68 @@ in
 
       shellHook = ''
         export ARCH=${name}
-        export GNUMACH_HOST=${tcPaths.hostTriple}
+        export GNUMACH_HOST=${target.crossTarget}
         export MIG_TARGET=${target.crossTarget}
         ${if target.platform != null
           then "export GNUMACH_PLATFORM=${target.platform}"
           else "unset GNUMACH_PLATFORM"}
 
-        # Cross tools by ABSOLUTE path so configure + sub-makes use exactly
-        # these (never a host tool, never bootstrap-gcc).  CC/CXX come from
-        # the wrapped toolchain; the binutils from the unwrapped cross
-        # binutils.  TARGET_CC is what MIG's cpu.symc compile uses.
-        export CC=${toolchain}/bin/${tp}gcc
-        export CXX=${toolchain}/bin/${tp}g++
-        export TARGET_CC=${toolchain}/bin/${tp}gcc
-        export LD=${binu}/bin/${tp}ld
-        export AR=${binu}/bin/${tp}ar
-        export NM=${binu}/bin/${tp}nm
-        export RANLIB=${binu}/bin/${tp}ranlib
-        export STRIP=${binu}/bin/${tp}strip
-        export OBJCOPY=${binu}/bin/${tp}objcopy
+        # Cross tools by ABSOLUTE path so configure + sub-makes use exactly these
+        # (never a host tool, never bootstrap-gcc).  CC/CXX/TARGET_CC from the cross-gcc;
+        # LD/AR/... from the cross-binutils.  TARGET_CC is what MIG's cpu.symc uses.
+        export CC=${cc}/bin/${tp}gcc
+        export CXX=${cc}/bin/${tp}g++
+        export TARGET_CC=${cc}/bin/${tp}gcc
+        export LD=${binutils}/bin/${tp}ld
+        export AR=${binutils}/bin/${tp}ar
+        export NM=${binutils}/bin/${tp}nm
+        export RANLIB=${binutils}/bin/${tp}ranlib
+        export STRIP=${binutils}/bin/${tp}strip
+        export OBJCOPY=${binutils}/bin/${tp}objcopy
+        export AS=${binutils}/bin/${tp}as
+        export OBJDUMP=${binutils}/bin/${tp}objdump
+        export READELF=${binutils}/bin/${tp}readelf
 
-        # The nix-built working mig - always available so mach/hurd build with
-        # no `make mig`.  The Makefile uses $MIG unless an in-tree src/mig opts
-        # in (`make src-mig`), in which case it builds + uses that instead.
+        # The nix-built working mig - always available so mach/hurd build with no
+        # `make mig`.  The Makefile uses $MIG unless an in-tree src/mig opts in.
         export MIG=${mig}/bin/${tp}mig
         export USER_MIG=${mig}/bin/${tp}mig
 
-        # Extra binutils tools the in-tree configures consume.
-        export AS=${binu}/bin/${tp}as
-        export OBJDUMP=${binu}/bin/${tp}objdump
-        export READELF=${binu}/bin/${tp}readelf
         export BUILD_CC=${pkgs.stdenv.cc}/bin/cc
-        export BINUTILS_BIN=${tcPaths.binutilsBin}
-        export BUILD_TRIPLE=${tcPaths.buildTriple}
+        export BINUTILS_BIN=${binutils}/bin
+        export BUILD_TRIPLE=${buildTriple}
 
-        # Empty so hurd's optional PKG_CHECK probes find nothing (matches
-        # the nix build).  No global CFLAGS: the kernel takes autoconf's
-        # `-g -O2` default (+ its own -ffreestanding -nostdlib); the hurd
-        # recipe adds -fcommon at configure time.
+        # Empty so hurd's optional PKG_CHECK probes find nothing (matches the nix
+        # build).  No global CFLAGS: the kernel takes autoconf's `-g -O2` default
+        # (+ its own -ffreestanding -nostdlib); the hurd recipe adds -fcommon.
         export PKG_CONFIG_PATH=
 
-        # Cross-host determinism for the in-tree build (mach/hurd/glibc),
-        # applied through NIX_CFLAGS_COMPILE so EVERY in-tree compile inherits
-        # it - the Makefile recipes need not redefine it.  Three host-varying
-        # inputs would otherwise leak (see build-flags.nix):
-        #   - gcc's -frandom-seed: nixpkgs' reproducible-builds setup hook
-        #     derives it from $out, which differs per host for this dev shell
-        #     (its toolchain input's store hash differs per host), perturbing
-        #     seed-sensitive codegen.  Strip the hook's seed and pin our own.
-        #   - the cross-toolchain's own /nix/store paths in DWARF: map them to
-        #     stable names (detPrefixMap), shared with the nix builds.
-        #   - host build-tool `-isystem <dev>/include` dirs: mkShell dumps every
-        #     nativeBuildInput's include dir into the shared NIX_CFLAGS_COMPILE,
-        #     which the cross-cc also reads.  On darwin that puts the HOST libiconv
-        #     (propagated by gettext) ahead of the target glibc, so console/pc_kbd
-        #     compile against the wrong iconv.h (host `__tag_iconv_t`, not glibc's
-        #     `iconv_t`) and leak the host store path into DWARF - diverging from
-        #     Linux (glibc has iconv built-in, no host libiconv).  A cross-compile
-        #     must resolve system headers only from its own sysroot (the wrapper's
-        #     -idirafter glibc) + the Makefile -I, never host `-isystem`, so strip
-        #     them all; native `make mig` needs none of these lib headers.
-        export NIX_CFLAGS_COMPILE="$(printf '%s' "''${NIX_CFLAGS_COMPILE:-}" \
-          | sed -E '${buildFlags.isystemStripSed}') -frandom-seed=${buildFlags.randomSeed} ${detPrefixMap}"
+        # Cross-host determinism for the in-tree build, via CPPFLAGS (the raw cross-gcc
+        # ignores the cc-wrapper's NIX_CFLAGS_COMPILE).  These are the FIXED toolchain
+        # DWARF maps (cross-gcc + cross-binutils store paths + the glibc sysroot); the
+        # Makefile gnumach/hurd recipes append the per-build $srcdir/$PWD->canon maps.
+        # No -frandom-seed (the raw cc's default seed is deterministic) and no host
+        # -isystem strip (the cross-gcc resolves system headers only from its sysroot,
+        # never the native stdenv's host -isystem, which it never reads).
+        export CPPFLAGS="${detCppMaps} ''${CPPFLAGS:-}"
 
-        # Canonical roots for the in-tree gnumach + hurd builds (see build-flags.nix) - the
-        # SAME single canonical gnumach/default.nix + hurd/default.nix map their
-        # nix build's $PWD to, so in-tree == nix for those modules too.
+        # Canonical roots for the in-tree gnumach + hurd builds (build-flags.nix) - the
+        # SAME single canonical gnumach/default.nix + hurd/default.nix map their nix
+        # build's $srcdir/$PWD to, so in-tree == nix for those modules.
         export GNUMACH_CANON_BUILD=${buildFlags.gnumachCanonBuild}
         export HURD_CANON_BUILD=${buildFlags.hurdCanonBuild}
 
-        # Base compile flags (build-flags.nix) - the SAME -g -O2 (+ hurd's -fcommon)
-        # the nix derivations use.  The in-tree gnumach/hurd configure CFLAGS read
-        # these so the flags live in ONE place (nix), never duplicated in the Makefile.
+        # Base compile flags (build-flags.nix) - the SAME -g -O2 (+ hurd's -fcommon) the
+        # nix derivations use, read by the in-tree configure CFLAGS (flags live in ONE
+        # place).
         export BASE_CFLAGS="${buildFlags.baseCflags}"
         export HURD_EXTRA_CFLAGS="${buildFlags.hurdExtraCflags}"
 
-        # No store RUNPATH leak in the shipped dist.  On Linux the cross
-        # ld-wrapper bakes a DT_RUNPATH into EVERY in-tree binary; darwin's
-        # stdenv never does.  The extra RUNPATH string enlarges .dynstr and
-        # shifts every address (.text/.symtab/.dynsym cascade), so the dist
-        # diverges cross-host AND leaks a build path.  Two distinct sources, two
-        # mechanisms - make every host match darwin (deployable dist resolves via
-        # the target's own /lib + DT_NEEDED, no rpath wanted):
-        #
-        #  (a) auto-derived rpath from the wrapped cc's OWN -L<store> dirs (the
-        #      shipped glibc + gcc libdir, injected on every link).
-        #      NIX_DONT_SET_RPATH gates exactly this.  It must be a REAL env var,
-        #      not the wrapped bintools' add-local-ldflags-before.sh: gcc links
-        #      through its --with-ld bintools (the bootstrap bintools wrapper), which never
-        #      sources the working wrapper's suppression - same trap glibc.nix /
-        #      gcc-runtime.nix hit, fixed the same way (a salted env var the real ld honours).
-        export NIX_DONT_SET_RPATH${salt}=1
-        #
-        #  (b) the EXPLICIT `-rpath $out/lib` that `nix develop` injects into
-        #      NIX_LDFLAGS (the dev shell's own-output rpath).  NIX_DONT_SET_RPATH
-        #      does NOT cover an explicit -rpath flag (verified on Linux), so sed
-        #      it out of NIX_LDFLAGS directly.
-        [ -n "''${out:-}" ] && export NIX_LDFLAGS="$(printf '%s' "''${NIX_LDFLAGS:-}" | sed "s@-rpath $out/lib@@g")"
+        # No NIX_DONT_SET_RPATH / NIX_LDFLAGS rpath-strip: the raw cross-binutils ld
+        # bakes no /nix/store DT_RUNPATH (the wrapped ld-wrapper did), so the dist
+        # binaries resolve from the target /lib via the loader - Debian-Hurd parity, for
+        # free.
+
         # Same configure flag set as the nix Hurd build (hurd-config.nix).
         export HURD_CONFIGURE_FLAGS="--host=${target.crossTarget} ${coreFlags}"
         # Root-relative install dirs the nix Hurd uses (hurd-config.deployFlags).

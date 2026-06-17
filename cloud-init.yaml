@@ -66,11 +66,11 @@ write_files:
       #                       $NIX_EXTRA_CONF.
       #
       # Both are upstream-nix features; no fork installer needed.
-      # ca-derivations: the working gnumach/hurd headers are content-addressed
-      # (early cutoff for the glibc-hurd rebuild cascade); the DAEMON must have
-      # the feature - a client-side flag doesn't pass the daemon's gate.
+      # (ca-derivations dropped: the toolchain is input-addressed now - cachix can't
+      # serve the realisations endpoint CA substitution needs; revisit if a
+      # realisation-serving cache is adopted.)
       NIX_EXTRA_CONF=$(printf '%s\n' \
-        'experimental-features = nix-command flakes ca-derivations' \
+        'experimental-features = nix-command flakes' \
         'trusted-users = @sudo @wheel' \
         'accept-flake-config = true' \
         "extra-substituters = ${CACHIX_SUBSTITUTER}" \

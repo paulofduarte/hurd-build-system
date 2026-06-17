@@ -25,8 +25,8 @@
 #   $out/include/hurd/, mach/             headers propagated from
 #                                        hurd-headers + gnumach-headers
 #
-# Toolchain inputs come from the existing flake outputs:
-#   bootstrap-gcc + cross-binutils      flakes/cross-toolchain (mkCrossPkgs)
+# Toolchain inputs come from the from-source cross toolchain:
+#   bootstrap-gcc (gcc.nix) + cross-binutils (binutils.nix)
 #   gnumach-headers + hurd-headers    sibling flakes
 #   mig                               sibling flake
 #
@@ -34,35 +34,61 @@
 # gnumach-headers + hurd-headers into one directory, so
 # `--with-headers=$sysroot/include` sees both as one GNU/Hurd installation.
 
-{ nixpkgs, system, targets, mkCrossPkgs, mig, gnumachHeaders, hurdHeaders
+{ nixpkgs, system, targets, mig, gnumachHeaders, hurdHeaders
 , srcInput
-  # Content-address the output (see flakes/lib/repro.nix mkCaAttrs).  The
-  # shipped glibc opts in; the bootstrap glibc stays input-addressed (frozen
-  # pins never exercise a cutoff, and a CA bootstrap glibc would move
-  # cross-gcc's drv).
-, contentAddressed ? false
+  # The from-source toolchain: `binutils` = the cross-binutils-<name> attrset,
+  # `bootstrapGcc` = the
+  # bootstrap-gcc-<name> attrset (the default buildCC).  Both reached by ABSOLUTE
+  # PATH - the cc is unwrapped (bakes --with-as/--with-ld -> binutils), no nix
+  # cc/bintools-wrapper, so none of the meta-gate dodge or salted NIX_* channels
+  # the old path needed apply here.
+, binutils
+, bootstrapGcc
   # buildTree mode (the stub-split base): instead of installing, ship the WRITABLE
   # src + build tree (src/ with build/ inside) so flakes/cross-toolchain/hurd-stubs.nix
   # can copy it, swap the alias RPC headers, and rebuild ONLY libmachuser/libhurduser
   # (~30 s) without touching glibc.  Irreproducible (config.log timestamps + sandbox
   # paths in the build tree), like the old gcc rt-base - input-addressed, never shipped.
 , buildTree ? false
-  # Which cross-cc builds this glibc, as a `name: target: cc` function (the cc is
-  # referenced by absolute path for CC=/CXX=, so pass a derivation with bin/<tp>-gcc
-  # + bin/<tp>-g++).  Default = the libc-free bootstrap-gcc, used by the
-  # bootstrap glibc; the shipped glibc overrides it with cross-gcc.
-, buildCC ? (name: target: (mkCrossPkgs system target).buildPackages.gccWithoutTargetLibc) }:
+  # Which cross-cc builds this glibc, as a `name: target: cc` function (referenced
+  # by absolute path for CC=, so pass a derivation with bin/<tp>-gcc).  Default = the
+  # from-source libc-free bootstrap-gcc (single-glibc model: cross-gcc consumes this
+  # glibc's ABI, no separate shipped-glibc builder).
+, buildCC ? (name: target: bootstrapGcc."bootstrap-gcc-${name}") }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
   lib = nixpkgs.lib;
-  helpers = import ../lib { inherit lib; };
   # Shared cross-build determinism flags (the SAME source the dev-shell +
   # gnumach/hurd use), fed through NIX_CFLAGS_COMPILE below so the nix glibc comes
   # out byte-identical cross-host, like the in-tree build.
   buildFlags = import ./build-flags.nix { inherit lib; };
-  glibcConfig = import ./glibc-config.nix;
-  toolchainPaths = import ./toolchain-paths.nix { inherit nixpkgs mkCrossPkgs; };
+
+  # glibc configure extras (inlined - glibc-config.nix had no other consumer):
+  #  - libc_cv_ctors_header=yes: skip a crt ctor-section link test that needs a
+  #    working libc (unavailable on the first cross pass).
+  #  - the rest pin the DEPLOYABLE /-rooted install layout: with --prefix=/ alone
+  #    glibc derives //lib, //etc, ...; pin every install dir + glibc's own libc_cv_*
+  #    path cache vars to clean /-paths.  NOT wrapper-related (unaffected by the
+  #    wrapper removal) - this is the Hurd-system layout the dist ships: libc.so /
+  #    ld.so in /lib, locales in /lib/locale, headers in /include.
+  glibcConfigFlags = [
+    "libc_cv_ctors_header=yes"
+    "--libdir=/lib"
+    "--sysconfdir=/etc"
+    "--datarootdir=/share"
+    "--localstatedir=/var"
+    "--sbindir=/sbin"
+    "--bindir=/bin"
+    "--libexecdir=/libexec"
+    "--includedir=/include"
+    "libc_cv_slibdir=/lib"
+    "libc_cv_rtlddir=/lib"
+    "libc_cv_complocaledir=/lib/locale"
+    "libc_cv_sysconfdir=/etc"
+    "libc_cv_localstatedir=/var"
+    "libc_cv_rootsbindir=/sbin"
+  ];
 
   # Patched (deterministic) install-info - the SAME one the dev-shell uses
   # (texinfo-det.nix).  glibc's `make install` runs install-info to build
@@ -85,21 +111,18 @@ let
 
   mkOne = name: target:
     let
-      crossPkgs       = mkCrossPkgs system target;
-      # crossCC is reached by absolute path only - NOT a buildInput.  As a
-      # buildInput its setup-hook would pull in binutils-wrapper (which carries a
-      # `libc_bin` glibc dep) and trip nixpkgs' `meta.platforms = lib.platforms.
-      # linux` gate on the Hurd target.  Paths-only sidesteps the meta probe.
+      # The from-source toolchain, reached by ABSOLUTE PATH (cc unwrapped; binutils
+      # tools from crossBinu/bin) - so no nix cc/bintools-wrapper setup-hook runs,
+      # which is what made the old path need the meta-gate dodge + the salted NIX_*
+      # channels.  crossCC bakes --with-as/--with-ld -> crossBinu already.
       crossCC         = buildCC name target;
-      tcPaths         = toolchainPaths system target;
-      crossBinuRaw    = tcPaths.binutils;
+      crossBinu       = binutils."cross-binutils-${name}";
       crossMig        = mig."mig-${name}";
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
       hurd-headers    = hurdHeaders."hurd-headers-${name}";
       pname           = "glibc-hurd-${target.crossTarget}";
       tp              = target.crossTarget;
-      # The cc-wrapper suffix salt (NIX_*_<salt>), matching wrapCCWith's.
-      salt            = "_" + lib.replaceStrings [ "-" "." ] [ "_" "_" ] tp;
+      buildTriple     = pkgs.stdenv.hostPlatform.config;
     in
     # Native (host) stdenv - glibc IS the cross libc, can't be built by a
     # cross-stdenv that requires libc to bootstrap.  Cross tools come via explicit
@@ -121,8 +144,8 @@ let
       # patchelf >= 0.18.0 and nixpkgs ships 0.15.2, so this silences the probe but
       # the scrub still skips until patchelf is overridden to >= 0.18.0.
       nativeBuildInputs = (with pkgs; [
-        bison perl gawk python3 gettext gnumake patchelf
-      ]) ++ [ texinfoDet ];
+        bison perl gawk python3 gettext gnumake
+      ]) ++ [ texinfoDet ] ++ buildFlags.commonNativeBuildInputs pkgs;
 
       # buildInputs only carries derivations whose meta.platforms allows the Hurd
       # target (our own per-target outputs).  The cross-cc + cross-binutils are
@@ -149,65 +172,70 @@ let
         cp -rs ${hurd-headers}/include/.    $TMPDIR/sysroot/include/
         chmod -R u+w $TMPDIR/sysroot/include
 
-        # Cross toolchain - glibc's configure honours these explicit
-        # env vars (matches cross-hurd's bootstrap-funcs.sh).  Use the
-        # wrapped cc so cc-wrapper handles sysroot / -isystem search;
-        # tools come from the unwrapped binutils so their paths are
-        # absolute.
+        # Cross toolchain - glibc's configure honours these explicit env vars
+        # (matches cross-hurd's bootstrap-funcs.sh).  The from-source cc is unwrapped
+        # and bakes --with-as/--with-ld -> crossBinu; the AR/AS/... here pin the same
+        # binutils by absolute path for glibc's archive/link steps.  CXX points at the
+        # bootstrap cc's (absent) g++ - it is C-only, so glibc's configure detects a
+        # non-working C++ and disables the C++ test suite (not built here anyway).
         export BUILD_CC=${pkgs.stdenv.cc}/bin/cc
         export CC=${crossCC}/bin/${tp}-gcc
         export CXX=${crossCC}/bin/${tp}-g++
-        export AR=${crossBinuRaw}/bin/${tp}-ar
-        export AS=${crossBinuRaw}/bin/${tp}-as
-        export LD=${crossBinuRaw}/bin/${tp}-ld
-        export NM=${crossBinuRaw}/bin/${tp}-nm
-        export OBJCOPY=${crossBinuRaw}/bin/${tp}-objcopy
-        export OBJDUMP=${crossBinuRaw}/bin/${tp}-objdump
-        export RANLIB=${crossBinuRaw}/bin/${tp}-ranlib
-        export READELF=${crossBinuRaw}/bin/${tp}-readelf
-        export STRIP=${crossBinuRaw}/bin/${tp}-strip
+        export AR=${crossBinu}/bin/${tp}-ar
+        export AS=${crossBinu}/bin/${tp}-as
+        export LD=${crossBinu}/bin/${tp}-ld
+        export NM=${crossBinu}/bin/${tp}-nm
+        export OBJCOPY=${crossBinu}/bin/${tp}-objcopy
+        export OBJDUMP=${crossBinu}/bin/${tp}-objdump
+        export RANLIB=${crossBinu}/bin/${tp}-ranlib
+        export READELF=${crossBinu}/bin/${tp}-readelf
+        export STRIP=${crossBinu}/bin/${tp}-strip
 
         # Out-of-tree build dir.  glibc's configure aborts hard if
         # invoked from $srcdir.
         mkdir -p build
         cd build
 
-        # Cross-host + in-tree==nix determinism (build-flags.nix - the same canon
-        # names the dev-shell + the in-tree Makefile use): map every host-varying /
-        # build-method-specific root out of glibc's DWARF so the result is identical
-        # in any combination of {darwin,linux} x {in-tree,nix}:
-        #   ${buildFlags.glibcCanonSrc} <- $src (this build's source root)
-        #   ${buildFlags.glibcCanonBuild} <- $PWD (this build dir - nix's is a SANDBOX
-        #     temp, host-varying, so this is load-bearing for nix cross-host)
-        #   ${buildFlags.glibcCanonSysroot} <- $TMPDIR/sysroot (the combined headers;
-        #     also a host-varying sandbox temp) + /cross-* (toolchain via build-flags).
+        # Cross-host + in-tree==nix determinism: map every host-varying / build-
+        # method-specific root out of glibc's DWARF so the result is identical in any
+        # combination of {darwin,linux} x {in-tree,nix}:
+        #   debugPrefixMapUnwrapped : the from-source gcc + binutils store paths (gcc's
+        #     internal include dir leaks into DWARF) -> /cross-gcc, /cross-binutils.
+        #   ${buildFlags.glibcCanonBuild} <- $PWD (build dir - nix's is a SANDBOX temp,
+        #     host-varying, so load-bearing for nix cross-host).
+        #   ${buildFlags.glibcCanonSrc} <- $src (the source root, /nix/store/-source).
+        #   ${buildFlags.glibcCanonSysroot} <- $TMPDIR/sysroot (combined headers; also a
+        #     host-varying sandbox temp).
         #
-        # MUST set the SUFFIX-SALTED var (NIX_CFLAGS_COMPILE${salt}), not the plain
-        # one: the cc-wrapper only folds plain NIX_CFLAGS_COMPILE into the salted var
-        # it reads at invocation via its SETUP-HOOK (mangleVarList) - and crossCC is
-        # used by ABSOLUTE PATH here (never a buildInput; its meta.platforms gate
-        # would trip on Hurd), so that hook never runs.  ${tp}-gcc reads
-        # NIX_CFLAGS_COMPILE${salt} directly, so feed it there.  (The reproducible-
-        # builds $out -frandom-seed lands in the NATIVE salt and never reaches the
-        # cross cc, so there is nothing to strip; we still pin the seed for parity.)
-        # ORDER matters: gcc's -ffile-prefix-map is LAST-match-wins, so the specific
-        # "$PWD/hurd/." (collapses the Machrules `./` vpath that makes libhurduser's
-        # DWARF build-order-dependent - `$(objpfx)./`) must come AFTER the general
-        # "$PWD" build-dir map, else the general one overrides it and the `./` stays.
-        # Keep it the very last map so nothing (incl. the inherited var) overrides it.
-        export NIX_CFLAGS_COMPILE${salt}="${buildFlags.debugPrefixMapStr crossCC} -ffile-prefix-map=$PWD=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$src=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$TMPDIR/sysroot=${buildFlags.glibcCanonSysroot} -frandom-seed=${buildFlags.randomSeed} ''${NIX_CFLAGS_COMPILE${salt}:-} -ffile-prefix-map=$PWD/hurd/.=${buildFlags.glibcCanonBuild}/hurd"
+        # The maps go in CPPFLAGS, NOT CFLAGS.  glibc applies $(CFLAGS) only to .c
+        # compiles but $(CPPFLAGS) to BOTH .c and .S - and the .S objects (crt*.o,
+        # Scrt1.o, ...) are assembled by GNU as, whose DWARF comp_dir would otherwise
+        # embed the RAW $src store path (= the glibc source leaking into the closure).
+        # CPPFLAGS reaches every compile, so gcc passes --debug-prefix-map down to as
+        # too - mirroring what the old cc-wrapper's universal NIX_CFLAGS_COMPILE
+        # injection did for free.  CFLAGS keeps only the -g -O2 base.
+        #
+        # No -frandom-seed: the raw cc never sees the reproducible-builds hook's $out
+        # seed (it reads CFLAGS/CPPFLAGS, not the wrapper's NIX_CFLAGS_COMPILE), and
+        # gcc's default seed is output-name-derived = deterministic (proven by the
+        # bootstrap matrix).  ORDER: -ffile-prefix-map is last-match-wins, so the
+        # specific "$PWD/hurd/." (collapses the Machrules `./` vpath that makes
+        # libhurduser's DWARF build-order-dependent - `$(objpfx)./`) MUST come after
+        # the general "$PWD" build-dir map - keep it the very last map.
+        export CFLAGS="${buildFlags.baseCflags}"
+        export CPPFLAGS="${buildFlags.debugPrefixMapUnwrappedStr { gcc = crossCC; binutils = crossBinu; }} -ffile-prefix-map=$PWD=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$src=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$TMPDIR/sysroot=${buildFlags.glibcCanonSysroot} -ffile-prefix-map=$PWD/hurd/.=${buildFlags.glibcCanonBuild}/hurd"
 
-        # Configure.  --disable-werror: the Hurd port + this gcc trip warnings
-        # (glibc defaults to werror=on; Guix matches).  libc_cv_ctors_header=yes
-        # pre-declares the crt*.o ctor-section detection - the link test it
-        # replaces needs a working libc, unavailable on the first cross pass.
+        # Configure.  No --disable-werror: the from-source gcc builds the Hurd glibc
+        # clean (confirmed by the cross-host matrix).  libc_cv_ctors_header=yes
+        # pre-declares the crt*.o ctor-section detection - the link test it replaces
+        # needs a working libc, unavailable on the first cross pass.
         $src/configure \
-          --build=${tcPaths.buildTriple} \
-          --host=${tcPaths.hostTriple} \
+          --build=${buildTriple} \
+          --host=${tp} \
           --prefix=/ \
           --with-headers=$TMPDIR/sysroot/include \
-          --with-binutils=${tcPaths.binutilsBin} \
-          ${lib.concatStringsSep " " glibcConfig.coreFlags} ${lib.concatStringsSep " " glibcConfig.deployFlags}
+          --with-binutils=${crossBinu}/bin \
+          ${lib.concatStringsSep " " glibcConfigFlags}
 
         runHook postConfigure
       '';
@@ -286,24 +314,19 @@ let
     } // {
       installFlags = [ "DESTDIR=${placeholder "out"}" ];
       dontMoveSbin = true;
-      # No /nix/store DT_RUNPATH on the shipped sub-libraries.  glibc links
-      # libmachuser/libhurduser/libpthread (and the nss/rt/resolv/... stubs) against
-      # the prior (reference) glibc via the wrapper's `-L<refglibc>/lib`, and the
-      # nix ld-wrapper auto-derives a DT_RUNPATH to that store dir - a leak in a
-      # --prefix=/ tree (the libs resolve libc.so.0.3 from /lib via the loader
-      # path).  libc.so.0.3 / ld.so escape (linked -nostdlib).  glibc.nix uses the
-      # cc by ABSOLUTE PATH (to dodge the meta gate), so no wrapper setup-hook runs
-      # and gcc's --with-ld bintools carries no suppression - set the real env var
-      # here (same channel gcc-runtime.nix uses for the runtime libs).
-      "NIX_DONT_SET_RPATH${salt}" = "1";
+      # No DT_RUNPATH to suppress: the from-source cc links via its baked --with-ld =
+      # our RAW cross-binutils ld (no nix ld-wrapper), which never auto-bakes a
+      # /nix/store rpath.  (The old wrapped path needed NIX_DONT_SET_RPATH to strip
+      # exactly that store DT_RUNPATH; dropping the wrapper removes the leak at source.
+      # libmachuser/libhurduser etc. link against the just-built libc in the build
+      # tree, not a prior store glibc, so there is no store path to leak anyway.)
       # glibc's helper scripts (bin/{ldd,tzselect,xtrace,sotruss,mtrace}) ship a
       # portable shebang from their *.in source; nixpkgs' patchShebangs rewrites it
       # to a /nix/store bash, the lone store leak left in a deployed tree.  These
       # scripts run on the TARGET, so disable the rewrite and keep the /-rooted
       # shebang (fixed at build, no dist sed).
       dontPatchShebangs = true;
-    } // helpers.mkCaAttrs contentAddressed
-      // lib.optionalAttrs buildTree {
+    } // lib.optionalAttrs buildTree {
         # Ship the writable src + build tree instead of installing.  PWD is the
         # build dir (configurePhase cd'd there); its parent is the unpacked src
         # root, which now contains build/.  hurd-stubs.nix copies $out/tree,

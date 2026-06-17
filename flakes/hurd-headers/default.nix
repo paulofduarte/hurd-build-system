@@ -23,12 +23,11 @@
 #
 # Source comes from the pinned `hurd-src` flake input.
 
-{ nixpkgs, system, targets, mig, srcInput, forkUrl, contentAddressed ? false
+{ nixpkgs, system, targets, mig, srcInput, forkUrl
   # Ship include/ only - drop share/ (the conditional msgids tables) from the
   # output.  No consumer reads it (the dist's msgids come from the hurd
   # package), and trimming also removes the configure-time "did MIG stub
-  # generation succeed" variance from the output surface.  The ref twin keeps
-  # the default.
+  # generation succeed" variance from the output surface.
 , includeOnly ? false }:
 
 let
@@ -114,9 +113,6 @@ let
         platforms = platforms.all;
       };
     } // helpers.mkReproAttrs { inherit pname; version = fullVersion; }
-      // helpers.mkCaAttrs contentAddressed
-      # optionalAttrs, NOT optionalString: an empty-but-SET postInstall would
-      # still move the ref twin's drv hash (and the whole frozen toolchain).
       // lib.optionalAttrs includeOnly { postInstall = ''rm -rf "$out/share"''; });
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-headers-${name}" (mkOne name target)) hurdTargets
