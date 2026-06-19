@@ -5,6 +5,21 @@ description: Install nix (flakes on) with the project cachix cache as a pull sub
 runs:
   using: composite
   steps:
+    # glibc's htl subdir emits objects that differ only in case (stamp.os vs
+    # stamp.oS); the GitHub macOS runners' default APFS volume is case-INSENSITIVE,
+    # so those collide and the glibc build dies at htl/subdir_lib (Linux fs is
+    # always case-sensitive; local dev uses a dedicated case-sensitive /nix volume).
+    # Create a case-SENSITIVE APFS volume at /nix BEFORE installing nix, so the
+    # store + build sandboxes are case-sensitive.
+    - name: Case-sensitive /nix volume (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        container=$(diskutil info / | sed -n 's/.*Part of Whole: *//p' | tr -d ' ')
+        echo "APFS container backing /: $container"
+        sudo diskutil apfs addVolume "$container" "Case-sensitive APFS" Nix -mountpoint /nix
+        diskutil info /nix | grep -iE 'Personality|Mount Point'
     # v31+ ships nix 2.30.x, which understands the `inputs.self.submodules`
     # flake attribute this project relies on (v30 and earlier reject it).
     - uses: cachix/install-nix-action@v31
