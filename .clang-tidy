@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# clang-tidy check set for the repo's C++ (flakes/tools/mig-wire-manifest.cpp).
+# Correctness families (bugprone/clang-analyzer/performance/misc) plus the
+# modernize-* and readability-* style families.  Every finding in these families
+# is fixed in-tree - no // NOLINT, no per-check disables - WITH two scoped
+# exclusions, both for findings that are NOT in our code:
+#   - llvm-*                          header-guard / naming conventions tuned to
+#                                     the LLVM source tree itself, not ours.
+#   - clang-analyzer-security.ArrayBound
+#                                     a FALSE POSITIVE inside LLVM's own headers:
+#                                     User stores its operands in memory PRECEDING
+#                                     the object ("hung-off uses"), so LLVM's
+#                                     getOperandList()/getOperand() do a `this - N`
+#                                     access the analyzer mis-reads as "memory
+#                                     preceding the region".  Unfixable from here
+#                                     (it is LLVM's memory layout); our TU has no
+#                                     raw arrays for this check to guard anyway.
+# WarningsAsErrors makes any finding fail `make lint-cpp` / CI.
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  performance-*,
+  misc-*,
+  modernize-*,
+  readability-*,
+  -clang-analyzer-security.ArrayBound
+WarningsAsErrors: '*'
+# Only diagnose our own translation unit, never the LLVM API headers it includes.
+HeaderFilterRegex: 'mig-wire-manifest'

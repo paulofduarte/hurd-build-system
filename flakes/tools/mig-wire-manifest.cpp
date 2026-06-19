@@ -35,145 +35,289 @@
 //
 // Usage: mig-wire-manifest PIN.{bc,ll} ALIAS.{bc,ll} [--warn-only]
 // Exit 0 if wire-equivalent (or --warn-only); 1 on divergence.
+#include "llvm/IR/Argument.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/Value.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
 
 namespace {
 
+// Recursion depth caps for the value-expression serialiser: the deeper cap is
+// used where the wire payload itself is recomputed (store values, call args), the
+// shallower one for auxiliary positions (GEP indices, memcpy lengths, icmp sides).
+constexpr int kPayloadDepth = 6;
+constexpr int kAuxDepth = 4;
+// A 64-bit-or-narrower integer constant is printed by value; wider ones collapse
+// to "big" (the exact magnitude does not affect the wire decision).
+constexpr unsigned kInlineConstBits = 64;
+// Cap on the number of diverging stub names listed before summarising the rest.
+constexpr int kMaxReported = 20;
+
 // Stable per-function id for a GEP root: args/allocas/globals don't move under a
 // store reorder, so these ids are reorder-invariant.
-struct BaseNamer {
-  const DataLayout &DL;
-  std::map<const Value *, std::string> cache;
-  explicit BaseNamer(const DataLayout &dl) : DL(dl) {}
-  std::string of(const Value *v) {
-    auto it = cache.find(v);
-    if (it != cache.end())
-      return it->second;
-    std::string s;
-    if (auto *A = dyn_cast<Argument>(v))
-      s = "a" + std::to_string(A->getArgNo());
-    else if (auto *Al = dyn_cast<AllocaInst>(v)) {
+class BaseNamer {
+public:
+  explicit BaseNamer(const DataLayout &layout) : layout(layout) {}
+
+  auto of(const Value *val) -> std::string {
+    auto found = cache.find(val);
+    if (found != cache.end()) {
+      return found->second;
+    }
+    std::string result;
+    if (const auto *arg = dyn_cast<Argument>(val)) {
+      result = "a" + std::to_string(arg->getArgNo());
+    } else if (const auto *allocaInst = dyn_cast<AllocaInst>(val)) {
       // Key a local buffer by its allocated SIZE, not emission order, so two
       // allocas swapping declaration order (a benign mig codegen change) do not
       // diverge.  Same-size allocas collapse to one key - a swap between them is
       // then invisible, but that is benign (same-size scratch buffers).
-      if (auto sz = Al->getAllocationSize(DL))
-        s = "k" + std::to_string(sz->getFixedValue());
-      else
-        s = "k?";
-    } else if (auto *G = dyn_cast<GlobalValue>(v))
-      s = "g:" + G->getName().str();
-    else
-      s = "?";
-    cache[v] = s;
-    return s;
+      if (auto size = allocaInst->getAllocationSize(layout)) {
+        result = "k" + std::to_string(size->getFixedValue());
+      } else {
+        result = "k?";
+      }
+    } else if (const auto *global = dyn_cast<GlobalValue>(val)) {
+      result = "g:" + global->getName().str();
+    } else {
+      result = "?";
+    }
+    cache[val] = result;
+    return result;
   }
+
+private:
+  const DataLayout &layout;
+  std::map<const Value *, std::string> cache;
 };
 
-std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int depth);
+auto tyStr(Type *type) -> std::string {
+  std::string result;
+  raw_string_ostream stream(result);
+  type->print(stream);
+  return stream.str();
+}
 
-// Walk the GEP chain to the root pointer, accumulating a canonical byte-offset
-// EXPRESSION.  Constant indices fold into a running integer; a VARIABLE index
-// (runtime-positioned field - OOL data, a variable-length array) contributes a
-// "<stride>*<index-expr>" term instead of collapsing the whole pointer to an
-// opaque base.  Returns (root, offset-expr); for an all-constant GEP the expr is
-// just the integer, byte-identical to the old behaviour (so existing facts are
-// unchanged - only runtime-positioned ones gain precision).
-std::pair<const Value *, std::string> ptrParts(const Value *v, const DataLayout &DL,
-                                               BaseNamer &bn) {
-  int64_t constOff = 0;
-  std::vector<std::string> terms;
-  while (auto *G = dyn_cast<GEPOperator>(v)) {
-    for (auto GTI = gep_type_begin(G), E = gep_type_end(G); GTI != E; ++GTI) {
-      Value *idx = GTI.getOperand();
-      if (StructType *ST = GTI.getStructTypeOrNull()) {
-        constOff +=
-            DL.getStructLayout(ST)->getElementOffset(cast<ConstantInt>(idx)->getZExtValue());
+// Walk a GEP chain to its root pointer WITHOUT serialising indices - just the
+// base.  Used where only the root identity matters (buffer detection).  A plain
+// loop, no recursion.
+auto gepRoot(const Value *ptr) -> const Value * {
+  while (const auto *gep = dyn_cast<GEPOperator>(ptr)) {
+    ptr = gep->getPointerOperand();
+  }
+  return ptr;
+}
+
+// The value serialiser is expressed iteratively (an explicit work stack) rather
+// than recursively, so valExpr / ptrExpr / the old ptrParts collapse into ONE
+// non-recursive engine.  A frame renders either a value (Mode::Val) or a
+// pointer's base+offset (Mode::Ptr); Shape records how its serialised children
+// assemble back into a string.
+enum class Mode : std::uint8_t { Val, Ptr };
+enum class Shape : std::uint8_t { Literal, Pointer, Load, Instr, PtrParts };
+
+// A child still to be serialised: which value, at what depth, in which mode.
+struct ChildSpec {
+  const Value *val;
+  int depth;
+  Mode mode;
+};
+
+struct Frame {
+  const Value *val;
+  int depth;
+  Mode mode;
+  bool started = false;
+  Shape shape = Shape::Literal;
+  std::string text;              // Literal result, or the "opcode(" prefix for Instr
+  const Value *root = nullptr;   // PtrParts: GEP root
+  int64_t constOff = 0;          // PtrParts: folded constant byte offset
+  std::vector<uint64_t> strides; // PtrParts: stride per variable-index child
+  std::vector<ChildSpec> children;
+  std::vector<std::string> kids; // child results, in dispatch order
+};
+
+// Mode::Ptr setup: walk the GEP chain (no recursion), folding constant indices
+// into constOff and queuing each VARIABLE index as a child to serialise at
+// kAuxDepth.  Matches the old ptrParts: an all-constant GEP yields just the
+// integer; a runtime index contributes a "<stride>*<index-expr>" term.
+void resolvePtr(Frame &frame, const DataLayout &layout) {
+  frame.shape = Shape::PtrParts;
+  const Value *cur = frame.val;
+  while (const auto *gep = dyn_cast<GEPOperator>(cur)) {
+    for (auto gepTy = gep_type_begin(gep), end = gep_type_end(gep); gepTy != end; ++gepTy) {
+      Value *index = gepTy.getOperand();
+      if (StructType *structTy = gepTy.getStructTypeOrNull()) {
+        frame.constOff += static_cast<int64_t>(layout.getStructLayout(structTy)->getElementOffset(
+            cast<ConstantInt>(index)->getZExtValue()));
       } else {
-        uint64_t stride = DL.getTypeAllocSize(GTI.getIndexedType());
-        if (auto *C = dyn_cast<ConstantInt>(idx))
-          constOff += (int64_t)stride * C->getSExtValue();
-        else
-          terms.push_back(std::to_string(stride) + "*" + valExpr(idx, DL, bn, 4));
+        uint64_t const stride = layout.getTypeAllocSize(gepTy.getIndexedType());
+        if (const auto *constInt = dyn_cast<ConstantInt>(index)) {
+          frame.constOff += static_cast<int64_t>(stride) * constInt->getSExtValue();
+        } else {
+          frame.strides.push_back(stride);
+          frame.children.push_back({index, kAuxDepth, Mode::Val});
+        }
       }
     }
-    v = G->getPointerOperand();
+    cur = gep->getPointerOperand();
   }
-  std::sort(terms.begin(), terms.end());
-  std::string off = std::to_string(constOff);
-  for (auto &t : terms)
-    off += "+" + t;
-  return {v, off};
+  frame.root = cur;
 }
 
-std::string tyStr(Type *t) {
-  std::string s;
-  raw_string_ostream os(s);
-  t->print(os);
-  return os.str();
-}
-
-std::string ptrExpr(const Value *p, const DataLayout &DL, BaseNamer &bn) {
-  auto bo = ptrParts(p, DL, bn);
-  return bn.of(bo.first) + "+" + bo.second;
-}
-
-// Just the GEP-root id (no offset) - used to tell whether a pointer aims at the
-// message buffer (a base that receives stores).
-std::string baseId(const Value *p, const DataLayout &DL, BaseNamer &bn) {
-  return bn.of(ptrParts(p, DL, bn).first);
-}
-
-// Canonical, name-independent expression of a value (depth-capped).
-std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int depth) {
-  if (auto *C = dyn_cast<ConstantInt>(v))
-    return "c" + (C->getBitWidth() <= 64 ? std::to_string(C->getSExtValue()) : std::string("big"));
-  if (isa<ConstantPointerNull>(v))
-    return "null";
-  // Any pointer value (alloca / GEP / arg / global) -> base+offset, so a
-  // message-buffer pointer is keyed the same way a store's destination is and
-  // an offset/aliasing shift in a mach_msg buffer arg becomes visible.
-  if (v->getType()->isPointerTy())
-    return "p[" + ptrExpr(v, DL, bn) + "]";
-  if (auto *A = dyn_cast<Argument>(v))
-    return "a" + std::to_string(A->getArgNo());
-  if (auto *C = dyn_cast<Constant>(v))
-    return "C:" + tyStr(C->getType());
-  if (depth <= 0)
-    return "...";
-  if (auto *L = dyn_cast<LoadInst>(v))
-    return "ld(" + ptrExpr(L->getPointerOperand(), DL, bn) + ")";
-  if (auto *I = dyn_cast<Instruction>(v)) {
-    std::string s = std::string(I->getOpcodeName()) + "(";
-    bool first = true;
-    for (const Use &u : I->operands()) {
-      if (!first)
-        s += ",";
-      first = false;
-      s += valExpr(u.get(), DL, bn, depth - 1);
+// Mode::Val setup: resolve the node kind in the SAME order the recursive valExpr
+// used (the pointer test precedes Argument/Constant/depth, so a pointer-typed
+// argument or a load-of-pointer renders as "p[...]" exactly as before).  Leaves
+// fill in `text`; composite kinds queue children.
+void resolveVal(Frame &frame) {
+  const Value *node = frame.val;
+  if (const auto *constInt = dyn_cast<ConstantInt>(node)) {
+    frame.text = "c" + (constInt->getBitWidth() <= kInlineConstBits
+                            ? std::to_string(constInt->getSExtValue())
+                            : std::string("big"));
+  } else if (isa<ConstantPointerNull>(node)) {
+    frame.text = "null";
+  } else if (node->getType()->isPointerTy()) {
+    // A message-buffer pointer is keyed the same way a store's destination is, so
+    // an offset/aliasing shift in a mach_msg buffer arg becomes visible.
+    frame.shape = Shape::Pointer;
+    frame.children.push_back({node, 0, Mode::Ptr});
+  } else if (const auto *arg = dyn_cast<Argument>(node)) {
+    frame.text = "a" + std::to_string(arg->getArgNo());
+  } else if (const auto *constant = dyn_cast<Constant>(node)) {
+    frame.text = "C:" + tyStr(constant->getType());
+  } else if (frame.depth <= 0) {
+    frame.text = "...";
+  } else if (const auto *loadInst = dyn_cast<LoadInst>(node)) {
+    frame.shape = Shape::Load;
+    frame.children.push_back({loadInst->getPointerOperand(), 0, Mode::Ptr});
+  } else if (const auto *inst = dyn_cast<Instruction>(node)) {
+    frame.shape = Shape::Instr;
+    frame.text = std::string(inst->getOpcodeName()) + "(";
+    for (const Use &use : inst->operands()) {
+      frame.children.push_back({use.get(), frame.depth - 1, Mode::Val});
     }
-    return s + ")";
+  } else {
+    frame.text = "?";
+  }
+}
+
+// Combine a frame's serialised children into its result string.
+auto assemble(const Frame &frame, BaseNamer &namer) -> std::string {
+  switch (frame.shape) {
+  case Shape::Literal:
+    return frame.text;
+  case Shape::Pointer:
+    return "p[" + frame.kids[0] + "]";
+  case Shape::Load:
+    return "ld(" + frame.kids[0] + ")";
+  case Shape::Instr: {
+    std::string result = frame.text;
+    bool first = true;
+    for (const auto &kid : frame.kids) {
+      if (!first) {
+        result += ",";
+      }
+      first = false;
+      result += kid;
+    }
+    return result + ")";
+  }
+  case Shape::PtrParts: {
+    std::vector<std::string> terms;
+    terms.reserve(frame.kids.size());
+    for (size_t i = 0; i < frame.kids.size(); ++i) {
+      terms.push_back(std::to_string(frame.strides[i]) + "*" + frame.kids[i]);
+    }
+    std::sort(terms.begin(), terms.end());
+    std::string off = std::to_string(frame.constOff);
+    for (const auto &term : terms) {
+      off += "+" + term;
+    }
+    return namer.of(frame.root) + "+" + off;
+  }
   }
   return "?";
 }
+
+// The iterative driver: depth-first, but with an explicit stack.  A frame is set
+// up once, then dispatches its children one at a time; each completed child's
+// result is appended to its parent's kids, and a frame with all children done is
+// assembled and popped.  Equivalent to the old recursive valExpr/ptrExpr.
+auto serialize(const Value *startVal, const DataLayout &layout, BaseNamer &namer, int startDepth,
+               Mode startMode) -> std::string {
+  std::vector<Frame> stack;
+  stack.push_back({startVal, startDepth, startMode});
+  std::string done; // result of the most recently completed frame
+  while (!stack.empty()) {
+    Frame &frame = stack.back();
+    if (!frame.started) {
+      frame.started = true;
+      if (frame.mode == Mode::Ptr) {
+        resolvePtr(frame, layout);
+      } else {
+        resolveVal(frame);
+      }
+    }
+    if (frame.kids.size() < frame.children.size()) {
+      const ChildSpec spec = frame.children[frame.kids.size()];
+      stack.push_back({spec.val, spec.depth, spec.mode});
+      continue; // serialise the child, then resume this frame
+    }
+    const std::string result = assemble(frame, namer);
+    stack.pop_back();
+    if (stack.empty()) {
+      done = result;
+    } else {
+      stack.back().kids.push_back(result);
+    }
+  }
+  return done;
+}
+
+// Canonical, name-independent expression of a value (depth-capped), and the
+// pointer base+offset form - both dispatch to the iterative engine above.
+auto valExpr(const Value *val, const DataLayout &layout, BaseNamer &namer, int depth)
+    -> std::string {
+  return serialize(val, layout, namer, depth, Mode::Val);
+}
+
+auto ptrExpr(const Value *ptr, const DataLayout &layout, BaseNamer &namer) -> std::string {
+  return serialize(ptr, layout, namer, 0, Mode::Ptr);
+}
+
+// Just the GEP-root id (no offset) - used to tell whether a pointer aims at the
+// message buffer (a base that receives stores).  Needs no DataLayout: it never
+// serialises offsets, only names the root.
+auto baseId(const Value *ptr, BaseNamer &namer) -> std::string { return namer.of(gepRoot(ptr)); }
 
 // Calls that carry wire marshalling.  mach_msg* is the send/recv primitive
 // (sizes/options); the __mig_* helpers move the actual payload: __mig_memcpy /
@@ -181,14 +325,91 @@ std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int dep
 // up OOL buffers.  Reply-port bookkeeping (__mig_{get,put,dealloc}_reply_port)
 // and llvm.lifetime.* are local, not wire - excluded.  Note "__mig_deallocate"
 // is NOT a substring of "__mig_dealloc_reply_port", so the contains() is safe.
-bool isWireCall(StringRef n) {
-  return n.contains("mach_msg") || n.contains("__mig_memcpy") || n.contains("__mig_strncpy") ||
-         n.contains("__mig_allocate") || n.contains("__mig_deallocate");
+auto isWireCall(StringRef name) -> bool {
+  return name.contains("mach_msg") || name.contains("__mig_memcpy") ||
+         name.contains("__mig_strncpy") || name.contains("__mig_allocate") ||
+         name.contains("__mig_deallocate");
 }
 
-std::set<std::string> manifest(Function &F) {
-  const DataLayout &DL = F.getParent()->getDataLayout();
-  BaseNamer bn(DL);
+// Per-instruction fact builders.  Each returns the canonical fact string, or an
+// empty string when the instruction contributes no wire fact (e.g. a non-wire
+// call, or an icmp not against a constant).
+
+auto storeFact(const StoreInst &store, const DataLayout &layout, BaseNamer &namer) -> std::string {
+  return "st@" + ptrExpr(store.getPointerOperand(), layout, namer) + ":" +
+         tyStr(store.getValueOperand()->getType()) + "=" +
+         valExpr(store.getValueOperand(), layout, namer, kPayloadDepth);
+}
+
+auto memcpyFact(const MemCpyInst &copy, const DataLayout &layout, BaseNamer &namer) -> std::string {
+  return "mc@" + ptrExpr(copy.getDest(), layout, namer) + "=" +
+         valExpr(copy.getLength(), layout, namer, kAuxDepth) + "<-" +
+         ptrExpr(copy.getSource(), layout, namer);
+}
+
+auto callFact(const CallInst &call, const DataLayout &layout, BaseNamer &namer,
+              const std::set<std::string> &bufBases) -> std::string {
+  const Function *callee = call.getCalledFunction();
+  if (callee == nullptr) {
+    return "";
+  }
+  StringRef const name = callee->getName();
+  if (name.starts_with("llvm.")) {
+    return ""; // intrinsics: effect flows via args
+  }
+  bool wire = isWireCall(name);
+  if (!wire) {
+    for (const Use &use : call.args()) {
+      if (use.get()->getType()->isPointerTy() && (bufBases.count(baseId(use.get(), namer)) != 0U)) {
+        wire = true;
+        break;
+      }
+    }
+  }
+  if (!wire) {
+    return "";
+  }
+  std::string result = "call:" + name.str() + "(";
+  bool first = true;
+  for (const Use &use : call.args()) {
+    if (!first) {
+      result += ",";
+    }
+    first = false;
+    result += valExpr(use.get(), layout, namer, kPayloadDepth);
+  }
+  return result + ")";
+}
+
+// Reply-validation expectations: mig checks a RECEIVED descriptor / msgid by
+// COMPARING it against an expected constant (icmp), not by storing it.  Capture
+// {predicate, both operand exprs} whenever one side is a constant, so a reply-side
+// descriptor/msgid drift - e.g. an out-only type swap, invisible to the request
+// stores - is caught, symmetric to the request descriptors we get for free as
+// inline stores.  Only const-compares (the "expected value" pattern);
+// reorder-stable as a set.
+auto icmpFact(const ICmpInst &icmp, const DataLayout &layout, BaseNamer &namer) -> std::string {
+  const Value *lhs = icmp.getOperand(0);
+  const Value *rhs = icmp.getOperand(1);
+  if (!isa<ConstantInt>(lhs) && !isa<ConstantInt>(rhs)) {
+    return "";
+  }
+  // Canonicalise the constant to the RIGHT (flipping the predicate to match) so
+  // "icmp eq %t, C" and "icmp eq C, %t" - the same check, just operands swapped -
+  // produce one fact, not a false positive.
+  CmpInst::Predicate pred = icmp.getPredicate();
+  if (isa<ConstantInt>(lhs) && !isa<ConstantInt>(rhs)) {
+    std::swap(lhs, rhs);
+    pred = icmp.getSwappedPredicate();
+  }
+  return "cmp:" + CmpInst::getPredicateName(pred).str() + "(" +
+         valExpr(lhs, layout, namer, kAuxDepth) + "," + valExpr(rhs, layout, namer, kAuxDepth) +
+         ")";
+}
+
+auto manifest(Function &func) -> std::set<std::string> {
+  const DataLayout &layout = func.getParent()->getDataLayout();
+  BaseNamer namer(layout);
   // Pass 1: the bases that receive stores ARE the message buffer(s).  Any later
   // call that passes a pointer into one of them is marshalling the wire, even if
   // it is not on the isWireCall allow-list - this catches an OOL/payload helper
@@ -196,126 +417,97 @@ std::set<std::string> manifest(Function &F) {
   // name list.  Bookkeeping calls (reply-port helpers take an i32, not a buffer
   // pointer) stay out.
   std::set<std::string> bufBases;
-  for (auto &I : instructions(F))
-    if (auto *S = dyn_cast<StoreInst>(&I))
-      bufBases.insert(baseId(S->getPointerOperand(), DL, bn));
+  for (auto &inst : instructions(func)) {
+    if (auto *store = dyn_cast<StoreInst>(&inst)) {
+      bufBases.insert(baseId(store->getPointerOperand(), namer));
+    }
+  }
   std::set<std::string> facts;
-  for (auto &I : instructions(F)) {
-    if (auto *S = dyn_cast<StoreInst>(&I)) {
-      facts.insert("st@" + ptrExpr(S->getPointerOperand(), DL, bn) + ":" +
-                   tyStr(S->getValueOperand()->getType()) + "=" +
-                   valExpr(S->getValueOperand(), DL, bn, 6));
-    } else if (auto *M = dyn_cast<MemCpyInst>(&I)) {
-      facts.insert("mc@" + ptrExpr(M->getDest(), DL, bn) + "=" +
-                   valExpr(M->getLength(), DL, bn, 4) + "<-" + ptrExpr(M->getSource(), DL, bn));
-    } else if (auto *Cl = dyn_cast<CallInst>(&I)) {
-      const Function *cf = Cl->getCalledFunction();
-      if (!cf)
-        continue;
-      StringRef nm = cf->getName();
-      if (nm.starts_with("llvm."))
-        continue; // intrinsics: effect flows via args
-      bool wire = isWireCall(nm);
-      if (!wire)
-        for (const Use &u : Cl->args())
-          if (u.get()->getType()->isPointerTy() && bufBases.count(baseId(u.get(), DL, bn))) {
-            wire = true;
-            break;
-          }
-      if (wire) {
-        std::string s = "call:" + nm.str() + "(";
-        bool first = true;
-        for (const Use &u : Cl->args()) {
-          if (!first)
-            s += ",";
-          first = false;
-          s += valExpr(u.get(), DL, bn, 6);
-        }
-        facts.insert(s + ")");
-      }
-    } else if (auto *Ic = dyn_cast<ICmpInst>(&I)) {
-      // Reply-validation expectations: mig checks a RECEIVED descriptor / msgid
-      // by COMPARING it against an expected constant (icmp), not by storing it.
-      // Capture {predicate, both operand exprs} whenever one side is a constant,
-      // so a reply-side descriptor/msgid drift - e.g. an out-only type swap,
-      // invisible to the request stores - is caught, symmetric to the request
-      // descriptors we get for free as inline stores.  Only const-compares (the
-      // "expected value" pattern); reorder-stable as a set.
-      Value *o0 = Ic->getOperand(0), *o1 = Ic->getOperand(1);
-      if (isa<ConstantInt>(o0) || isa<ConstantInt>(o1)) {
-        // Canonicalise the constant to the RIGHT (flipping the predicate to
-        // match) so "icmp eq %t, C" and "icmp eq C, %t" - the same check, just
-        // operands swapped - produce one fact, not a false positive.
-        CmpInst::Predicate pr = Ic->getPredicate();
-        if (isa<ConstantInt>(o0) && !isa<ConstantInt>(o1)) {
-          std::swap(o0, o1);
-          pr = Ic->getSwappedPredicate();
-        }
-        facts.insert("cmp:" + CmpInst::getPredicateName(pr).str() + "(" + valExpr(o0, DL, bn, 4) +
-                     "," + valExpr(o1, DL, bn, 4) + ")");
-      }
+  for (auto &inst : instructions(func)) {
+    std::string fact;
+    if (auto *store = dyn_cast<StoreInst>(&inst)) {
+      fact = storeFact(*store, layout, namer);
+    } else if (auto *copy = dyn_cast<MemCpyInst>(&inst)) {
+      fact = memcpyFact(*copy, layout, namer);
+    } else if (auto *call = dyn_cast<CallInst>(&inst)) {
+      fact = callFact(*call, layout, namer, bufBases);
+    } else if (auto *icmp = dyn_cast<ICmpInst>(&inst)) {
+      fact = icmpFact(*icmp, layout, namer);
+    }
+    if (!fact.empty()) {
+      facts.insert(fact);
     }
   }
   return facts;
 }
 
-std::unique_ptr<Module> load(const char *path, LLVMContext &ctx) {
+auto load(const char *path, LLVMContext &ctx) -> std::unique_ptr<Module> {
   SMDiagnostic err;
-  auto m = parseIRFile(path, err, ctx);
-  if (!m) {
+  auto mod = parseIRFile(path, err, ctx);
+  if (!mod) {
     err.print("mig-wire-manifest", errs());
     exit(2);
   }
-  return m;
+  return mod;
 }
 
 } // namespace
 
-int main(int argc, char **argv) {
+auto main(int argc, char **argv) -> int {
   if (argc < 3) {
     errs() << "usage: mig-wire-manifest PIN ALIAS [--warn-only]\n";
     return 2;
   }
   bool warn = false;
-  for (int i = 3; i < argc; i++)
-    if (std::string(argv[i]) == "--warn-only")
+  for (int i = 3; i < argc; i++) {
+    if (std::string(argv[i]) == "--warn-only") {
       warn = true;
+    }
+  }
 
   LLVMContext ctx;
-  auto pin = load(argv[1], ctx), ali = load(argv[2], ctx);
+  auto pin = load(argv[1], ctx);
+  auto ali = load(argv[2], ctx);
 
-  std::map<std::string, std::set<std::string>> pm;
-  for (auto &F : *pin)
-    if (!F.isDeclaration())
-      pm[F.getName().str()] = manifest(F);
+  std::map<std::string, std::set<std::string>> pinManifests;
+  for (auto &func : *pin) {
+    if (!func.isDeclaration()) {
+      pinManifests[func.getName().str()] = manifest(func);
+    }
+  }
 
-  int common = 0, diverge = 0;
+  int common = 0;
+  int diverge = 0;
   std::set<std::string> diffNames;
-  for (auto &F : *ali) {
-    if (F.isDeclaration())
+  for (auto &func : *ali) {
+    if (func.isDeclaration()) {
       continue;
-    auto it = pm.find(F.getName().str());
-    if (it == pm.end())
+    }
+    auto found = pinManifests.find(func.getName().str());
+    if (found == pinManifests.end()) {
       continue;
+    }
     common++;
-    if (it->second != manifest(F)) {
+    if (found->second != manifest(func)) {
       diverge++;
-      diffNames.insert(F.getName().str());
+      diffNames.insert(func.getName().str());
     }
   }
 
   outs() << "  RPC-DRIFT    wire-fact manifest: " << diverge << "/" << common
          << " stub functions diverge in the alias build\n";
   int shown = 0;
-  for (const auto &n : diffNames) {
-    if (shown++ >= 20)
+  for (const auto &name : diffNames) {
+    if (shown++ >= kMaxReported) {
       break;
-    outs() << "    ! " << n << "\n";
+    }
+    outs() << "    ! " << name << "\n";
   }
-  if ((int)diffNames.size() > 20)
-    outs() << "    ... and " << (diffNames.size() - 20) << " more\n";
+  if (static_cast<int>(diffNames.size()) > kMaxReported) {
+    outs() << "    ... and " << (diffNames.size() - kMaxReported) << " more\n";
+  }
 
-  if (diverge) {
+  if (diverge != 0) {
     if (warn) {
       outs() << "  RPC-DRIFT    (HEADER_DRIFT_WARN_ONLY) continuing despite skew "
                 "- PIN BUMP NEEDED\n";

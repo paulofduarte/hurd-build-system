@@ -772,8 +772,8 @@ ifneq ($(filter lint lint-% fmt fmt-% fmt-check fmt-check-% install-hooks,$(MAKE
   LINT_YML := $(call _nopatch,$(if $(_F),$(filter %.yml %.yaml,$(_F)),$(shell git ls-files '*.yml' '*.yaml')))
 endif
 
-.PHONY: lint lint-reuse lint-nix lint-shell lint-yaml
-lint: lint-reuse lint-nix lint-shell lint-yaml
+.PHONY: lint lint-reuse lint-nix lint-shell lint-yaml lint-cpp
+lint: lint-reuse lint-nix lint-shell lint-yaml lint-cpp
 lint-reuse:
 	@echo "  LINT   reuse (SPDX/license headers)"; $(_LB)reuse lint
 lint-nix:
@@ -784,6 +784,12 @@ lint-shell:
 	@echo "  LINT   shell (shellcheck)"; $(if $(LINT_SH),$(_LB)shellcheck $(LINT_SH),true)
 lint-yaml:
 	@echo "  LINT   yaml (yamllint)"; $(if $(LINT_YML),$(_LB)yamllint $(LINT_YML),true)
+# clang-tidy can't run from the lint-tools/bin prefix (it needs the same wrapped
+# clang + LLVM env the tool builds with), so it runs as a nix derivation that
+# captures the build flags via -MJ - see flakes/tools.  Builds only when there is
+# C++ in scope; a finding fails the derivation (WarningsAsErrors in .clang-tidy).
+lint-cpp:
+	@echo "  LINT   cpp (clang-tidy)"; $(if $(LINT_CPP),$(NIX_BUILD) --no-link $(PROJ)\#mig-wire-manifest-tidy,true)
 
 .PHONY: fmt fmt-nix fmt-cpp fmt-shell fmt-md fmt-yaml
 fmt: fmt-nix fmt-cpp fmt-shell fmt-md fmt-yaml

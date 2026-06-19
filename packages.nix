@@ -217,29 +217,11 @@ in
         base = glibcStubBase;
         emitIR = true;
       };
-      # The rpc-wire-drift gate's comparator: the wire-fact manifest tool, an LLVM-API
-      # extractor (robust GEP offsets, def-expression + memcpy facts) built against
-      # the pin's default llvmPackages - the SAME LLVM that hurd-stubs' emitIR uses
-      # to harvest the .ll, so emitter and reader always match.  One source of truth
-      # (flakes/tools); the Makefile gate just resolves + calls it.
-      migWireManifest =
-        let
-          p = nixpkgs.legacyPackages.${system};
-        in
-        p.runCommand "mig-wire-manifest"
-          {
-            nativeBuildInputs = with p.llvmPackages; [
-              clang
-              llvm.dev
-            ];
-          }
-          ''
-            mkdir -p $out/bin
-            clang++ $(llvm-config --cxxflags) ${./flakes/tools/mig-wire-manifest.cpp} \
-              $(llvm-config --ldflags --libs irreader --system-libs) \
-              -Wl,-rpath,$(llvm-config --libdir) \
-              -o $out/bin/mig-wire-manifest
-          '';
+      # The rpc-wire-drift gate's comparator (the wire-fact manifest tool, an LLVM-API
+      # extractor) AND its clang-tidy lint, from one shared clang/LLVM env so the
+      # compile flags live in a single place - see flakes/tools.  The Makefile gate
+      # resolves `.tool`; `make lint-cpp` / CI build `.lint`.
+      tools = import ./flakes/tools { pkgs = nixpkgs.legacyPackages.${system}; };
 
       # From-source FINAL cross-gcc (stage 2c): c+c++, bound to glibc-hurd via
       # --with-sysroot, UNWRAPPED (no cc/bintools wrapper), with the full target
@@ -347,7 +329,8 @@ in
     // hurdStubs
     // hurdStubsIR
     // {
-      mig-wire-manifest = migWireManifest;
+      mig-wire-manifest = tools.manifest;
+      mig-wire-manifest-tidy = tools.lint;
     }
     // crossGccFull # the merged from-source cross-gcc-<arch> (compiler + runtime)
     // migChecked
