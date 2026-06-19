@@ -35,6 +35,14 @@ let
       inherit version;
       src     = binutils-src;
 
+      # Build the HOST binaries without debug info (-O2, no -g; configure's default
+      # is -g -O2).  They are build-host tools - never shipped to the target dist -
+      # and the embedded DWARF otherwise bloats the toolchain + its cachix closure by
+      # ~GB.  binutils has NO target runtime libs, so there is nothing to keep debug
+      # for: this is a clean, full debug-off.
+      CFLAGS   = "-O2";
+      CXXFLAGS = "-O2";
+
       # Deterministic gas chunk size (shared patch, also applied to the nixpkgs
       # binutils via the overlay in pkgs.nix): gas otherwise embeds a host-varying
       # obstack chunk size, breaking cross-host reproducibility of its output.

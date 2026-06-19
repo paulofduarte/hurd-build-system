@@ -670,9 +670,14 @@ $(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flak
 $(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
 # ---- push-cache (always-on, arch-independent) ----
-# Push the FULL BUILD CLOSURE of the current ARCH's toolchain + dev shell to cachix -
-# every intermediate derivation output, not just runtime refs.  Two roots, walked
-# with `nix-store --requisites --include-outputs`, then .drv filtered:
+# Push the current ARCH's toolchain + dev-shell build closure to cachix, restricted
+# to the INPUT-ADDRESSED outputs (our from-source derivations).  Content-addressed
+# paths - source tarballs, patches, fetched FODs - are filtered OUT: they re-fetch
+# from upstream (ftp.gnu.org / the flake) on a rebuild-after-miss, so they don't
+# belong in the project cache (they'd otherwise bloat it ~180MB of tarballs + our
+# patches).  cachix's own upstream-cache filter then drops anything already on
+# cache.nixos.org, leaving just our custom outputs.  Two roots, walked with
+# `nix-store --requisites --include-outputs`, then .drv- AND ca-filtered:
 #   cross-gcc-<arch>                          the from-source cross-cc; its build graph
 #       already contains the whole bootstrap chain (binutils -> bootstrap-gcc -> glibc
 #       -> cross-gcc + merged runtime), so this one root caches every bootstrap piece
@@ -698,9 +703,10 @@ push-cache:
 	echo "  collecting build closure"; \
 	drvs=$$($(NIX) --accept-flake-config path-info --derivation $$roots) || \
 	  { echo "    could not resolve derivations" >&2; exit 1; }; \
-	echo "  pushing"; \
-	nix-store --query --requisites --include-outputs $$drvs \
-	  | grep -v '\.drv$$' \
+	echo "  pushing (input-addressed outputs only; sources/patches re-fetch from upstream)"; \
+	closure=$$(nix-store --query --requisites --include-outputs $$drvs | grep -v '\.drv$$'); \
+	$(NIX) path-info --json --json-format 1 $$closure \
+	  | $(NIX) run --inputs-from . nixpkgs#jq -- -r 'if type=="array" then .[]|select(.ca==null)|.path else to_entries[]|select(.value.ca==null)|.key end' \
 	  | cachix push $(_CACHE_NAME)
 	@echo "==> push-cache done"
 

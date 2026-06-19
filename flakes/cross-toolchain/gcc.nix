@@ -76,6 +76,18 @@ let
       inherit pname version;
       src = gcc-src;
 
+      # Build the HOST compiler (cc1/cc1plus/lto1/lto-dump/the driver) WITHOUT debug
+      # info (-O2, no -g; gcc's configure defaults to -g -O2).  These are build tools,
+      # never shipped to the dist, and their DWARF bloats the toolchain + its cachix
+      # closure by ~GB (cross-gcc 1.7G -> ~0.4G on linux; bootstrap-gcc 1.2G -> ~0.3G).
+      # The TARGET runtime libs KEEP their -g via CFLAGS_FOR_TARGET/CXXFLAGS_FOR_TARGET
+      # (preBuild) - so the dist-dbg tree still gets libgcc_s/libstdc++ debug and
+      # bootstrap-gcc's libgcc.a stays -g (glibc byte-unchanged).  The compiler's own
+      # debug never affects its codegen, so every target output (glibc, the runtime
+      # libs, the whole dist) stays byte-identical - only host store paths shrink.
+      CFLAGS   = "-O2";
+      CXXFLAGS = "-O2";
+
       nativeBuildInputs = (with pkgs; [ perl gnumake texinfo ]) ++ [ binu ]
                           ++ buildFlags.commonNativeBuildInputs pkgs ++ extraNativeBuildInputs;
       buildInputs       = gccDeps;
