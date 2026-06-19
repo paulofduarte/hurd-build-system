@@ -133,14 +133,35 @@ let
         runHook postInstall
       '';
 
-      # Parallel build - a calculated bet, not a guarantee.  hurd's top Makefile
-      # declares NO prog->lib ordering (each subdir is `... : FORCE`), so nothing
-      # stops a prog-subdir reaching its link before a lib-subdir it needs has
-      # built -> undefined ports_*/trivfs_*.  Latent, not structural: lib-subdirs
-      # are listed first so make tends to start them first and they usually
-      # finish in time, which is why moderate-`-j` builds pass.  If a high-`-j`
-      # build ever fails on undefined ports_*/trivfs_*, that's this race - revert
-      # to false.
+      # Serial library pass, then parallel everything else.  hurd's build has NO -j-safe
+      # inter-subdir ordering: subdirs are `... : FORCE` and the cross-subdir auto-build
+      # rule (../%.a ../%.so) is commented OUT in Makeconf - it RELIES on building the
+      # subdirs in their listed (dependency) order.  Under `-j` that order isn't
+      # enforced, so two races appear: (1) a TU compiles before the lib owning its
+      # include/<hdr> forwarding header generated it -> gcc falls back to the glibc-hurd
+      # sysroot's duplicate header -> divergent DWARF dir (the cross-host
+      # libhurd-slab.a/slab.o drift); (2) a lib/prog links before a sibling lib's .so is
+      # built -> undefined refs.  Both "worked" only because the listed order usually
+      # wins the race.
+      #
+      # Fix: build the lib-subdirs in listed order, ONE AT A TIME (so each lib's deps +
+      # forwarding headers exist before the next), but each lib builds with full `-j` -
+      # the inter-lib races are strictly BETWEEN libs, while a lib's own objects are
+      # independent and its .a/.so are assembled in fixed $(OBJS) order, so per-lib
+      # parallelism is race-free and deterministic.  Then the default buildPhase builds
+      # the prog-subdirs (the bulk) in PARALLEL.  Only the lib SUBDIRS are serialised
+      # (they link each other); everything else is parallel.  lib-subdirs from make's db;
+      # `|| true` keeps query-mode's nonzero exit from aborting under set -e/pipefail.
+      preBuild = ''
+        libs=$({ make -qp 2>/dev/null || true; } | sed -n 's/^lib-subdirs = //p' | head -1)
+        [ -n "$libs" ] || { echo "preBuild: could not resolve lib-subdirs from make db" >&2; exit 1; }
+        echo "hurd: serial library pass (dependency order, parallel within each) -> $libs"
+        for d in $libs; do make $makeFlags -j''${NIX_BUILD_CORES:-1} -l''${NIX_BUILD_CORES:-1} "$d"; done
+      '';
+
+      # Parallel: the lib pass above built every library + its forwarding headers in
+      # dependency order, so this pass builds the programs (the bulk) with no lib it
+      # links and no header it includes missing.
       enableParallelBuilding = true;
 
       # Disable the `--shrink-rpath` patchELF hook (registered by the patchelf in

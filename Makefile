@@ -1764,7 +1764,39 @@ define _hurd_make
 	  $(1) $(MAKE) MIG=$(MIG) USER_MIG=$(MIG) $(2)
 endef
 
+# Serial library pass, then parallel everything else.  hurd's build has NO -j-safe
+# inter-subdir ordering: subdirs are `... : FORCE` and the cross-subdir auto-build
+# rule (../%.a ../%.so) is commented OUT in Makeconf - it RELIES on building the
+# subdirs in their listed (dependency) order.  Under `-j` that order isn't enforced,
+# so two races appear: (1) a TU compiles before the lib owning its include/<hdr>
+# forwarding header generated it -> gcc falls back to the glibc-hurd sysroot's
+# duplicate header -> divergent DWARF dir (the cross-host libhurd-slab.a/slab.o
+# drift); (2) a lib/prog links before a sibling lib's .so is built -> undefined refs.
+# Both "worked" for ages only because the listed order usually wins the race.
+#
+# Fix: build the lib-subdirs in listed order, ONE AT A TIME (so each lib's deps +
+# forwarding headers exist before the next), but each lib builds with full `-j` -
+# the inter-lib races are strictly BETWEEN libs, while a lib's own objects are
+# independent and its .a/.so are assembled in fixed $(OBJS) order, so per-lib
+# parallelism is race-free and deterministic.  Then `all` builds the prog-subdirs
+# (the bulk) in PARALLEL with every lib + header present.  Only the lib SUBDIRS are
+# serialised (they link each other); everything else is parallel.  lib-subdirs comes
+# from make's own db; the `|| true` keeps query-mode's nonzero exit from aborting
+# under set -e/pipefail.
+define _hurd_libs_serial
+	@$(call _req_env,HURD_CANON_BUILD)
+	@cd $(HURD_BUILD) && \
+	  libs=$$({ $(MAKE) -qp 2>/dev/null || true; } | sed -n 's/^lib-subdirs = //p' | head -1); \
+	  [ -n "$$libs" ] || { echo "hurd: could not resolve lib-subdirs from make db" >&2; exit 1; }; \
+	  echo "  HURD-LIBS  serial library pass (dependency order, parallel within each) -> $$libs"; \
+	  for d in $$libs; do \
+	    CPPFLAGS="$$CPPFLAGS $(call _det_maps,$(HURD_BUILD),$(HURD_SRC),$(HURD_CANON_BUILD))" \
+	      $(MAKE) MIG=$(MIG) USER_MIG=$(MIG) "$$d" || exit $$?; \
+	  done
+endef
+
 $(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
+	$(call _hurd_libs_serial)
 	$(call _hurd_make,,)
 	@touch $(HURD_BUILD)/.built
 	@$(call _fp_write,hurd)
