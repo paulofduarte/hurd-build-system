@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Cache cross-toolchains
 
-# Populate the cachix cache with each target's cross-toolchain
-# (`packages.<host>.cross-gcc-<arch>` - the from-source compiler whose build
-# closure spans the whole bootstrap chain: binutils -> bootstrap-gcc -> glibc ->
-# cross-gcc + runtime).  We deliberately do NOT build mig /
-# gnumach-headers / the kernel: those are cheap once the toolchain is cached,
-# and their source changes wouldn't retrigger this workflow anyway (the
-# sanity-check builds them).
+# Populate the cachix cache with each target's cross-toolchain via `make push-cache`
+# (the same path a developer runs locally).  Per (host, target) that realises
+# `cross-gcc-<arch>` - whose build closure spans the whole bootstrap chain
+# (binutils -> bootstrap-gcc -> glibc -> cross-gcc + runtime) - plus the dev shell,
+# and pushes ONLY the input-addressed outputs (its `ca` filter drops source tarballs
+# + patches; cachix's upstream filter drops cache.nixos.org paths).  The dev-shell
+# closure pulls in mig + gnumach/hurd headers, so those ride along; we do NOT build
+# the full kernel/userland or run the dist (the sanity-check does that).
 #
 # A `plan` job first cross-evaluates every (host x target) toolchain path and
 # probes cachix (no download - just the .narinfo), so a host whose toolchains
@@ -147,24 +148,34 @@ jobs:
       - name: Set up nix
         uses: ./.github/actions/setup-nix
 
-      - name: Configure cachix push
+      # Auth + substituter setup ONLY (skipPush: true): the actual push is done by
+      # `make push-cache` below, NOT this action's auto-push.  The action's auto-push
+      # would capture the WHOLE store closure realised during the job - including our
+      # source tarballs + patches (not on cache.nixos.org, so its upstream filter
+      # doesn't drop them) - which is bogus cache footprint.  `make push-cache` pushes
+      # only the input-addressed outputs (its `ca` filter drops sources/patches), so
+      # the CI caches EXACTLY what a manual `make push-cache` does.
+      - name: Configure cachix (auth only)
         uses: cachix/cachix-action@v17
         with:
           name: hurd-build-system
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          # Don't re-push paths already on cache.nixos.org - keeps the free-tier
-          # footprint to just our cross-toolchains.
-          skipPush: false
+          skipPush: true
 
-      - name: Build missing toolchains
+      - name: Build + push missing toolchains (filtered)
         env:
           TARGETS: ${{ matrix.targets }}
+          # `make push-cache` runs `cachix push`, which reads this directly - so it
+          # works regardless of how the action persists auth (skipPush: true above).
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          # Only the targets `plan` found missing for this host - cached ones are
-          # skipped, so we never download a closure just to re-push nothing.
+          # Only the targets `plan` found missing for this host.  `make push-cache`
+          # realises cross-gcc + the dev shell and pushes just our input-addressed
+          # outputs (~12 paths: binutils/bootstrap-gcc/cross-gcc/glibc-hurd/headers/
+          # mig/texinfo + the dev shell) - no sources, no patches.
           for t in $TARGETS; do
-            echo "::group::nix build .#cross-gcc-$t"
-            nix build ".#cross-gcc-$t" --no-link --print-out-paths
+            echo "::group::make push-cache ARCH=$t"
+            make push-cache ARCH="$t"
             echo "::endgroup::"
           done
