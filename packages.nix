@@ -328,6 +328,14 @@ in
     // glibc
     // hurdStubs
     // hurdStubsIR
+    # The glibc stub base (buildTree glibc) exposed as `glibc-stub-base-<arch>` so it
+    # can be cached: it's deterministic (bound to the PIN headers, like the toolchain
+    # glibc) but isn't in cross-gcc's closure, so `push-cache` + the cache plan name
+    # it explicitly.  Renamed from its internal `glibc-hurd-<arch>` attr to avoid
+    # colliding with the shipped glibc.
+    // (nixpkgs.lib.mapAttrs' (
+      n: nixpkgs.lib.nameValuePair (nixpkgs.lib.replaceStrings [ "glibc-hurd-" ] [ "glibc-stub-base-" ] n)
+    ) glibcStubBase)
     // {
       mig-wire-manifest = tools.manifest;
       mig-wire-manifest-tidy = tools.lint;

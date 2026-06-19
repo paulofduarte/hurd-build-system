@@ -71,7 +71,7 @@ jobs:
             # target -> cross-gcc outPath for this host (one cross-eval).  "cross-gcc-"
             # is 10 chars, like the old "toolchain-"; cross-binutils-* doesn't match.
             # shellcheck disable=SC2016  # ${n} is Nix, not bash - must not expand
-            map=$(nix eval --json ".#packages.$sys" --apply '
+            gccmap=$(nix eval --json ".#packages.$sys" --apply '
               pkgs:
               let names = builtins.filter
                     (n: builtins.substring 0 10 n == "cross-gcc-")
@@ -79,10 +79,29 @@ jobs:
               in builtins.listToAttrs (map
                    (n: { name = builtins.substring 10 (-1) n; value = pkgs.${n}.outPath; })
                    names)')
+            # glibc stub base (non-xen targets, "glibc-stub-base-" = 16 chars).
+            # hurd-stubs rebuilds from it and it is NOT in cross-gcc's closure, so it
+            # needs its own presence probe or a rerun would skip it as "all cached".
+            # shellcheck disable=SC2016  # ${n} is Nix, not bash - must not expand
+            basemap=$(nix eval --json ".#packages.$sys" --apply '
+              pkgs:
+              let names = builtins.filter
+                    (n: builtins.substring 0 16 n == "glibc-stub-base-")
+                    (builtins.attrNames pkgs);
+              in builtins.listToAttrs (map
+                   (n: { name = builtins.substring 16 (-1) n; value = pkgs.${n}.outPath; })
+                   names)')
             missing=""
-            for t in $(echo "$map" | jq -r 'keys[]'); do
-              p=$(echo "$map" | jq -r --arg t "$t" '.[$t]')
-              if nix path-info --store "$cache" "$p" >/dev/null 2>&1; then
+            for t in $(echo "$gccmap" | jq -r 'keys[]'); do
+              miss=0
+              p=$(echo "$gccmap" | jq -r --arg t "$t" '.[$t]')
+              nix path-info --store "$cache" "$p" >/dev/null 2>&1 || miss=1
+              # the stub base only exists for non-xen targets (xen reuses the sibling)
+              bp=$(echo "$basemap" | jq -r --arg t "$t" '.[$t] // empty')
+              if [ -n "$bp" ]; then
+                nix path-info --store "$cache" "$bp" >/dev/null 2>&1 || miss=1
+              fi
+              if [ "$miss" = 0 ]; then
                 echo "  cached   $sys/$t"
               else
                 echo "  MISSING  $sys/$t"

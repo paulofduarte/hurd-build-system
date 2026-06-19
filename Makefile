@@ -695,8 +695,8 @@ push-cache:
 	@command -v cachix >/dev/null 2>&1 || \
 	  { echo "push-cache: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
-	roots=".#cross-gcc-$(_TC_ARCH) .#devShells.$$system.$(ARCH).inputDerivation"; \
-	echo "==> Pushing build closure of toolchain + dev shell for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
+	roots=".#cross-gcc-$(_TC_ARCH) .#glibc-stub-base-$(_TC_ARCH) .#devShells.$$system.$(ARCH).inputDerivation"; \
+	echo "==> Pushing build closure of toolchain + glibc stub base + dev shell for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
 	echo "  realising $$roots"; \
 	$(NIX) --accept-flake-config build --no-link $$roots 2>/dev/null || \
 	  { echo "    build failed (is ARCH=$(ARCH) a valid flake output?)" >&2; exit 1; }; \
