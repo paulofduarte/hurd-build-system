@@ -42,16 +42,19 @@ in
   # makes it appear here (and in `make src`) with no list to maintain.  `inputs`
   # is the outputs-fn attrset, used only so `info` can read `.lastModifiedDate`.
   # Backs the `srcs` flake output.
-  all = self: inputs:
+  all =
+    self: inputs:
     let
       lock = builtins.fromJSON (builtins.readFile (self.outPath + "/flake.lock"));
-      rootInputs = lock.nodes.${lock.root}.inputs or {};
-      srcNames = builtins.filter
-        (n: lib.hasSuffix "-src" n && !(lib.hasSuffix "-dev-src" n)
-            && !(builtins.elem n toolchainOnly))
-        (builtins.attrNames rootInputs);
+      rootInputs = lock.nodes.${lock.root}.inputs or { };
+      srcNames = builtins.filter (
+        n: lib.hasSuffix "-src" n && !(lib.hasSuffix "-dev-src" n) && !(builtins.elem n toolchainOnly)
+      ) (builtins.attrNames rootInputs);
     in
-    lib.listToAttrs (map
-      (n: { name = lib.removeSuffix "-src" n; value = info self n inputs.${n}; })
-      srcNames);
+    lib.listToAttrs (
+      map (n: {
+        name = lib.removeSuffix "-src" n;
+        value = info self n inputs.${n};
+      }) srcNames
+    );
 }

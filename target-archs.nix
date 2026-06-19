@@ -18,8 +18,20 @@
 #                 sibling's userland toolchain (same crossTarget); the "at"
 #                 entries get the full glibc-hurd + wrapped cc + Hurd userland.
 {
-  x86_64     = { crossTarget = "x86_64-gnu"; platform = "at"; };
-  x86_64-xen = { crossTarget = "x86_64-gnu"; platform = "xen"; };
-  i686       = { crossTarget = "i686-gnu"; platform = "at"; };
-  i686-xen   = { crossTarget = "i686-gnu"; platform = "xen"; };
+  x86_64 = {
+    crossTarget = "x86_64-gnu";
+    platform = "at";
+  };
+  x86_64-xen = {
+    crossTarget = "x86_64-gnu";
+    platform = "xen";
+  };
+  i686 = {
+    crossTarget = "i686-gnu";
+    platform = "at";
+  };
+  i686-xen = {
+    crossTarget = "i686-gnu";
+    platform = "xen";
+  };
 }

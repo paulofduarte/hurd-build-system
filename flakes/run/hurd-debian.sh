@@ -8,20 +8,24 @@
 # Debian's verified boot recipe verbatim - no per-arch module-chain
 # reverse-engineering on our side.
 set -euo pipefail
+# shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
+# shellcheck source=lib/arch-flags.sh
 . "$(dirname "$0")/lib/arch-flags.sh"
+# shellcheck source=lib/hurd-common.sh
 . "$(dirname "$0")/lib/hurd-common.sh"
+# shellcheck source=lib/sidekick.sh
 . "$(dirname "$0")/lib/sidekick.sh"
 
 scenario_check_target "hurd-debian" "x86_64 i686"
 arch_qemu_for_target "$ARCH"
 arch_apply_accel_if_requested
 
-extra_qemu_args=("$@")   # RUN_ARGS pass-through
+extra_qemu_args=("$@") # RUN_ARGS pass-through
 
 case "$ARCH" in
   x86_64) url="$HURD_DEBIAN_X86_64_URL" ;;
-  i686)   url="$HURD_DEBIAN_I686_URL" ;;
+  i686) url="$HURD_DEBIAN_I686_URL" ;;
 esac
 
 cache="$(hurd_cache_dir debian "$ARCH")"
@@ -41,8 +45,9 @@ hurd_make_overlay "$cache/$img_name" "$overlay" raw
 if [ "${RUN_VANILLA:-}" = "1" ]; then
   sidekick_prepare_grub "$overlay"
 fi
-# $QEMU_MACHINE expanded unquoted so RUN_ACCEL=1's -accel propagates.
-hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
+# $QEMU_MACHINE is an array so RUN_ACCEL=1's -accel flags propagate as
+# separate argv words (empty array vanishes).
+hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2,if=ide \
   -no-reboot \
   "${extra_qemu_args[@]}"
@@ -59,7 +64,7 @@ print_qemu_hint
 # see what actually happened (panic? init reboot?) instead of GRUB
 # popping back up with stale state.  If you genuinely want reboot
 # loops (e.g., a kernel-stability test), pass RUN_ARGS="-no-shutdown".
-exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
+exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2,if=ide \
   -no-reboot \
   "${extra_qemu_args[@]}"

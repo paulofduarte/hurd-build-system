@@ -5,19 +5,26 @@
 # supported ARCHs; for x86_64 we route through a tiny GRUB ISO
 # (built by sidekick) because qemu's -kernel rejects 64-bit ELFs.
 set -euo pipefail
+# shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
+# shellcheck source=lib/arch-flags.sh
 . "$(dirname "$0")/lib/arch-flags.sh"
-. "$(dirname "$0")/lib/sidekick.sh"   # for x86_64 ISO build
+# shellcheck source=lib/sidekick.sh
+. "$(dirname "$0")/lib/sidekick.sh" # for x86_64 ISO build
 
 scenario_check_target "boot" "aarch64 x86_64 i686"
-arch_qemu_for_target "$ARCH"        # sets $QEMU, $QEMU_MACHINE, $QEMU_CPU, $QEMU_MEM, $QEMU_CONSOLE
-arch_apply_accel_if_requested         # may append -accel + override QEMU_CPU when RUN_ACCEL=1
+arch_qemu_for_target "$ARCH"  # sets $QEMU, $QEMU_MACHINE, $QEMU_CPU, $QEMU_MEM, $QEMU_CONSOLE
+arch_apply_accel_if_requested # may append -accel + override QEMU_CPU when RUN_ACCEL=1
 
-extra_qemu_args=("$@")                # capture RUN_ARGS pass-through
+extra_qemu_args=("$@") # capture RUN_ARGS pass-through
 
 if [ "$ARCH" = "x86_64" ]; then
   # 64-bit gnumach + qemu multiboot1 don't mix (see D18); wrap it
   # in a minimal GRUB ISO and boot via -cdrom instead of -kernel.
+  # WORK is an env var (set by dispatch.sh / the nix-run prelude); only
+  # the x86_64 ISO path needs it, so require it here rather than at top
+  # of file (i686 / aarch64 boot fine without it).
+  : "${WORK:?WORK required (set by the Makefile / nix-run app)}"
   cache="$WORK/test-images/boot/x86_64"
   staging="$cache/iso-staging"
   iso="$cache/boot.iso"
@@ -43,7 +50,7 @@ if [ "$ARCH" = "x86_64" ]; then
   # this, qemu cycles back to GRUB and the user sees a phantom second
   # boot instead of the "exit at PASS" they expected.
   print_qemu_hint
-  exec "$QEMU" -nographic $QEMU_MACHINE -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
+  exec "$QEMU" -nographic "${QEMU_MACHINE[@]}" -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
     -boot order=d \
     -cdrom "$iso" \
     -no-reboot \
@@ -53,7 +60,7 @@ fi
 # i686 / aarch64: direct -kernel works fine.
 # -no-reboot per the rationale above.
 print_qemu_hint
-exec "$QEMU" -nographic $QEMU_MACHINE -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
+exec "$QEMU" -nographic "${QEMU_MACHINE[@]}" -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
   -kernel "$GNUMACH_KERNEL" \
   -append "console=$QEMU_CONSOLE" \
   -no-reboot \

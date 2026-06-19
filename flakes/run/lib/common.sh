@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck shell=bash
 # Generic helpers used by every scenario script.
 
 # die <msg> - print to stderr, exit 1
-die() { echo "ERROR: $*" >&2; exit 1; }
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
 
 # sha256_stdin - read stdin, print only the hex digest (no filename).
 #   Tool picker: Linux distros + nix's coreutils ship `sha256sum`;

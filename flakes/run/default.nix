@@ -31,31 +31,44 @@
 #   --help, -h          usage
 #   -- ARGS             everything after `--` passes through to qemu
 
-{ nixpkgs, system, targets, packages, crossToolchain }:
+{
+  nixpkgs,
+  system,
+  targets,
+  packages,
+  crossToolchain,
+}:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
-  lib = nixpkgs.lib;
+  inherit (nixpkgs) lib;
   # Which arches we expose as `nix run` targets - the non-xen userland targets
   # that have a bootable `gnumach-<arch>`.  Xen variants don't boot under qemu
   # (gnumach disables tests + the boot harness on them); aarch64-gnu isn't a
   # target yet (no upstream Hurd port) - an aarch64 host runs the x86_64 image
   # under TCG via the defaultArch fallback below.
-  archs = [ "i686" "x86_64" ];
+  archs = [
+    "i686"
+    "x86_64"
+  ];
 
-  mkApp = arch:
+  mkApp =
+    arch:
     let
       gnumach = packages."gnumach-${arch}";
-      sidekick = packages.sidekick;
+      inherit (packages) sidekick;
 
       runScript = pkgs.writeShellApplication {
         name = "hurd-run-${arch}";
         runtimeInputs = with pkgs; [
-          qemu      # qemu-system-* + qemu-img
-          curl      # distro image fetch
+          qemu # qemu-system-* + qemu-img
+          curl # distro image fetch
           coreutils # mkdir / mv / cp / sha512sum
-          gnused gnugrep gawk
-          gnutar gzip
+          gnused
+          gnugrep
+          gawk
+          gnutar
+          gzip
         ];
         # Tiny nix-interpolated prelude - sets the env vars + paths
         # ./app.sh references; the body itself stays pure shell.
@@ -67,7 +80,8 @@ let
           export SIDEKICK_DISPATCH=${../sidekick/sidekick-dispatch.sh}
           DISTRO_URLS_FILE=${./lib/distro-urls.sh}
           DISPATCH_SCRIPT=${./.}/dispatch.sh
-        '' + builtins.readFile ./app.sh;
+        ''
+        + builtins.readFile ./app.sh;
       };
     in
     {

@@ -17,36 +17,70 @@
 { lib }:
 
 let
-  parseUrl = url:
+  parseUrl =
+    url:
     let
       cleanUrl = lib.removeSuffix ".git" url;
       patterns = [
-        { type = "github";     re = "https?://github[.]com/([^/]+)/([^/]+)"; }
-        { type = "gitlab";     re = "https?://gitlab[.]com/([^/]+)/([^/]+)"; }
-        { type = "codeberg";   re = "https?://codeberg[.]org/([^/]+)/([^/]+)"; }
-        { type = "savannah";   re = "https?://git[.]savannah[.]gnu[.]org/git/([^/]+)/([^/]+)"; }
+        {
+          type = "github";
+          re = "https?://github[.]com/([^/]+)/([^/]+)";
+        }
+        {
+          type = "gitlab";
+          re = "https?://gitlab[.]com/([^/]+)/([^/]+)";
+        }
+        {
+          type = "codeberg";
+          re = "https?://codeberg[.]org/([^/]+)/([^/]+)";
+        }
+        {
+          type = "savannah";
+          re = "https?://git[.]savannah[.]gnu[.]org/git/([^/]+)/([^/]+)";
+        }
         # sourceware.org has flat layout - no owner segment.
-        { type = "sourceware"; re = "https?://sourceware[.]org/git/([^/]+)"; ownerless = true; }
+        {
+          type = "sourceware";
+          re = "https?://sourceware[.]org/git/([^/]+)";
+          ownerless = true;
+        }
       ];
-      tryOne = acc: p:
-        if acc != null then acc
+      tryOne =
+        acc: p:
+        if acc != null then
+          acc
         else
-          let m = builtins.match p.re cleanUrl; in
-          if m == null then null
+          let
+            m = builtins.match p.re cleanUrl;
+          in
+          if m == null then
+            null
           else if p.ownerless or false then
-            { type = p.type; owner = null; repo = builtins.elemAt m 0; }
+            {
+              inherit (p) type;
+              owner = null;
+              repo = builtins.elemAt m 0;
+            }
           else
-            { type = p.type; owner = builtins.elemAt m 0; repo = builtins.elemAt m 1; };
+            {
+              inherit (p) type;
+              owner = builtins.elemAt m 0;
+              repo = builtins.elemAt m 1;
+            };
     in
     builtins.foldl' tryOne null patterns;
 in
 
 {
-  shortUrl = { url }:
-    let parsed = parseUrl url; in
-    if parsed == null
-    then "unknown"
-    else if parsed.owner == null
-    then "${parsed.type}.${parsed.repo}"
-    else "${parsed.type}.${parsed.owner}.${parsed.repo}";
+  shortUrl =
+    { url }:
+    let
+      parsed = parseUrl url;
+    in
+    if parsed == null then
+      "unknown"
+    else if parsed.owner == null then
+      "${parsed.type}.${parsed.repo}"
+    else
+      "${parsed.type}.${parsed.owner}.${parsed.repo}";
 }

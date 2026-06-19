@@ -19,7 +19,12 @@
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
-  inherit (pkgs) lib runCommand fetchurl writeText;
+  inherit (pkgs)
+    lib
+    runCommand
+    fetchurl
+    writeText
+    ;
 
   # --- Alpine linux-virt kernel (kernel + modules only) ---
   alpine = import ./packages.nix;
@@ -34,55 +39,69 @@ let
 
   dispatcher = writeText "sidekick-dispatcher" (builtins.readFile ./dispatcher.sh);
   # gnutar/gzip/cpio (POSIX) + ar (.deb) + xz/zstd (data.tar.{xz,zst}).
-  hostTools = with pkgs; [ gnutar gzip cpio findutils binutils xz zstd ];
+  hostTools = with pkgs; [
+    gnutar
+    gzip
+    cpio
+    findutils
+    binutils
+    xz
+    zstd
+  ];
 in
 {
-  sidekick = runCommand "sidekick-vm" {
-    nativeBuildInputs = hostTools;
-    passthru = { inherit fetchedDebs; inherit (deb) snapshot; };
-    meta = with lib; {
-      description = "Debian glibc helper VM (generic dispatcher) for the GNU Hurd build-system harness.";
-      platforms = platforms.all;
-    };
-  } ''
-    set -eu
-    rootfs=$PWD/rootfs; kpkg=$PWD/kernel-pkg
-    mkdir -p "$rootfs" "$kpkg" "$out"
+  sidekick =
+    runCommand "sidekick-vm"
+      {
+        nativeBuildInputs = hostTools;
+        passthru = {
+          inherit fetchedDebs;
+          inherit (deb) snapshot;
+        };
+        meta = with lib; {
+          description = "Debian glibc helper VM (generic dispatcher) for the GNU Hurd build-system harness.";
+          platforms = platforms.all;
+        };
+      }
+      ''
+        set -eu
+        rootfs=$PWD/rootfs; kpkg=$PWD/kernel-pkg
+        mkdir -p "$rootfs" "$kpkg" "$out"
 
-    # ---- Alpine linux-virt kernel + modules (libc-agnostic) ----
-    tar -xzf ${kernelApk} -C "$kpkg" 2>/dev/null || true
-    [ -f "$kpkg/boot/vmlinuz-virt" ] || { echo "FATAL: linux-virt APK lacked /boot/vmlinuz-virt" >&2; exit 1; }
-    cp "$kpkg/boot/vmlinuz-virt" "$out/vmlinuz"
-    mkdir -p "$rootfs/lib"
-    [ -d "$kpkg/lib/modules" ] && cp -a "$kpkg/lib/modules" "$rootfs/lib/"
+        # ---- Alpine linux-virt kernel + modules (libc-agnostic) ----
+        tar -xzf ${kernelApk} -C "$kpkg" 2>/dev/null || true
+        [ -f "$kpkg/boot/vmlinuz-virt" ] || { echo "FATAL: linux-virt APK lacked /boot/vmlinuz-virt" >&2; exit 1; }
+        cp "$kpkg/boot/vmlinuz-virt" "$out/vmlinuz"
+        mkdir -p "$rootfs/lib"
+        [ -d "$kpkg/lib/modules" ] && cp -a "$kpkg/lib/modules" "$rootfs/lib/"
 
-    # Decompress the 9p-over-virtio stack into /mods (dependency order) -
-    # busybox insmod wants uncompressed .ko.  (Block/ext modules for the
-    # overlay op are modprobe'd on demand from /lib/modules.)
-    moddir=$(echo "$rootfs"/lib/modules/*)
-    mkdir -p "$rootfs/mods"; i=0
-    for m in fs/netfs/netfs net/9p/9pnet net/9p/9pnet_virtio fs/9p/9p; do
-      src="$moddir/kernel/$m.ko.gz"
-      [ -f "$src" ] && gzip -dc "$src" > "$rootfs/mods/$(printf '%02d' "$i")-$(basename "$m").ko" && i=$((i+1)) || true
-    done
+        # Decompress the 9p-over-virtio stack into /mods (dependency order) -
+        # busybox insmod wants uncompressed .ko.  (Block/ext modules for the
+        # overlay op are modprobe'd on demand from /lib/modules.)
+        moddir=$(echo "$rootfs"/lib/modules/*)
+        mkdir -p "$rootfs/mods"; i=0
+        for m in fs/netfs/netfs net/9p/9pnet net/9p/9pnet_virtio fs/9p/9p; do
+          src="$moddir/kernel/$m.ko.gz"
+          [ -f "$src" ] && gzip -dc "$src" > "$rootfs/mods/$(printf '%02d' "$i")-$(basename "$m").ko" && i=$((i+1)) || true
+        done
 
-    # ---- Debian .deb data trees -> rootfs (ar then data.tar.*) ----
-    ${lib.concatMapStringsSep "\n" (name: ''
-      ( tmp=$(mktemp -d); cd "$tmp"; ar x ${fetchedDebs.${name}}; \
-        tar xf data.tar.* -C "$rootfs"; cd /; rm -rf "$tmp" )
-    '') (builtins.attrNames fetchedDebs)}
+        # ---- Debian .deb data trees -> rootfs (ar then data.tar.*) ----
+        ${lib.concatMapStringsSep "\n" (name: ''
+          ( tmp=$(mktemp -d); cd "$tmp"; ar x ${fetchedDebs.${name}}; \
+            tar xf data.tar.* -C "$rootfs"; cd /; rm -rf "$tmp" )
+        '') (builtins.attrNames fetchedDebs)}
 
-    # busybox applet symlinks aren't created (no postinst); dispatcher.sh
-    # runs `busybox --install -s /bin` at boot, but give it /bin/sh up front.
-    [ -e "$rootfs/bin/sh" ] || ln -s busybox "$rootfs/bin/sh"
+        # busybox applet symlinks aren't created (no postinst); dispatcher.sh
+        # runs `busybox --install -s /bin` at boot, but give it /bin/sh up front.
+        [ -e "$rootfs/bin/sh" ] || ln -s busybox "$rootfs/bin/sh"
 
-    mkdir -p "$rootfs"/{proc,sys,dev,tmp,shared,run,mnt,etc,nix/store}
-    : > "$rootfs/etc/passwd"; : > "$rootfs/etc/group"
-    cp ${dispatcher} "$rootfs/init"; chmod 755 "$rootfs/init"
+        mkdir -p "$rootfs"/{proc,sys,dev,tmp,shared,run,mnt,etc,nix/store}
+        : > "$rootfs/etc/passwd"; : > "$rootfs/etc/group"
+        cp ${dispatcher} "$rootfs/init"; chmod 755 "$rootfs/init"
 
-    cd "$rootfs"
-    find . -print0 | cpio --null --create --format=newc 2>/dev/null \
-      | gzip -9 > "$out/initramfs.cpio.gz"
-    echo "sidekick: vmlinuz=$(stat -c%s "$out/vmlinuz" 2>/dev/null || stat -f%z "$out/vmlinuz") initramfs=$(stat -c%s "$out/initramfs.cpio.gz" 2>/dev/null || stat -f%z "$out/initramfs.cpio.gz") bytes" >&2
-  '';
+        cd "$rootfs"
+        find . -print0 | cpio --null --create --format=newc 2>/dev/null \
+          | gzip -9 > "$out/initramfs.cpio.gz"
+        echo "sidekick: vmlinuz=$(stat -c%s "$out/vmlinuz" 2>/dev/null || stat -f%z "$out/vmlinuz") initramfs=$(stat -c%s "$out/initramfs.cpio.gz" 2>/dev/null || stat -f%z "$out/initramfs.cpio.gz") bytes" >&2
+      '';
 }

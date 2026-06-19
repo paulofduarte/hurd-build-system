@@ -14,14 +14,14 @@
 { lib }:
 
 let
-  parseVersion = import ./parse-version.nix { inherit lib; };
-  selfMeta     = import ./self-meta.nix     { inherit lib; };
-  url          = import ./url.nix           { inherit lib; };
-  composeVer   = import ./compose-version.nix {
-    inherit lib selfMeta url;
+  parseVersion = import ./parse-version.nix;
+  selfMeta = import ./self-meta.nix;
+  url = import ./url.nix { inherit lib; };
+  composeVer = import ./compose-version.nix {
+    inherit selfMeta url;
   };
-  repro        = import ./repro.nix         { inherit lib; };
-  crossPkg     = import ./cross-pkg.nix     { inherit lib; };
+  repro = import ./repro.nix;
+  crossPkg = import ./cross-pkg.nix;
 in
 
 parseVersion // selfMeta // url // composeVer // repro // { inherit crossPkg; }

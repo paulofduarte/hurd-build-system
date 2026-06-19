@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck shell=bash
 # Arch-keyed qemu defaults + optional host-acceleration overlay.
 #
 # Defaults track upstream gnumach's test harness
@@ -24,12 +25,27 @@
 #                              AARCH64-PMAP-HEAP-DESIGN.md lands)
 arch_qemu_for_target() {
   case "$1" in
-    aarch64) QEMU=qemu-system-aarch64; QEMU_MACHINE="-M virt"
-             QEMU_CPU=cortex-a72;  QEMU_MEM=512;  QEMU_CONSOLE=ttyAMA0 ;;
-    x86_64)  QEMU=qemu-system-x86_64;  QEMU_MACHINE=""
-             QEMU_CPU=core2duo-v1; QEMU_MEM=2047; QEMU_CONSOLE=com0 ;;
-    i686)    QEMU=qemu-system-i386;    QEMU_MACHINE=""
-             QEMU_CPU=pentium3-v1; QEMU_MEM=2047; QEMU_CONSOLE=com0 ;;
+    aarch64)
+      export QEMU=qemu-system-aarch64
+      QEMU_MACHINE=(-M virt)
+      export QEMU_CPU=cortex-a72
+      export QEMU_MEM=512
+      export QEMU_CONSOLE=ttyAMA0
+      ;;
+    x86_64)
+      export QEMU=qemu-system-x86_64
+      QEMU_MACHINE=()
+      export QEMU_CPU=core2duo-v1
+      export QEMU_MEM=2047
+      export QEMU_CONSOLE=com0
+      ;;
+    i686)
+      export QEMU=qemu-system-i386
+      QEMU_MACHINE=()
+      export QEMU_CPU=pentium3-v1
+      export QEMU_MEM=2047
+      export QEMU_CONSOLE=com0
+      ;;
     *) die "arch_qemu_for_target: unsupported ARCH=$1" ;;
   esac
 }
@@ -58,10 +74,10 @@ arch_apply_accel_if_requested() {
   #   linux reports `i386` / `i486` / `i586` / `i686`
   local host_arch
   case "$(uname -m)" in
-    arm64|aarch64) host_arch=aarch64 ;;
-    x86_64|amd64)  host_arch=x86_64 ;;
-    i?86)          host_arch=i686 ;;
-    *)             host_arch="$(uname -m)" ;;
+    arm64 | aarch64) host_arch=aarch64 ;;
+    x86_64 | amd64) host_arch=x86_64 ;;
+    i?86) host_arch=i686 ;;
+    *) host_arch="$(uname -m)" ;;
   esac
 
   # Compat matrix - which guests can each host accelerate?
@@ -70,7 +86,7 @@ arch_apply_accel_if_requested() {
   #   aarch64 host: aarch64 only (different ISA family from x86)
   local accel_ok=0
   case "$host_arch:$ARCH" in
-    x86_64:x86_64|x86_64:i686|i686:i686|aarch64:aarch64) accel_ok=1 ;;
+    x86_64:x86_64 | x86_64:i686 | i686:i686 | aarch64:aarch64) accel_ok=1 ;;
   esac
   if [ "$accel_ok" != "1" ]; then
     echo "RUN_ACCEL=1 ignored: host $host_arch cannot accelerate ARCH=$ARCH. Falling back to TCG." >&2
@@ -80,14 +96,19 @@ arch_apply_accel_if_requested() {
   local accel
   case "$(uname -s)" in
     Darwin) accel=hvf ;;
-    Linux)  accel=kvm ;;
-    *)      echo "RUN_ACCEL=1 ignored: no known accelerator for $(uname -s). Falling back to TCG." >&2
-            return 0 ;;
+    Linux) accel=kvm ;;
+    *)
+      echo "RUN_ACCEL=1 ignored: no known accelerator for $(uname -s). Falling back to TCG." >&2
+      return 0
+      ;;
   esac
 
-  QEMU_CPU=host
-  # Defensive ${VAR:-} in case arch_qemu_for_target wasn't called first
-  # (would error under `set -u` otherwise).
-  QEMU_MACHINE="${QEMU_MACHINE:-} -accel $accel"
+  export QEMU_CPU=host
+  # Append to the (possibly empty) machine-flag array.  Empty-array
+  # expansion is safe under `set -u` on bash 4.4+; if
+  # arch_qemu_for_target wasn't called first QEMU_MACHINE is unset, so
+  # seed it to an empty array first to stay `set -u`-clean.
+  [ "${QEMU_MACHINE+set}" = set ] || QEMU_MACHINE=()
+  QEMU_MACHINE=("${QEMU_MACHINE[@]}" -accel "$accel")
   echo "RUN_ACCEL=1: using -accel $accel + -cpu host (upstream-pinned CPU model overridden - gnumach may panic on untested CPUID features)" >&2
 }

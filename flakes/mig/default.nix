@@ -37,14 +37,22 @@
 # <name>" gives cpu.sym its <mach/message.h>.  TARGET_CPPFLAGS points at
 # $gnumach-headers/include.
 
-{ nixpkgs, system, targets, gnumachHeaders, bootstrapGcc, srcInput, forkUrl
+{
+  nixpkgs,
+  system,
+  targets,
+  gnumachHeaders,
+  bootstrapGcc,
+  srcInput,
+  forkUrl,
   # CHECKED mode: a `name -> cross-gcc` attrset (the from-source cross-gcc, whose
   # --with-sysroot=glibc-hurd gives the test stubs their <string.h>).  null = BOOTSTRAP.
-, checkCC ? null }:
+  checkCC ? null,
+}:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
-  lib = nixpkgs.lib;
+  inherit (nixpkgs) lib;
   helpers = import ../lib { inherit lib; };
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
@@ -60,135 +68,144 @@ let
     inherit upstreamVersion srcInput forkUrl;
   };
 
-  mkOne = name: target:
+  mkOne =
+    name: target:
     let
       gnumach-headers = gnumachHeaders."gnumach-headers-${name}";
       # BOOTSTRAP: the from-source libc-free bootstrap-gcc.  CHECKED: the from-source
       # cross-gcc (--with-sysroot=glibc-hurd gives the test stubs their <string.h>).
       # Both are plain derivations (raw `<cpu>-gnu-` prefix, no `.targetPrefix`) and
       # compile cpu.symc identically (-ffreestanding), so the installed bytes match.
-      cc = if checked then checkCC.${name}
-           else bootstrapGcc."bootstrap-gcc-${name}";
+      cc = if checked then checkCC.${name} else bootstrapGcc."bootstrap-gcc-${name}";
       toolPrefix = "${target.crossTarget}-";
       pname = "mig-${target.crossTarget}";
     in
     # Native stdenv: MIG itself is a host tool.  Cross tools come in via
     # nativeBuildInputs + explicit env vars below.
-    pkgs.stdenv.mkDerivation ({
-      inherit pname;
+    pkgs.stdenv.mkDerivation (
+      {
+        inherit pname;
 
-      # Drives the store path suffix and (via the sed below) the binary's
-      # PACKAGE_VERSION.
-      version = fullVersion;
+        # Drives the store path suffix and (via the sed below) the binary's
+        # PACKAGE_VERSION.
+        version = fullVersion;
 
-      # The locked flake input, never the local src/mig clone, so the built bytes
-      # match the rev the version string advertises (use `make mig` for iterative
-      # dev - that path bypasses nix).
-      src = srcInput;
+        # The locked flake input, never the local src/mig clone, so the built bytes
+        # match the rev the version string advertises (use `make mig` for iterative
+        # dev - that path bypasses nix).
+        src = srcInput;
 
-      # Cross-build fixes that landed upstream after the v1.8+git20231217 release
-      # tag but before our baseline, needed to build the older reference mig:
-      #   00  accept a TARGET_CC whose name isn't <target>-gcc (we supply
-      #       i686-unknown-none-elf-gcc) - else configure aborts "could not find
-      #       a compiler".
-      #   01  test harness honours external CFLAGS (our gnumach-headers -I).
-      #   02  test harness preprocesses .defs with the target compiler.
-      #   03  GCC-14 compat: declare the mig_*_reply_port prototypes + pull
-      #       <string.h> into the test's mig_support.h (modern compilers reject
-      #       the implicit declarations the 2023 fixtures relied on).
-      # All four are in current pins, so this is a no-op for the working source;
-      # it only fires for an older mig-src rev.  Guarded by the input's commit date.
-      patches = lib.optionals
-        (builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000") < "20260524")
-        [ ./patches/00-accept-non-canonical-cross-compilers.patch
-          ./patches/01-tests-honour-external-cflags.patch
-          ./patches/02-tests-preprocess-defs-target-compiler.patch
-          ./patches/03-tests-gcc14-compat.patch
-        ];
+        # Cross-build fixes that landed upstream after the v1.8+git20231217 release
+        # tag but before our baseline, needed to build the older reference mig:
+        #   00  accept a TARGET_CC whose name isn't <target>-gcc (we supply
+        #       i686-unknown-none-elf-gcc) - else configure aborts "could not find
+        #       a compiler".
+        #   01  test harness honours external CFLAGS (our gnumach-headers -I).
+        #   02  test harness preprocesses .defs with the target compiler.
+        #   03  GCC-14 compat: declare the mig_*_reply_port prototypes + pull
+        #       <string.h> into the test's mig_support.h (modern compilers reject
+        #       the implicit declarations the 2023 fixtures relied on).
+        # All four are in current pins, so this is a no-op for the working source;
+        # it only fires for an older mig-src rev.  Guarded by the input's commit date.
+        patches =
+          lib.optionals (builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000") < "20260524")
+            [
+              ./patches/00-accept-non-canonical-cross-compilers.patch
+              ./patches/01-tests-honour-external-cflags.patch
+              ./patches/02-tests-preprocess-defs-target-compiler.patch
+              ./patches/03-tests-gcc14-compat.patch
+            ];
 
-      # autoreconfHook supplies autoconf/automake/libtool/m4.  bison/flex are
-      # MIG's own needs (parser.y + lexxer.l).  The cross cc is for TARGET_CC
-      # (cpu.symc) + the test stubs.  patchelf: matches the other derivations so
-      # the stdenv audit-tmpdir fixup can run - on a Linux builder migcom is an
-      # ELF and the audit runs (shrink hook would fire - see dontPatchELF); on
-      # darwin migcom is Mach-O and patchelf is a no-op.  Carried unconditionally
-      # for uniform behaviour across hosts.
-      nativeBuildInputs =
-        [ pkgs.autoreconfHook ]
-        ++ (with pkgs; [ bison flex patchelf ])
+        # autoreconfHook supplies autoconf/automake/libtool/m4.  bison/flex are
+        # MIG's own needs (parser.y + lexxer.l).  The cross cc is for TARGET_CC
+        # (cpu.symc) + the test stubs.  patchelf: matches the other derivations so
+        # the stdenv audit-tmpdir fixup can run - on a Linux builder migcom is an
+        # ELF and the audit runs (shrink hook would fire - see dontPatchELF); on
+        # darwin migcom is Mach-O and patchelf is a no-op.  Carried unconditionally
+        # for uniform behaviour across hosts.
+        nativeBuildInputs = [
+          pkgs.autoreconfHook
+        ]
+        ++ (with pkgs; [
+          bison
+          flex
+          patchelf
+        ])
         ++ [ cc ];
 
-      CFLAGS = buildFlags.baseCflags;
+        CFLAGS = buildFlags.baseCflags;
 
-      # Splice the composed version into AC_INIT before autoreconfHook
-      # regenerates configure.
-      postPatch = ''
-        sed -i.bak \
-          -e 's|^AC_INIT(\[GNU MIG\], \[[^]]*\],|AC_INIT([GNU MIG], [${fullVersion}],|' \
-          configure.ac
-        rm configure.ac.bak
-        grep "^AC_INIT" configure.ac
-      '';
+        # Splice the composed version into AC_INIT before autoreconfHook
+        # regenerates configure.
+        postPatch = ''
+          sed -i.bak \
+            -e 's|^AC_INIT(\[GNU MIG\], \[[^]]*\],|AC_INIT([GNU MIG], [${fullVersion}],|' \
+            configure.ac
+          rm configure.ac.bak
+          grep "^AC_INIT" configure.ac
+        '';
 
-      # MIG's cpu.symc is compiled by TARGET_CC; the resulting .symo's
-      # symbols are sed-extracted into cpu.h.  Without TARGET_CPPFLAGS
-      # pointing at gnumach's headers, that step can't find <mach/message.h>.
-      preConfigure = ''
-        export TARGET_CPPFLAGS="-I${gnumach-headers}/include"
-        export TARGET_CC=${cc}/bin/${toolPrefix}gcc
-      '';
+        # MIG's cpu.symc is compiled by TARGET_CC; the resulting .symo's
+        # symbols are sed-extracted into cpu.h.  Without TARGET_CPPFLAGS
+        # pointing at gnumach's headers, that step can't find <mach/message.h>.
+        preConfigure = ''
+          export TARGET_CPPFLAGS="-I${gnumach-headers}/include"
+          export TARGET_CC=${cc}/bin/${toolPrefix}gcc
+        '';
 
-      # Native stdenv wires CC to the host gcc; TARGET_CC (exported in
-      # preConfigure) handles the cross-side cpu.symc compile.
-      configureFlags = [
-        "--target=${target.crossTarget}"
-      ];
+        # Native stdenv wires CC to the host gcc; TARGET_CC (exported in
+        # preConfigure) handles the cross-side cpu.symc compile.
+        configureFlags = [
+          "--target=${target.crossTarget}"
+        ];
 
-      # mig is autotools/automake, which declares the codegen ordering
-      # (bison/flex -> parser.h/lexxer; cpu.sym -> cpu.h before migcom.c), so
-      # the build is parallel-safe - confirmed by long use at `make -j12`.
-      enableParallelBuilding = true;
+        # mig is autotools/automake, which declares the codegen ordering
+        # (bison/flex -> parser.h/lexxer; cpu.sym -> cpu.h before migcom.c), so
+        # the build is parallel-safe - confirmed by long use at `make -j12`.
+        enableParallelBuilding = true;
 
-      # Only the CHECKED variant self-tests (see file header): its wrapped cc has
-      # glibc-hurd, so the stubs compile.  The bootstrap mig can't (no libc yet)
-      # and is upstream of glibc, so it stays unchecked.
-      doCheck = checked;
+        # Only the CHECKED variant self-tests (see file header): its wrapped cc has
+        # glibc-hurd, so the stubs compile.  The bootstrap mig can't (no libc yet)
+        # and is upstream of glibc, so it stays unchecked.
+        doCheck = checked;
 
-      # Keep mig's `-g` DWARF (CFLAGS is `-g -O2`); the native stdenv fixup strip
-      # hook would otherwise discard it.
-      dontStrip = true;
+        # Keep mig's `-g` DWARF (CFLAGS is `-g -O2`); the native stdenv fixup strip
+        # hook would otherwise discard it.
+        dontStrip = true;
 
-      # Disable the patchelf setup-hook's --shrink-rpath pass (would shrink
-      # migcom's RPATH on a Linux builder); keep it off for output stability.
-      dontPatchELF = true;
+        # Disable the patchelf setup-hook's --shrink-rpath pass (would shrink
+        # migcom's RPATH on a Linux builder); keep it off for output stability.
+        dontPatchELF = true;
 
-      passthru = { inherit target; };
+        passthru = { inherit target; };
 
-      meta = with lib; {
-        description = "GNU MIG cross-compiler for ${target.crossTarget}";
-        platforms = platforms.all;
-        # `nix run .#mig-<arch>` looks up bin/<mainProgram>; without
-        # this it derives the name from pname (mig-<crossTarget>) and
-        # fails because the actual wrapper is <crossTarget>-mig.
-        mainProgram = "${target.crossTarget}-mig";
-      };
-    }
-    // lib.optionalAttrs checked {
-      # test_lib.sh compiles the stubs with `$CC $CFLAGS`; pass the
-      # gnumach-headers include via an exported CFLAGS (NOT -ffreestanding - the
-      # stubs genuinely need the wrapped cc's hosted <string.h>).
-      preCheck = ''
-        export CFLAGS="-I${gnumach-headers}/include"
-      '';
-    }
-    // helpers.mkReproAttrs { inherit pname; version = fullVersion; });
+        meta = with lib; {
+          description = "GNU MIG cross-compiler for ${target.crossTarget}";
+          platforms = platforms.all;
+          # `nix run .#mig-<arch>` looks up bin/<mainProgram>; without
+          # this it derives the name from pname (mig-<crossTarget>) and
+          # fails because the actual wrapper is <crossTarget>-mig.
+          mainProgram = "${target.crossTarget}-mig";
+        };
+      }
+      // lib.optionalAttrs checked {
+        # test_lib.sh compiles the stubs with `$CC $CFLAGS`; pass the
+        # gnumach-headers include via an exported CFLAGS (NOT -ffreestanding - the
+        # stubs genuinely need the wrapped cc's hosted <string.h>).
+        preCheck = ''
+          export CFLAGS="-I${gnumach-headers}/include"
+        '';
+      }
+      // helpers.mkReproAttrs {
+        inherit pname;
+        version = fullVersion;
+      }
+    );
 
   # BOOTSTRAP builds every target; CHECKED only the non-xen userland targets
   # (xen variants share a crossTarget, so a checked xen mig would be redundant).
   migTargets =
-    if checked
-    then lib.filterAttrs (_: t: (t.platform or null) != "xen") targets
-    else targets;
+    if checked then lib.filterAttrs (_: t: (t.platform or null) != "xen") targets else targets;
   outPrefix = if checked then "mig-checked-" else "mig-";
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "${outPrefix}${name}" (mkOne name target)) migTargets

@@ -12,17 +12,20 @@
 set -u
 ctl="${SK_CTL:?sidekick-send: SK_CTL not set}"
 
-seq=$(( $(cat "$ctl/.seq" 2>/dev/null || echo 0) + 1 )); echo "$seq" > "$ctl/.seq"
+seq=$(($(cat "$ctl/.seq" 2>/dev/null || echo 0) + 1))
+echo "$seq" >"$ctl/.seq"
 
 _q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
-cmd=""; for a in "$@"; do cmd="$cmd $(_q "$a")"; done
-printf '%s\n' "$cmd" > "$ctl/q/$seq.cmd"
-: > "$ctl/q/$seq.ready"
+cmd=""
+for a in "$@"; do cmd="$cmd $(_q "$a")"; done
+printf '%s\n' "$cmd" >"$ctl/q/$seq.cmd"
+: >"$ctl/q/$seq.ready"
 
 while [ ! -e "$ctl/q/$seq.done" ]; do
   sleep 0.1
   if [ -f "$ctl/.qpid" ] && kill -0 "$(cat "$ctl/.qpid")" 2>/dev/null; then :; else
-    echo "sidekick-send: serve VM is gone" >&2; exit 125
+    echo "sidekick-send: serve VM is gone" >&2
+    exit 125
   fi
 done
 

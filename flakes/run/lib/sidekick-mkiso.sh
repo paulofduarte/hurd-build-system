@@ -8,14 +8,24 @@
 # GRUB-bootable ISO at /shared/out.iso via grub-mkrescue (Debian: it execs
 # xorriso + mtools + grub-mkimage, all present in the VM).
 set +e
-cd /shared
-[ -f iso-grub.cfg ] || { echo "FATAL: /shared/iso-grub.cfg missing" >&2; exit 1; }
-[ -d iso-staging ]  || { echo "FATAL: /shared/iso-staging/ missing" >&2; exit 1; }
+cd /shared || exit
+[ -f iso-grub.cfg ] || {
+  echo "FATAL: /shared/iso-grub.cfg missing" >&2
+  exit 1
+}
+[ -d iso-staging ] || {
+  echo "FATAL: /shared/iso-staging/ missing" >&2
+  exit 1
+}
 
-rm -rf iso-root; mkdir -p iso-root/boot/grub
+rm -rf iso-root
+mkdir -p iso-root/boot/grub
 cp iso-grub.cfg iso-root/boot/grub/grub.cfg
 cp -a iso-staging/. iso-root/
 
-grub-mkrescue -o out.iso iso-root 2>&1 \
-  || { echo "FATAL: grub-mkrescue failed" >&2; exit 1; }
+grub-mkrescue -o out.iso iso-root 2>&1 ||
+  {
+    echo "FATAL: grub-mkrescue failed" >&2
+    exit 1
+  }
 sync

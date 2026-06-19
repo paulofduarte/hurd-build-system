@@ -19,9 +19,13 @@
 # both inject and vanilla, and Gentoo's own wiki flags amd64 as
 # "less stable so far than x86" (wiki.gentoo.org/wiki/Project:Hurd).
 set -euo pipefail
+# shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
+# shellcheck source=lib/arch-flags.sh
 . "$(dirname "$0")/lib/arch-flags.sh"
+# shellcheck source=lib/hurd-common.sh
 . "$(dirname "$0")/lib/hurd-common.sh"
+# shellcheck source=lib/sidekick.sh
 . "$(dirname "$0")/lib/sidekick.sh"
 
 scenario_check_target "hurd-gentoo" "x86_64 i686"
@@ -32,7 +36,7 @@ extra_qemu_args=("$@")
 
 case "$ARCH" in
   x86_64) url="$HURD_GENTOO_X86_64_URL" ;;
-  i686)   url="$HURD_GENTOO_I686_URL" ;;
+  i686) url="$HURD_GENTOO_I686_URL" ;;
 esac
 
 cache="$(hurd_cache_dir gentoo "$ARCH")"
@@ -47,7 +51,7 @@ hurd_make_overlay "$qcow2" "$overlay" qcow2
 if [ "${RUN_VANILLA:-}" = "1" ]; then
   sidekick_prepare_grub "$overlay"
 fi
-hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
+hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2 \
   -no-reboot \
   "${extra_qemu_args[@]}"
@@ -58,7 +62,7 @@ hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$Q
 sidekick_overlay_kernel "$overlay" "$GNUMACH_KERNEL"
 
 print_qemu_hint
-exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
+exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2 \
   -no-reboot \
   "${extra_qemu_args[@]}"

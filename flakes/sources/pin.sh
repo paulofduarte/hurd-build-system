@@ -12,12 +12,17 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # src<TAB>remote<TAB>short_rev<TAB>date, one line per source.
 pins() {
-  nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs --apply '
+  local _expr
+  _expr=$(
+    cat <<'NIXEXPR'
     srcs: builtins.concatStringsSep "\n" (map (n:
       let s = srcs.${n};
       in builtins.concatStringsSep "\t"
            [ n s.name (builtins.substring 0 7 s.rev) s.date ])
-      (builtins.attrNames srcs))'
+      (builtins.attrNames srcs))
+NIXEXPR
+  )
+  nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs --apply "$_expr"
 }
 
 before=$(pins)
@@ -25,19 +30,22 @@ before=$(pins)
 # Optional positional args restrict the bump to the named source(s); with none
 # we bump every source (the `make pin-src` behaviour).  `make pin-src-<name>`
 # passes a single name.  An unknown name aborts before any flake.lock change.
-want_all=1; wanted=" "
+want_all=1
+wanted=" "
 if [ "$#" -gt 0 ]; then
   want_all=0
   known=$(printf '%s\n' "$before" | cut -f1)
   for w in "$@"; do
     printf '%s\n' "$known" | grep -qx -- "$w" || {
-      echo "pin-src: unknown source '$w'. Known:" $known >&2; exit 1; }
+      echo "pin-src: unknown source '$w'. Known: $(printf '%s\n' "$known" | tr '\n' ' ')" >&2
+      exit 1
+    }
     wanted+="$w "
   done
 fi
 wanted_src() {
   [ "$want_all" = 1 ] && return 0
-  case "$wanted" in *" $1 "*) return 0;; *) return 1;; esac
+  case "$wanted" in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
 # Derive *-src input names from .#srcs keys (e.g. gnumach -> gnumach-src),
@@ -46,7 +54,7 @@ src_inputs=()
 while IFS=$'\t' read -r src _; do
   [ -n "${src:-}" ] || continue
   wanted_src "$src" && src_inputs+=("${src}-src")
-done <<< "$before"
+done <<<"$before"
 
 echo "==> nix flake update ${src_inputs[*]}"
 nix --extra-experimental-features 'nix-command flakes' flake update "${src_inputs[@]}"
@@ -54,19 +62,16 @@ nix --extra-experimental-features 'nix-command flakes' flake update "${src_input
 after=$(pins)
 
 # Print the move (or "unchanged") for each source, matched by name.
-fmt_unchanged='%-10s  %-32s  %-7s  %s   unchanged\n'
-fmt_moved='%-10s  %-32s  %-7s (%s)  ->  %s (%s)\n'
 echo
 while IFS=$'\t' read -r src remote b_rev b_date; do
   [ -n "${src:-}" ] || continue
   wanted_src "$src" || continue
   IFS=$'\t' read -r _ _ a_rev a_date \
-    <<< "$(printf '%s\n' "$after" | awk -F'\t' -v s="$src" '$1 == s { print; exit }')"
+    <<<"$(printf '%s\n' "$after" | awk -F'\t' -v s="$src" '$1 == s { print; exit }')"
   if [ "$b_rev" = "$a_rev" ]; then
-    # shellcheck disable=SC2059
-    printf "$fmt_unchanged" "$src" "$remote" "$b_rev" "$b_date"
+    printf '%-10s  %-32s  %-7s  %s   unchanged\n' "$src" "$remote" "$b_rev" "$b_date"
   else
-    # shellcheck disable=SC2059
-    printf "$fmt_moved" "$src" "$remote" "$b_rev" "$b_date" "$a_rev" "$a_date"
+    printf '%-10s  %-32s  %-7s (%s)  ->  %s (%s)\n' \
+      "$src" "$remote" "$b_rev" "$b_date" "$a_rev" "$a_date"
   fi
-done <<< "$before"
+done <<<"$before"

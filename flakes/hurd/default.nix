@@ -19,11 +19,21 @@
 # Source comes from the pinned `hurd-src` flake input.  Filtered to the non-xen
 # userland targets (i686, x86_64).
 
-{ nixpkgs, system, targets, mig, toolchainFor, self, srcInput, forkUrl, buildRevToken ? null }:
+{
+  nixpkgs,
+  system,
+  targets,
+  mig,
+  toolchainFor,
+  self,
+  srcInput,
+  forkUrl,
+  buildRevToken ? null,
+}:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
-  lib = nixpkgs.lib;
+  inherit (nixpkgs) lib;
   helpers = import ../lib { inherit lib; };
   # Configure flags shared with the in-tree dev shell (Makefile `make hurd`).
   hurdConfig = import ../cross-toolchain/hurd-config.nix;
@@ -31,26 +41,33 @@ let
 
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl buildRevToken;
+    inherit
+      upstreamVersion
+      srcInput
+      self
+      forkUrl
+      buildRevToken
+      ;
   };
 
-  hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
+  hurdTargets = lib.filterAttrs (_name: target: (target.platform or null) != "xen") targets;
 
-  mkOne = name: target:
+  mkOne =
+    name: target:
     let
-      tp        = target.crossTarget;                       # e.g. i686-gnu
+      tp = target.crossTarget; # e.g. i686-gnu
       # The from-source toolchain: unwrapped cross-gcc + cross-binutils.  The cross-gcc
       # bakes --with-sysroot=glibc-hurd (libc + merged mach/hurd headers + glibc's RPC
       # stub libs), so the userland compiles+links against it directly - no wrapper, and
       # no bare-name GROUP rewrite (the raw ld resolves the libc.so /lib GROUP under the
       # sysroot).
-      tc        = toolchainFor target;
-      cc        = tc.cc;          # cross-gcc-<arch>      (${tp}-gcc/-g++, glibc sysroot)
-      binu      = tc.binutils;    # cross-binutils-<arch> (${tp}-ar/-ranlib/-nm)
-      crossMig  = mig."mig-${name}";
-      pname     = "hurd-${tp}";
+      tc = toolchainFor target;
+      inherit (tc) cc; # cross-gcc-<arch>      (${tp}-gcc/-g++, glibc sysroot)
+      binu = tc.binutils; # cross-binutils-<arch> (${tp}-ar/-ranlib/-nm)
+      crossMig = mig."mig-${name}";
+      pname = "hurd-${tp}";
     in
-    pkgs.stdenv.mkDerivation ({
+    pkgs.stdenv.mkDerivation {
       inherit pname;
       version = fullVersion;
       src = srcInput;
@@ -64,10 +81,21 @@ let
       # the freestanding kernel, the userland IS dynamically linked with real
       # RPATHs, so the audit does genuine work.  dontPatchELF below disables
       # patchelf's OTHER hook (--shrink-rpath).
-      nativeBuildInputs =
-        [ pkgs.autoreconfHook ]
-        ++ (with pkgs; [ texinfo perl pkg-config patchelf fakeroot ])
-        ++ [ cc binu crossMig ];
+      nativeBuildInputs = [
+        pkgs.autoreconfHook
+      ]
+      ++ (with pkgs; [
+        texinfo
+        perl
+        pkg-config
+        patchelf
+        fakeroot
+      ])
+      ++ [
+        cc
+        binu
+        crossMig
+      ];
 
       # CFLAGS go via configureFlags (below), NOT a derivation env var: an env
       # CFLAGS is seen by configure (-> config.make) AND make, so `-g/-O/-std` land
@@ -97,7 +125,12 @@ let
         ${helpers.crossPkg.outOfTreePreConfigure}
         # Determinism maps via CPPFLAGS (the raw cross-gcc ignores NIX_CFLAGS_COMPILE);
         # after outOfTreePreConfigure so $srcdir is set and configure bakes it.
-        ${buildFlags.detCppflagsUnwrapped { gcc = cc; binutils = binu; canonBuild = buildFlags.hurdCanonBuild; sysroot = tc.sysroot; }}
+        ${buildFlags.detCppflagsUnwrapped {
+          gcc = cc;
+          binutils = binu;
+          canonBuild = buildFlags.hurdCanonBuild;
+          inherit (tc) sysroot;
+        }}
       '';
 
       # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive rule uses
@@ -106,7 +139,11 @@ let
       # non-Linux host the host ar/ranlib can't index i686-gnu ELF, so the static
       # archives come out empty and every .static program fails to link.
       # Command-line make vars override the built-ins and propagate.
-      makeFlags = [ "AR=${tp}-ar" "RANLIB=${tp}-ranlib" "NM=${tp}-nm" ];
+      makeFlags = [
+        "AR=${tp}-ar"
+        "RANLIB=${tp}-ranlib"
+        "NM=${tp}-nm"
+      ];
 
       # Flag set shared with the in-tree dev shell via hurd-config.nix (see that
       # file); only --host is per-derivation here.  Deployable prefix (mirrors
@@ -118,7 +155,9 @@ let
       # //share like the in-tree.
       configureFlags = [
         "--host=${tp}"
-      ] ++ hurdConfig.deployFlags ++ hurdConfig.coreFlags;
+      ]
+      ++ hurdConfig.deployFlags
+      ++ hurdConfig.coreFlags;
       dontAddPrefix = true;
 
       # Install under fakeroot: hurd's daemons/ + utils/ install some programs
@@ -208,6 +247,6 @@ let
       #  - No /nix/store DT_RUNPATH: the raw cross-binutils ld bakes no rpath, so the
       #    servers/libs resolve from /lib via the loader (Debian GNU/Hurd parity) with
       #    no NIX_LDFLAGS / NIX_DONT_SET_RPATH suppression needed.
-    });
+    };
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "hurd-${name}" (mkOne name target)) hurdTargets

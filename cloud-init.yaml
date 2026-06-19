@@ -27,7 +27,6 @@
 # Why write_files + runcmd: cloud-init runs `runcmd` items under
 # /bin/sh (dash on Ubuntu), which rejects `set -o pipefail`.  We write
 # the script with a bash shebang and exec it from runcmd.
-
 write_files:
   - path: /usr/local/sbin/bootstrap-nix-dev.sh
     permissions: '0755'
@@ -179,6 +178,5 @@ write_files:
       esac
       PROFILED
       chmod 0644 /etc/profile.d/nix-system-tools.sh
-
 runcmd:
   - /usr/local/sbin/bootstrap-nix-dev.sh

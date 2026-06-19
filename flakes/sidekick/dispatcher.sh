@@ -18,15 +18,18 @@ bb() { /bin/busybox "$@"; }
 # Must come first; host-supplied scripts expect the usual coreutils names.
 /bin/busybox --install -s /bin 2>/dev/null
 
-bb mount -t proc     proc /proc 2>/dev/null
-bb mount -t sysfs    sys  /sys  2>/dev/null
-bb mount -t devtmpfs dev  /dev  2>/dev/null
+bb mount -t proc proc /proc 2>/dev/null
+bb mount -t sysfs sys /sys 2>/dev/null
+bb mount -t devtmpfs dev /dev 2>/dev/null
 bb mkdir -p /shared /mnt /tmp
 
 # 9p-over-virtio stack (decompressed Alpine modules, dependency order).
 for ko in /mods/*.ko; do bb insmod "$ko" 2>/dev/null; done
-bb mount -t 9p -o trans=virtio,version=9p2000.L shared /shared 2>/dev/null \
-  || { echo "FATAL: 9p mount failed" >&2; bb poweroff -f; }
+bb mount -t 9p -o trans=virtio,version=9p2000.L shared /shared 2>/dev/null ||
+  {
+    echo "FATAL: 9p mount failed" >&2
+    bb poweroff -f
+  }
 
 # Optional read-only /nix/store mount (mount_tag=nixstore) so tool
 # arguments that are store paths resolve verbatim in the VM - a host shim can
@@ -48,11 +51,14 @@ done
 
 if [ "$mode" = oneshot ]; then
   if [ -f /shared/run.sh ]; then
-    bb sh /shared/run.sh > /shared/run.out 2>&1; echo $? > /shared/run.rc
+    bb sh /shared/run.sh >/shared/run.out 2>&1
+    echo $? >/shared/run.rc
   else
-    echo "FATAL: oneshot but /shared/run.sh missing" > /shared/run.out; echo 127 > /shared/run.rc
+    echo "FATAL: oneshot but /shared/run.sh missing" >/shared/run.out
+    echo 127 >/shared/run.rc
   fi
-  bb sync; bb poweroff -f
+  bb sync
+  bb poweroff -f
 fi
 
 # ---- serve (warm) ----------------------------------------------------
@@ -62,19 +68,24 @@ fi
 # Inactivity timer = keepalive seconds (host seeds /shared/keepalive and may
 # raise it; honour the highest).  Coarse 1s poll keeps busybox-sh simple.
 bb mkdir -p /shared/q
-ka=$(bb cat /shared/keepalive 2>/dev/null); [ -n "$ka" ] || ka=60
-: > /shared/.ready    # host waits for this before sending
+ka=$(bb cat /shared/keepalive 2>/dev/null)
+[ -n "$ka" ] || ka=60
+: >/shared/.ready # host waits for this before sending
 idle=0
 while :; do
   did=0
   for ready in /shared/q/*.ready; do
     [ -e "$ready" ] || continue
     seq=$(bb basename "$ready" .ready)
-    nk=$(bb cat /shared/keepalive 2>/dev/null); [ -n "$nk" ] && [ "$nk" -gt "$ka" ] 2>/dev/null && ka=$nk
-    bb sh "/shared/q/$seq.cmd" > "/shared/q/$seq.out" 2>"/shared/q/$seq.err"
-    echo $? > "/shared/q/$seq.rc"
-    bb rm -f "$ready"; bb sync; : > "/shared/q/$seq.done"
-    did=1; idle=0
+    nk=$(bb cat /shared/keepalive 2>/dev/null)
+    [ -n "$nk" ] && [ "$nk" -gt "$ka" ] 2>/dev/null && ka=$nk
+    bb sh "/shared/q/$seq.cmd" >"/shared/q/$seq.out" 2>"/shared/q/$seq.err"
+    echo $? >"/shared/q/$seq.rc"
+    bb rm -f "$ready"
+    bb sync
+    : >"/shared/q/$seq.done"
+    did=1
+    idle=0
   done
   if [ "$did" = 0 ]; then
     idle=$((idle + 1))
@@ -82,4 +93,5 @@ while :; do
     bb sleep 1
   fi
 done
-bb sync; bb poweroff -f
+bb sync
+bb poweroff -f

@@ -9,22 +9,20 @@
 # Literals are spelled via single-char classes: `[(]`, `[[]`, `[]]`.  `.`
 # already matches newlines in nix's regex, so no multi-line dance.
 
-{ lib }:
-
 {
-  parseM4Version = path:
+  parseM4Version =
+    path:
     let
       content = builtins.readFile path;
-      match = builtins.match
-        ".*m4_define[(][[]AC_PACKAGE_VERSION[]],[[]([0-9.]+)[]][)].*" content;
+      match = builtins.match ".*m4_define[(][[]AC_PACKAGE_VERSION[]],[[]([0-9.]+)[]][)].*" content;
     in
     if match == null then "unknown" else builtins.head match;
 
-  parseAcInitVersion = path:
+  parseAcInitVersion =
+    path:
     let
       content = builtins.readFile path;
-      match = builtins.match
-        ".*AC_INIT[(][[][^]]*[]], [[]([0-9.]+)[]], .*" content;
+      match = builtins.match ".*AC_INIT[(][[][^]]*[]], [[]([0-9.]+)[]], .*" content;
     in
     if match == null then "unknown" else builtins.head match;
 }

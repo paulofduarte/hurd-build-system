@@ -15,21 +15,30 @@
 { nixpkgs }:
 
 let
-  inherit (nixpkgs.lib) head last filterAttrs attrNames splitString;
+  inherit (nixpkgs.lib)
+    head
+    last
+    filterAttrs
+    attrNames
+    splitString
+    ;
   cpuOf = s: head (splitString "-" s);
 in
 
 {
   # defaultTargetName : system -> targets -> name
-  defaultTargetName = system: targets:
+  defaultTargetName =
+    system: targets:
     let
-      hostCpu   = cpuOf system;
+      hostCpu = cpuOf system;
       isPrimary = t: (t.platform or null) != "xen";
       primaries = filterAttrs (_: isPrimary) targets;
-      cpuMatch  = filterAttrs (_: t: cpuOf t.crossTarget == hostCpu) primaries;
+      cpuMatch = filterAttrs (_: t: cpuOf t.crossTarget == hostCpu) primaries;
     in
-    if cpuMatch != { } then head (attrNames cpuMatch)
+    if cpuMatch != { } then
+      head (attrNames cpuMatch)
     # No primary matches the host CPU: take the widest primary.  Names
     # sort lexicographically, so the 64-bit `x86_64` wins over `i686`.
-    else last (attrNames primaries);
+    else
+      last (attrNames primaries);
 }

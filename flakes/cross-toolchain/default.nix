@@ -25,7 +25,7 @@
 
 let
   devShell = import ./dev-shell.nix { inherit nixpkgs; };
-  target   = import ./target.nix    { inherit nixpkgs; };
+  target = import ./target.nix { inherit nixpkgs; };
 in
 
 devShell // target

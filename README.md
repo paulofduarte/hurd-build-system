@@ -66,12 +66,12 @@ and i686 builds are unaffected.
    commits - nine kernel-side (the import + four follow-up Bugaev-port
    fixes found by the test suite) and six test-side (start.S,
    syscalls.S, testlib_thread_start.c, user-qemu.mk wiring +
-   guest-loader runner, plus per-test aarch64 arms).  Each commit is
+   guest-loader runner, plus per-test aarch64 arms). Each commit is
    one logical change, named `subsystem: terse description` per
-   savannah convention.  Patch series targeting `bug-hurd@gnu.org`.
-2. **Add the Hurd userland.** Once gnumach is upstream, build glibc
+   savannah convention. Patch series targeting `bug-hurd@gnu.org`.
+1. **Add the Hurd userland.** Once gnumach is upstream, build glibc
    and the core Hurd servers on top.
-3. **Docker-based build path (coming soon).** A containerised entry
+1. **Docker-based build path (coming soon).** A containerised entry
    point for hosts where Nix isn't an option - same Makefile, same
    outputs, just a thinner prerequisite list.
 
@@ -97,11 +97,12 @@ default. The only thing you may need to install is Nix itself - see
 
 **Windows users**: build via **WSL 2** (Windows Subsystem for Linux,
 version 2). Once inside a WSL distro (Ubuntu, Debian, etc.) the same Nix
-+ git workflow applies - from Nix's perspective it's just a Linux host.
-WSL 1 isn't supported because its translation layer doesn't handle the
-file-system features Nix relies on. Make sure the repo is cloned into
-the WSL filesystem (e.g. `~/projects/...`), not a Windows-mounted path
-(`/mnt/c/...`) - the latter is slow and has case-insensitivity issues.
+
+- git workflow applies - from Nix's perspective it's just a Linux host.
+  WSL 1 isn't supported because its translation layer doesn't handle the
+  file-system features Nix relies on. Make sure the repo is cloned into
+  the WSL filesystem (e.g. `~/projects/...`), not a Windows-mounted path
+  (`/mnt/c/...`) - the latter is slow and has case-insensitivity issues.
 
 Nix's flakes and the `nix-command` experimental feature are enabled
 per-invocation by the build system, so you don't need any global Nix
@@ -117,8 +118,7 @@ cd hurd-build-system
 ```
 
 nix builds the kernel + MIG from pinned `*-src` flake inputs, so a plain
-clone is enough to build. To *iterate* on the sources (`make mig` / `make
-mach`), populate the working clones under `src/` once:
+clone is enough to build. To *iterate* on the sources (`make mig` / `make mach`), populate the working clones under `src/` once:
 
 ```sh
 make src        # clone each source's working tree at its pinned rev
@@ -162,7 +162,7 @@ make run RUN_ACCEL=1                                     # -accel hvf/kvm when h
 make run ARCH=x86_64 SCENARIO=hurd-debian RUN_REFRESH=1  # force re-fetch of cached distro image
 ```
 
-All knobs (`ARCH`, `SCENARIO`, `RUN_*`) accept either form - `make run VAR=value` (shown above) or `VAR=value make run` (env-style).  Pick whichever reads better.
+All knobs (`ARCH`, `SCENARIO`, `RUN_*`) accept either form - `make run VAR=value` (shown above) or `VAR=value make run` (env-style). Pick whichever reads better.
 
 Or via `nix run` (no clone needed - uses the cachix-cached nix-built kernel):
 
@@ -177,7 +177,7 @@ nix run github:paulofduarte/hurd-build-system#aarch64 -- -- -s -S    # everythin
 nix run github:paulofduarte/hurd-build-system#aarch64 --help
 ```
 
-The `nix run` path uses the nix-built kernel from the project's cachix cache.  Distro images cache at `$XDG_CACHE_HOME/hurd-build-system/test-images/`.
+The `nix run` path uses the nix-built kernel from the project's cachix cache. Distro images cache at `$XDG_CACHE_HOME/hurd-build-system/test-images/`.
 
 **Scenarios:**
 
@@ -204,8 +204,7 @@ how the harness is structured and how to add new scenarios.
 
 The kernel and MIG sources are **pinned flake inputs** (`gnumach-src` /
 `mig-src`), not submodules. The fork + branch each tracks is declared in
-`flake.nix`, and `flake.lock` records the exact commit nix builds - run `nix
-flake metadata` (or `make src`, below) to see the current pins. There's no
+`flake.nix`, and `flake.lock` records the exact commit nix builds - run `nix flake metadata` (or `make src`, below) to see the current pins. There's no
 `.gitmodules`, and nothing to keep in sync.
 
 For iterating on the sources, `make src` populates working clones under
@@ -233,15 +232,15 @@ make pin-src      # bump the pins to the forks' branch HEADs; then `make src`
 | Target | Action |
 |---|---|
 | `all` *(default)* | build the gnumach kernel + the Hurd userland (each in-tree if opted in, else the nix package) |
-| `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` - opt-in (run `make src-mig` first; else MIG is always available from the nix package).  For the clean nix-built wrapper, use `nix build .#mig-<ARCH>` directly - MIG is a host-arch tool, intentionally not bundled into `dist/` |
+| `mig` | build MIG **in-tree** under `work/mig/$(ARCH)/` - opt-in (run `make src-mig` first; else MIG is always available from the nix package). For the clean nix-built wrapper, use `nix build .#mig-<ARCH>` directly - MIG is a host-arch tool, intentionally not bundled into `dist/` |
 | `gnumach` | build the gnumach kernel - **in-tree** under `work/gnumach/$(ARCH)/` if opted in (`make src-gnumach`), else realize the nix kernel (`gnumach-<ARCH>`) |
 | `hurd` | build the Hurd userland - **in-tree** under `work/hurd/$(ARCH)/` if opted in (`make src-hurd`), else realize the nix userland (`hurd-<ARCH>`) |
 | `dist-gnumach` | install the kernel into `dist/$(ARCH)/boot/gnumach` (+ the GNU Mach Info manual and the RPC message-ID table) - the in-tree build if opted in, else the nix kernel |
 | `dist-hurd` | install the Hurd userland into `dist/$(ARCH)/` - the in-tree build if opted in, else the nix userland |
-| `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-gnumach` + `dist-hurd` + `dist-glibc` + `dist-gcc-libgcc` + `dist-tzdata`; mig is host-arch, not bundled).  Real copies, not symlinks - `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
-| `glibc` | realize the nix glibc.  glibc is **nix-only** (the gcc model): version picking = edit the `glibc-src` input in `flake.nix`; patches live in `flakes/cross-toolchain/glibc.nix`.  In-tree gnumach/hurd/mig changes still reach it - their scoped `--override-input` set rebuilds the nix glibc (the Mach/Hurd RPC stubs live inside glibc) |
-| `dist-glibc` | install the nix **deployable** glibc (`--prefix=/`) into `dist/$(ARCH)/` by verbatim-copying the resolved store output, store-path-stamped under `work/` so an unchanged glibc skips the copy.  `dist` includes it automatically |
-| `dist-gcc-<lib>` | install ONE gcc runtime lib into `dist/$(ARCH)/lib` (`libgcc`, `libstdc++`, `libatomic`, `libitm`, `libquadmath`, `libssp`, `libgomp`) from its own nix derivation (`cross-gcc-rt-<lib>-<ARCH>`, built against the **working** glibc).  `make dist` ships only `libgcc` (glibc dlopens `libgcc_s.so.1` for unwinding); opt the rest in per-target or via `DIST_GCC_LIBS="libstdc++ ..."` |
+| `dist` | produce a tarball-ready `dist/$(ARCH)/` (= `dist-gnumach` + `dist-hurd` + `dist-glibc` + `dist-gcc-libgcc` + `dist-tzdata`; mig is host-arch, not bundled). Real copies, not symlinks - `tar czf hurd-build-<arch>.tar.gz dist/$(ARCH)/` ships a self-contained release |
+| `glibc` | realize the nix glibc. glibc is **nix-only** (the gcc model): version picking = edit the `glibc-src` input in `flake.nix`; patches live in `flakes/cross-toolchain/glibc.nix`. In-tree gnumach/hurd/mig changes still reach it - their scoped `--override-input` set rebuilds the nix glibc (the Mach/Hurd RPC stubs live inside glibc) |
+| `dist-glibc` | install the nix **deployable** glibc (`--prefix=/`) into `dist/$(ARCH)/` by verbatim-copying the resolved store output, store-path-stamped under `work/` so an unchanged glibc skips the copy. `dist` includes it automatically |
+| `dist-gcc-<lib>` | install ONE gcc runtime lib into `dist/$(ARCH)/lib` (`libgcc`, `libstdc++`, `libatomic`, `libitm`, `libquadmath`, `libssp`, `libgomp`) from its own nix derivation (`cross-gcc-rt-<lib>-<ARCH>`, built against the **working** glibc). `make dist` ships only `libgcc` (glibc dlopens `libgcc_s.so.1` for unwinding); opt the rest in per-target or via `DIST_GCC_LIBS="libstdc++ ..."` |
 | `check` | run gnumach's `make check` (kernel tests under QEMU); MIG tests run inline via `doCheck=true` on every `nix build .#mig-<arch>` and don't need a separate make target |
 | `check-gnumach` | the actual kernel-tests recipe `check` delegates to |
 | `run` | boot the built kernel in qemu - see the [Run](#3-run) section for scenarios/flags |
@@ -250,12 +249,12 @@ make pin-src      # bump the pins to the forks' branch HEADs; then `make src`
 | `push-cache` | push the current `$(ARCH)` dev-shell closure to the project's cachix cache (`hurd-build-system.cachix.org`); requires `cachix authtoken` once per host |
 | `clean` | per-subdir `make clean` - preserves configure state |
 | `clean-dist` | `rm -rf dist/$(ARCH)/` (current target only) |
-| `mrproper` | `rm -rf work/`, the project-root install dir (`.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`), `dist/`, plus `git clean -fdX` on the src trees.  The flake sources under `flakes/{cross-toolchain,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
+| `mrproper` | `rm -rf work/`, the project-root install dir (`.sidekick/`), the flake gc-roots (`flakes/{gnumach-headers,mig,gnumach}/result-*`), `dist/`, plus `git clean -fdX` on the src trees. The flake sources under `flakes/{cross-toolchain,gnumach-headers,mig,gnumach,sidekick}/` are preserved. |
 
 ### Invoking MIG directly
 
 MIG is a *host-arch* code-generator (it runs on your build machine
-and emits portable C/H stubs).  Because the binary is host-coupled,
+and emits portable C/H stubs). Because the binary is host-coupled,
 not target-coupled, it intentionally **doesn't ship under
 `dist/<target>/`** - that tree is keyed by target architecture
 (headers, kernel, ...) and mixing in a host-arch tool muddles the
@@ -273,11 +272,11 @@ Three ways to get a working MIG, in order of how clean you want it:
      path/to/foo.defs
    ```
 
-   The `--` separates flake args from MIG's own argv.  `nix run`
+   The `--` separates flake args from MIG's own argv. `nix run`
    builds the per-target derivation if it isn't already cached, then
    invokes its primary `bin/<target>-gnu-mig` wrapper.
 
-2. **`nix build`** - install a stable gc-rooted symlink under
+1. **`nix build`** - install a stable gc-rooted symlink under
    `flakes/mig/result-<target>/`:
 
    ```sh
@@ -287,14 +286,14 @@ Three ways to get a working MIG, in order of how clean you want it:
    ```
 
    The wrapper resolves `migcom` via `dirname $0/../libexec/`, so it
-   works wherever you symlink it.  The cross-prefixed alias
+   works wherever you symlink it. The cross-prefixed alias
    (`<crossPrefix>-mig`) is what gnumach's `AC_CHECK_TOOL` discovers
    on PATH.
 
-3. **`make mig`** - in-tree iterative build under
-   `work/mig/<target>/` for active MIG development.  Same wrapper +
+1. **`make mig`** - in-tree iterative build under
+   `work/mig/<target>/` for active MIG development. Same wrapper +
    layout as (2), built incrementally from `src/mig/` after edits
-   without going through nix each time.  Pick this only if you're
+   without going through nix each time. Pick this only if you're
    editing MIG itself.
 
 For embedding MIG into an external build, prefer (2) - the result
@@ -369,7 +368,7 @@ Each shell exports:
 The top-level `Makefile` is the single entry point. Every build target
 re-enters `nix develop -i .#<target>` (always - strict isolation) and
 re-runs itself, so the build's only inputs are what the dev shell
-declares.  You never need to type `nix develop` manually; just `make`.
+declares. You never need to type `nix develop` manually; just `make`.
 
 Targets that don't need the cross-toolchain run at the top level
 without spawning a shell: `clean`, `clean-dist`, `mrproper`, `help`,
@@ -380,7 +379,7 @@ without spawning a shell: `clean`, `clean-dist`, `mrproper`, `help`,
 The flake declares the project's [cachix](https://cachix.org/) cache
 (`hurd-build-system`) via `nixConfig`, so anyone using the flake is
 offered the prebuilt cross-toolchains as a substituter the first time
-they enter the shell.  Accept the trust prompt once and `nix develop`
+they enter the shell. Accept the trust prompt once and `nix develop`
 pulls aarch64/i686/x86_64 cross-gccs as binary downloads instead of
 bootstrapping each one (~20 min/target -> ~30 s/target).
 
@@ -394,21 +393,21 @@ make push-cache ARCH=x86_64      # a specific arch
 `cachix authtoken <token>` once per host is enough; push is
 authenticated, pull is anonymous.
 
-**Continuous cache maintenance via GitHub Actions.**  The workflow at
+**Continuous cache maintenance via GitHub Actions.** The workflow at
 `.github/workflows/cache-toolchains.yml` keeps the cache populated
 automatically whenever a toolchain-affecting file lands on `main`
 (`flake.nix`, `flake.lock`, `target-archs.nix`,
 `flakes/cross-toolchain/**`, `packages.nix`, or the workflow / its
-`setup-nix` action) - plus manual dispatch.  It runs in two stages:
+`setup-nix` action) - plus manual dispatch. It runs in two stages:
 
 - **`plan`** - one runner cross-evaluates every `(host x target)`
   toolchain path (`packages.<host>.toolchain-<arch>`) and probes cachix
   for each with `nix path-info --store` (a `.narinfo` lookup, no
-  download).  Cross-eval is pure, so a single runner decides for all
+  download). Cross-eval is pure, so a single runner decides for all
   hosts; any host whose toolchains are all cached spins **no** runner.
   The job emits a build matrix of only the missing host/target pairs.
 - **`populate`** - for each host in that matrix, builds only the missing
-  targets (`nix build .#toolchain-<arch>`) and pushes them.  The matrix
+  targets (`nix build .#toolchain-<arch>`) and pushes them. The matrix
   spans the four supported host arches: `x86_64-linux` (`ubuntu-latest`),
   `aarch64-linux` (`ubuntu-24.04-arm`), `aarch64-darwin` (`macos-latest`),
   `x86_64-darwin` (`macos-15-intel`).
@@ -416,13 +415,13 @@ automatically whenever a toolchain-affecting file lands on `main`
 Only the cross-toolchain is cached - not mig / gnumach-headers / the
 kernel, which are cheap to build once the toolchain is in place.
 
-**Cross-host consistency check.**  When a cache run rebuilds >=1 toolchain
+**Cross-host consistency check.** When a cache run rebuilds >=1 toolchain
 it triggers `.github/workflows/toolchain-sanity-check.yml`, which
-cross-builds `make dist` for every target on all four hosts.  A `compare`
+cross-builds `make dist` for every target on all four hosts. A `compare`
 gate fails the run unless the hosts **agree** - byte-identical per-file
 hashes where a target builds, or an identical (normalised) error signature
 where it doesn't - which is what guards the byte-for-byte reproducibility
-the [version string](#versioning) advertises.  If a cache run rebuilt
+the [version string](#versioning) advertises. If a cache run rebuilt
 nothing, the toolchains are unchanged and the check is skipped.
 
 To enable the workflows, add the cachix auth token to the repo's
@@ -457,7 +456,7 @@ v1.8+git20260224-g79f3013+github.paulofduarte.gnumach+build.gec67ddf
 
 The branch is deliberately not in the fork section - `g<src>` already pins
 the commit uniquely, branches move (or get deleted), and detached pins have
-no branch.  `make show-src-pins` is where you go to see the branch a pin
+no branch. `make show-src-pins` is where you go to see the branch a pin
 tracks.
 
 **Build-rev by artifact role.** The `+build.g<rev>` field is provenance
@@ -474,7 +473,7 @@ the **nix-built** artefacts; **in-tree `make` builds carry the plain
 upstream version** (see "Local in-tree builds" below).
 
 **Delimiter grammar.** `-` is the git-describe-native separator and stays
-inside the core; every appended metadata section is fenced by a `+`.  Split
+inside the core; every appended metadata section is fenced by a `+`. Split
 on `+` -> four fields (three when the build-rev is omitted).
 
 **Reproducibility.** Every field is host-independent (the source input's
@@ -517,7 +516,7 @@ your tree to hack.
 ### Provisioning a Linux VM via cloud-init
 
 `cloud-init.yaml` at the project root is a self-contained
-[cloud-init](https://cloudinit.readthedocs.io/) recipe.  Any
+[cloud-init](https://cloudinit.readthedocs.io/) recipe. Any
 cloud-init-capable Linux VM consuming it as *user-data* boots
 fully wired for working on this project:
 
@@ -528,19 +527,19 @@ fully wired for working on this project:
   from the Determinate Nix daemon's own profile.
 - System-wide PATH wiring via `/etc/profile.d/nix-system-tools.sh`
   - every user on the VM gets the tools on PATH, plus a `TERM`
-  default and (for interactive bash) the starship hook.
+    default and (for interactive bash) the starship hook.
 - The project's cachix cache pre-trusted in `nix.conf` and
   `accept-flake-config = true` set, so the flake's `nixConfig`
   applies silently - `nix develop` never hangs on a trust prompt.
 - For *emulated* VMs (an x86_64 VM running under rosetta/qemu-user
   on an aarch64 host), `filter-syscalls = false` is added to
   nix.conf automatically - the emulation layer can't honor seccomp
-  BPF and nix would otherwise fail to install.  Native VMs leave
+  BPF and nix would otherwise fail to install. Native VMs leave
   the filter on.
 
 #### How to apply
 
-The exact invocation depends on your VM platform.  cloud-init is
+The exact invocation depends on your VM platform. cloud-init is
 supported across most of the Linux ecosystem; the user-data flag
 varies in name:
 
@@ -569,7 +568,7 @@ varies in name:
 
 Once cloud-init finishes, log in once to pick up the bash hooks
 (starship), then `cd` into a clone of this repo and run `make`
-(or `nix develop .#<arch>` for an interactive shell).  The
+(or `nix develop .#<arch>` for an interactive shell). The
 cross-toolchain streams in from cachix on first use - no rebuild,
 no prompts.
 
@@ -633,19 +632,19 @@ deliberately:
 
 **First-build caveat.** The cross-GCC for each `<target>-none-elf` /
 `<target>-elf` triple isn't in nixpkgs' binary cache for our host/target
-matrix.  The project's cachix cache
+matrix. The project's cachix cache
 (`hurd-build-system.cachix.org`) holds prebuilt cross-toolchains for
 the host/target combinations we've populated, so on supported hosts
 the *very first* `nix develop` pulls them as binary downloads -
 typically **under a minute per target**, network-bound rather than
 CPU-bound.
 
-| Host arch  | Cached on cachix? | First `nix develop` for a target |
+| Host arch | Cached on cachix? | First `nix develop` for a target |
 |---|---|---|
-| `aarch64-darwin`  | yes | ~30-60 s |
-| `aarch64-linux`   | yes | ~30-60 s |
-| `x86_64-linux`    | yes | ~30-60 s |
-| `x86_64-darwin`   | yes | ~30-60 s |
+| `aarch64-darwin` | yes | ~30-60 s |
+| `aarch64-linux` | yes | ~30-60 s |
+| `x86_64-linux` | yes | ~30-60 s |
+| `x86_64-darwin` | yes | ~30-60 s |
 
 After that, the toolchain lives in `/nix/store` and subsequent builds
 reuse it - that's where the ~40 s incremental figure above comes from.
@@ -659,7 +658,7 @@ The Makefile pins it via a gc-root under `.gcroots/<ARCH>` so
 **gnumach.** We track `aarch64-tests`, which is `aarch64-port` (the
 kernel-side port of Bugaev's `wip-aarch64`, in nine upstream-shaped
 commits on top of savannah master) plus six commits that add the
-upstream test suite's aarch64 arms.  The kernel port carries Bugaev's
+upstream test suite's aarch64 arms. The kernel port carries Bugaev's
 import plus four follow-up fixes found while bringing up the test
 suite:
 
@@ -682,20 +681,20 @@ suite:
   (which forks `kern/bootstrap.c` and `device/intr.{c,h}` and is
   aarch64-only), `aarch64/aarch64/model_dep.c` now synthesises a
   multiboot-shaped `boot_info` from the DTB's `/chosen/multiboot,module`
-  nodes during `c_boot_entry`.  Upstream `bootstrap_create()` then
+  nodes during `c_boot_entry`. Upstream `bootstrap_create()` then
   consumes those modules through the same `boot_info.mods_addr`
   pathway it already uses on i386/x86_64.
 - *phystokv contract for synthesised boot modules.* `bootstrap_create`
   calls `phystokv()` on `boot_info.mods_addr` and on each module's
-  `string` field, expecting both to hold *physical* addresses.  The
+  `string` field, expecting both to hold *physical* addresses. The
   initial aarch64 synthesiser stored kernel-virtual pointers, which
   then mapped to bogus split-half addresses after `phystokv` ran.
   Convert with `kvtophys` at population time.
 - *Reserve module physical pages from the heap.* `free_bootstrap_pages`
-  asserts every page it releases is `VM_PT_RESERVED`.  On x86 biosmem
+  asserts every page it releases is `VM_PT_RESERVED`. On x86 biosmem
   carves modules out of the heap range so vm_page_init defaults them
   to reserved; the aarch64 path was handing all RAM to vm_page,
-  including module-occupied pages.  Add `pmap_reserve_phys_range`,
+  including module-occupied pages. Add `pmap_reserve_phys_range`,
   call it for each module during DTB walk, and cap `vm_page_load_heap`
   below the lowest module so module pages stay registered but
   reserved.
@@ -706,12 +705,12 @@ suite:
 - *Strict-alignment check on `AARCH64_FLOAT_STATE` setstatus.* MIG
   places the `new_state[]` array at an 8-byte-aligned offset from the
   request message header, but `alignof(struct aarch64_float_state)`
-  is 16 (due to `__int128 v[32]`).  The kernel rejected every
+  is 16 (due to `__int128 v[32]`). The kernel rejected every
   legitimate write with `KERN_INVALID_ARGUMENT`; replace with a
   copy-into-aligned-local before validating.
 
-**mig.** No carried patches.  `src/mig` tracks vanilla `master` from
-savannah.  The kernel test-harness CFLAGS issue (stock
+**mig.** No carried patches. `src/mig` tracks vanilla `master` from
+savannah. The kernel test-harness CFLAGS issue (stock
 `tests/test_lib.sh` overwriting external `CFLAGS`) is worked around
 inside our `flakes/mig/default.nix` derivation by passing
 `TESTS_ENVIRONMENT="CFLAGS=-I${gnumach-headers}/include"` on the
@@ -720,7 +719,7 @@ inside our `flakes/mig/default.nix` derivation by passing
 ### Upstream gaps we work around
 
 **gnumach kernel test suite.** `make check-mach` forwards into
-gnumach's own `make check` for the current ARCH.  The harness
+gnumach's own `make check` for the current ARCH. The harness
 builds a GRUB-bootable ISO via `grub-mkrescue` and runs it under
 `qemu-system-i386 / x86_64`; the parent Makefile passes
 `USER_MIG=$(MIG_INSTALLED)` (the nix-built mig wrapper) to gnumach's

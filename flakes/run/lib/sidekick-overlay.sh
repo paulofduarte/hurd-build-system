@@ -26,9 +26,16 @@ sleep 1
 part=
 for p in /dev/vd[a-z][0-9]* /dev/sd[a-z][0-9]*; do
   [ -b "$p" ] || continue
-  if mount "$p" /mnt 2>/dev/null; then part="$p"; break; fi
+  if mount "$p" /mnt 2>/dev/null; then
+    part="$p"
+    break
+  fi
 done
-[ -n "$part" ] || { echo "FATAL: no mountable partition for kernel overlay" >&2; sync; exit 1; }
+[ -n "$part" ] || {
+  echo "FATAL: no mountable partition for kernel overlay" >&2
+  sync
+  exit 1
+}
 
 grub_cfg=/mnt/boot/grub/grub.cfg
 if [ -f "$grub_cfg" ] && ! grep -q "^# sidekick-generated" "$grub_cfg"; then
@@ -42,11 +49,12 @@ if [ -f "$grub_cfg" ] && ! grep -q "^# sidekick-generated" "$grub_cfg"; then
       case "$line" in
         *configfile*)
           path=$(printf '%s\n' "$line" | sed -nE 's|^[[:space:]]*configfile[[:space:]]+(.+)[[:space:]]*$|\1|p')
-          if [ -n "$path" ] && [ -f "/mnt$path" ]; then cat "/mnt$path"; else printf '%s\n' "$line"; fi ;;
+          if [ -n "$path" ] && [ -f "/mnt$path" ]; then cat "/mnt$path"; else printf '%s\n' "$line"; fi
+          ;;
         *) printf '%s\n' "$line" ;;
       esac
-    done < "$grub_cfg"
-  } > "$flat_cfg"
+    done <"$grub_cfg"
+  } >"$flat_cfg"
 
   boot_lines=$(awk '
     /^menuentry / && !/recovery mode/ && !found { found=1; in_body=1; prev=""; next }
@@ -68,10 +76,15 @@ if [ -f "$grub_cfg" ] && ! grep -q "^# sidekick-generated" "$grub_cfg"; then
   kernel_path=${kernel_path#/}
 
   if [ -f /shared/kernel.bin ] && [ -n "$kernel_path" ]; then
-    [ -e "/mnt/$kernel_path" ] || { echo "FATAL: target kernel /mnt/$kernel_path missing" >&2; sync; umount /mnt; exit 1; }
+    [ -e "/mnt/$kernel_path" ] || {
+      echo "FATAL: target kernel /mnt/$kernel_path missing" >&2
+      sync
+      umount /mnt
+      exit 1
+    }
     case "$kernel_path" in
-      *.gz) gzip -c < /shared/kernel.bin > "/mnt/$kernel_path" ;;
-      *)    cp /shared/kernel.bin "/mnt/$kernel_path" ;;
+      *.gz) gzip -c </shared/kernel.bin >"/mnt/$kernel_path" ;;
+      *) cp /shared/kernel.bin "/mnt/$kernel_path" ;;
     esac
   fi
 
@@ -95,7 +108,7 @@ EOF
   echo -e -n "\033[0m"
 }
 EOF
-  } > "$grub_cfg"
+  } >"$grub_cfg"
 fi
 
 sync

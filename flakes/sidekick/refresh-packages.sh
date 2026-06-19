@@ -40,7 +40,7 @@ echo "# resolving against ${IDX}" >&2
 curl -sSL "$IDX" -o /tmp/.sk-Packages.xz
 
 SNAPSHOT="$SNAPSHOT" SUITE="$SUITE" ARCH="$ARCH" TOPLEVEL="$TOPLEVEL" \
-python3 - <<'PY'
+  python3 - <<'PY'
 import lzma, os, re, sys
 
 snapshot = os.environ["SNAPSHOT"]; toplevel = os.environ["TOPLEVEL"].split()

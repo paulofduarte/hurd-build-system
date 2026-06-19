@@ -23,44 +23,49 @@
 { lib, flakeLib }:
 
 {
-  info = self: inputName: input:
+  info =
+    self: inputName: input:
     let
       lock = builtins.fromJSON (builtins.readFile (self.outPath + "/flake.lock"));
-      node = lock.nodes.${inputName} or
-             (throw "sources.info: flake.lock has no input '${inputName}'");
+      node = lock.nodes.${inputName} or (throw "sources.info: flake.lock has no input '${inputName}'");
       o = node.original;
       l = node.locked;
       d = input.lastModifiedDate or "00000000";
 
       byType =
-        if o.type == "github" then {
-          url     = "https://github.com/${o.owner}/${o.repo}.git";
-          forkUrl = "https://github.com/${o.owner}/${o.repo}";
-          name    = "github.${o.owner}.${o.repo}";
-        }
-        else if o.type == "gitlab" then {
-          url     = "https://gitlab.com/${o.owner}/${o.repo}.git";
-          forkUrl = "https://gitlab.com/${o.owner}/${o.repo}";
-          name    = "gitlab.${o.owner}.${o.repo}";
-        }
-        else if o.type == "sourcehut" then {
-          url     = "https://git.sr.ht/~${o.owner}/${o.repo}";
-          forkUrl = "https://git.sr.ht/~${o.owner}/${o.repo}";
-          name    = "sourcehut.${o.owner}.${o.repo}";
-        }
-        else if o.type == "git" then {
-          url     = o.url;
-          forkUrl = lib.removeSuffix ".git" o.url;
-          name    = flakeLib.shortUrl {
-            url = lib.removeSuffix ".git" o.url;
-          };
-        }
+        if o.type == "github" then
+          {
+            url = "https://github.com/${o.owner}/${o.repo}.git";
+            forkUrl = "https://github.com/${o.owner}/${o.repo}";
+            name = "github.${o.owner}.${o.repo}";
+          }
+        else if o.type == "gitlab" then
+          {
+            url = "https://gitlab.com/${o.owner}/${o.repo}.git";
+            forkUrl = "https://gitlab.com/${o.owner}/${o.repo}";
+            name = "gitlab.${o.owner}.${o.repo}";
+          }
+        else if o.type == "sourcehut" then
+          {
+            url = "https://git.sr.ht/~${o.owner}/${o.repo}";
+            forkUrl = "https://git.sr.ht/~${o.owner}/${o.repo}";
+            name = "sourcehut.${o.owner}.${o.repo}";
+          }
+        else if o.type == "git" then
+          {
+            inherit (o) url;
+            forkUrl = lib.removeSuffix ".git" o.url;
+            name = flakeLib.shortUrl {
+              url = lib.removeSuffix ".git" o.url;
+            };
+          }
         else
           throw "sources.info: input '${inputName}' has unsupported type '${o.type}'";
-    in {
+    in
+    {
       inherit (byType) url forkUrl name;
-      ref  = o.ref or l.ref or "HEAD";
-      rev  = l.rev;
+      ref = o.ref or l.ref or "HEAD";
+      inherit (l) rev;
       date = "${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
     };
 }

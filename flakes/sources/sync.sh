@@ -34,12 +34,19 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # name<TAB>url<TAB>rev<TAB>ref<TAB>remote, one source per line.
-lines=$(nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs --apply '
+_expr=$(
+  cat <<'NIXEXPR'
   srcs: builtins.concatStringsSep "\n" (map (n:
     let s = srcs.${n};
     in builtins.concatStringsSep "\t" [ n s.url s.rev s.ref s.name ])
-    (builtins.attrNames srcs))')
-[ -n "$lines" ] || { echo "src: .#srcs is empty" >&2; exit 1; }
+    (builtins.attrNames srcs))
+NIXEXPR
+)
+lines=$(nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs --apply "$_expr")
+[ -n "$lines" ] || {
+  echo "src: .#srcs is empty" >&2
+  exit 1
+}
 
 # Optional positional args restrict the run to the named source(s); with none
 # we reconcile every source (the `make src` behaviour).  `make src-<name>`
@@ -48,13 +55,18 @@ if [ "$#" -gt 0 ]; then
   known=$(printf '%s\n' "$lines" | cut -f1)
   for want in "$@"; do
     printf '%s\n' "$known" | grep -qx -- "$want" || {
-      echo "src: unknown source '$want'. Known:" $known >&2; exit 1; }
+      echo "src: unknown source '$want'. Known: $(printf '%s\n' "$known" | tr '\n' ' ')" >&2
+      exit 1
+    }
   done
   sel=""
   while IFS= read -r line; do
     name=${line%%$'\t'*}
     for want in "$@"; do
-      [ "$name" = "$want" ] && { sel+="$line"$'\n'; break; }
+      [ "$name" = "$want" ] && {
+        sel+="$line"$'\n'
+        break
+      }
     done
   done < <(printf '%s\n' "$lines")
   lines=${sel%$'\n'}
@@ -77,14 +89,14 @@ checkout_pinned() {
   [ -n "$(git ls-remote --heads "$url" "$ref" 2>/dev/null)" ] && on_branch=1
   # Fresh-clone dry-run: the repo isn't there yet, so just state the intent.
   if [ "${SRCS_DRY_RUN:-}" = "1" ] && [ ! -e "$dir/.git" ]; then
-    [ -n "$on_branch" ] && echo "  + (checkout branch '$ref' @ ${rev:0:12})" \
-                        || echo "  + (checkout --detach ${rev:0:12})"
+    [ -n "$on_branch" ] && echo "  + (checkout branch '$ref' @ ${rev:0:12})" ||
+      echo "  + (checkout --detach ${rev:0:12})"
     return 0
   fi
   if [ -n "$on_branch" ]; then
     if git -C "$dir" show-ref --verify --quiet "refs/heads/$ref"; then
       run git -C "$dir" checkout "$ref"
-      [ "${SRCS_DRY_RUN:-}" = "1" ] || [ "$(git -C "$dir" rev-parse "$ref")" = "$rev" ] || \
+      [ "${SRCS_DRY_RUN:-}" = "1" ] || [ "$(git -C "$dir" rev-parse "$ref")" = "$rev" ] ||
         echo "    note: branch '$ref' is not at the pinned rev ${rev:0:12} (left as-is)"
     else
       run git -C "$dir" checkout -b "$ref" "$rev"
@@ -120,8 +132,8 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
     # branches, so the local branch the clone landed on keeps working.
     # Refuse to clobber a pre-existing remote with the target name (shouldn't
     # exist on a fresh clone, but guards re-runs after a prior abort).
-    if [ "${SRCS_DRY_RUN:-}" != "1" ] \
-        && git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
+    if [ "${SRCS_DRY_RUN:-}" != "1" ] &&
+      git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then
       echo "src: REFUSING - $dir already has a remote '$remote_name'." >&2
       exit 1
     fi
@@ -137,7 +149,10 @@ while IFS=$'\t' read -r name url rev ref remote_name; do
   nurl=$(norm_url "$url")
   remote=""
   while read -r rname rurl _; do
-    [ "$(norm_url "$rurl")" = "$nurl" ] && { remote="$rname"; break; }
+    [ "$(norm_url "$rurl")" = "$nurl" ] && {
+      remote="$rname"
+      break
+    }
   done < <(git -C "$dir" remote -v | awk '$3 == "(fetch)"')
   if [ -z "$remote" ]; then
     if git -C "$dir" remote get-url "$remote_name" >/dev/null 2>&1; then

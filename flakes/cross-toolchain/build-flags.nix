@@ -30,8 +30,7 @@ rec {
     "-fdebug-prefix-map=${gcc}=/cross-gcc"
     "-fdebug-prefix-map=${binutils}=/cross-binutils"
   ];
-  debugPrefixMapUnwrappedStr = args:
-    lib.concatStringsSep " " (debugPrefixMapUnwrapped args);
+  debugPrefixMapUnwrappedStr = args: lib.concatStringsSep " " (debugPrefixMapUnwrapped args);
 
   # Derivation attrs every cross build shares.  Spread with `// commonAttrs`.
   #   enableParallelBuilding : parallel make.
@@ -87,8 +86,16 @@ rec {
   # INCLUDES glibc headers (the hurd userland) leaks that IA, host-varying sysroot path
   # into its DWARF, so map it to ${glibcCanonSysroot}.  Freestanding consumers (the
   # -nostdlib kernel) pull no glibc headers and pass no sysroot (no-op).
-  detCppflagsUnwrapped = { gcc, binutils, canonBuild, sysroot ? null }:
-    ''export CPPFLAGS="${debugPrefixMapUnwrappedStr { inherit gcc binutils; }}${lib.optionalString (sysroot != null) " -ffile-prefix-map=${sysroot}=${glibcCanonSysroot}"} -ffile-prefix-map=$srcdir=${canonBuild} -ffile-prefix-map=$PWD=${canonBuild} ''${CPPFLAGS:-}"'';
+  detCppflagsUnwrapped =
+    {
+      gcc,
+      binutils,
+      canonBuild,
+      sysroot ? null,
+    }:
+    ''export CPPFLAGS="${debugPrefixMapUnwrappedStr { inherit gcc binutils; }}${
+      lib.optionalString (sysroot != null) " -ffile-prefix-map=${sysroot}=${glibcCanonSysroot}"
+    } -ffile-prefix-map=$srcdir=${canonBuild} -ffile-prefix-map=$PWD=${canonBuild} ''${CPPFLAGS:-}"'';
 
   # Canonical replacement roots for glibc's own paths, so the glibc build is
   # reproducible cross-host AND byte-identical whether built in-tree or via nix.
@@ -100,8 +107,8 @@ rec {
   # darwin /builds/nix-<pid>-<rand>) - so without these maps the nix glibc diverges
   # cross-host even with the gcc map.  Each build -ffile-prefix-map's its real roots
   # to these names; consumed by glibc.nix and the in-tree Makefile (dev-shell env).
-  glibcCanonSrc     = "/glibc-src";
-  glibcCanonBuild   = "/glibc-build";
+  glibcCanonSrc = "/glibc-src";
+  glibcCanonBuild = "/glibc-build";
   glibcCanonSysroot = "/glibc-sysroot";
 
   # One canonical root per gnumach/hurd build, so their nix builds come out
@@ -110,7 +117,7 @@ rec {
   # Mapping ALL to a SINGLE name reconciles the two layouts (identical relative
   # paths under one root).  Consumed by gnumach/hurd default.nix + the Makefile.
   gnumachCanonBuild = "/gnumach-build";
-  hurdCanonBuild    = "/hurd-build";
+  hurdCanonBuild = "/hurd-build";
 
   # Canonical replacement for the from-source gcc BUILD SANDBOX root ($NIX_BUILD_TOP).
   # gcc unpacks its source + builds under there, and libgcc's DWARF bakes those paths

@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck shell=bash
 # Hurd-specific helpers - fetch, overlay, vanilla-vs-inject branch, exec.
 #
 # Reads $WORK, $ARCH, $GNUMACH_KERNEL, $QEMU*, $RUN_* from env.
@@ -43,8 +44,8 @@ hurd_fetch_once_verified() {
   local url="$1" dest="$2" sha="$3"
   hurd_fetch_once "$url" "$dest"
   hurd_fetch_once "$sha" "$dest.sha512"
-  (cd "$(dirname "$dest")" && sha512sum -c "$(basename "$dest").sha512") \
-    || die "checksum mismatch for $dest"
+  (cd "$(dirname "$dest")" && sha512sum -c "$(basename "$dest").sha512") ||
+    die "checksum mismatch for $dest"
 }
 
 # hurd_resolve_latest_target <url> - Cuirass-specific
@@ -91,7 +92,7 @@ $hint"
     echo "upstream has new build, re-fetching: $target" >&2
     curl -sLf "$url" -o "$dest.tmp"
     mv "$dest.tmp" "$dest"
-    echo "$target" > "$marker"
+    echo "$target" >"$marker"
     rm -rf "$(dirname "$dest")/extracted"
   fi
 }
@@ -108,11 +109,14 @@ $hint"
 #   kept slot.  Use as: overlay="$(hurd_overlay_path "$cache")" || exit 1
 hurd_overlay_path() {
   local cache="$1" slot="${RUN_KEEP_OVERLAY:-}"
-  [ -z "$slot" ] && { echo "$cache/overlay.qcow2"; return 0; }
+  [ -z "$slot" ] && {
+    echo "$cache/overlay.qcow2"
+    return 0
+  }
   case "$slot" in
     *[!0-9]*) die "invalid --keep-overlay slot '$slot' (must be an integer >= 1)" ;;
   esac
-  slot=$((10#$slot))   # strip leading zeros; base-10, never octal
+  slot=$((10#$slot)) # strip leading zeros; base-10, never octal
   [ "$slot" -ge 1 ] || die "invalid --keep-overlay slot '${RUN_KEEP_OVERLAY}' (must be >= 1)"
   echo "$cache/overlay-$slot.qcow2"
 }

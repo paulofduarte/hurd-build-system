@@ -16,8 +16,7 @@
 { pkgs }:
 
 pkgs.texinfo.overrideAttrs (old: {
-  patches = (old.patches or [])
-    ++ [ ./patches/texinfo-install-info-total-order-compare.patch ];
+  patches = (old.patches or [ ]) ++ [ ./patches/texinfo-install-info-total-order-compare.patch ];
   # Patching install-info.c bumps its mtime, which would make `make` try to
   # regenerate the shipped man page via help2man (not a build input) ->
   # "install-info.1 Error 127".  Touch the prebuilt page so it stays current.

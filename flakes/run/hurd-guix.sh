@@ -16,27 +16,37 @@
 # explanation is surfaced inline via $guix_x86_64_hint when that
 # path fails.  ARCH=i686 is reliably available.
 set -euo pipefail
+# shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
+# shellcheck source=lib/arch-flags.sh
 . "$(dirname "$0")/lib/arch-flags.sh"
+# shellcheck source=lib/hurd-common.sh
 . "$(dirname "$0")/lib/hurd-common.sh"
+# shellcheck source=lib/sidekick.sh
 . "$(dirname "$0")/lib/sidekick.sh"
 
 scenario_check_target "hurd-guix" "x86_64 i686"
 arch_qemu_for_target "$ARCH"
-QEMU_MACHINE="-M q35"            # Guix qcow2 hangs on i440fx - even with our
-                                  # minimal regenerated grub.cfg (verified
-                                  # 2026-05-25 on Linux).  q35 is required;
-                                  # the cost is gnumach's in-kernel SATA driver
-                                  # slowly probing q35's 6 ICH9-AHCI ports on
-                                  # every boot.  Accept the slow probe as the
-                                  # price of a bootable Guix.
-arch_apply_accel_if_requested    # appends -accel to QEMU_MACHINE if RUN_ACCEL=1 + arch match
+QEMU_MACHINE=(-M q35) # Guix qcow2 hangs on i440fx - even with our
+# minimal regenerated grub.cfg (verified
+# 2026-05-25 on Linux).  q35 is required;
+# the cost is gnumach's in-kernel SATA driver
+# slowly probing q35's 6 ICH9-AHCI ports on
+# every boot.  Accept the slow probe as the
+# price of a bootable Guix.
+arch_apply_accel_if_requested # appends -accel to QEMU_MACHINE if RUN_ACCEL=1 + arch match
 
-extra_qemu_args=("$@")           # capture RUN_ARGS pass-through
+extra_qemu_args=("$@") # capture RUN_ARGS pass-through
 
 case "$ARCH" in
-  x86_64) url="$HURD_GUIX_X86_64_URL"; qcow2_name="hurd64-barebones.qcow2" ;;
-  i686)   url="$HURD_GUIX_I686_URL";   qcow2_name="hurd-barebones.qcow2"   ;;
+  x86_64)
+    url="$HURD_GUIX_X86_64_URL"
+    qcow2_name="hurd64-barebones.qcow2"
+    ;;
+  i686)
+    url="$HURD_GUIX_I686_URL"
+    qcow2_name="hurd-barebones.qcow2"
+    ;;
 esac
 
 # GC-explanation hint only for x86_64 (i686 rarely fails).
@@ -62,7 +72,7 @@ hurd_make_overlay "$qcow2" "$overlay" qcow2
 if [ "${RUN_VANILLA:-}" = "1" ]; then
   sidekick_prepare_grub "$overlay"
 fi
-hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
+hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2 \
   -no-reboot \
   "${extra_qemu_args[@]}"
@@ -72,7 +82,7 @@ hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$Q
 sidekick_overlay_kernel "$overlay" "$GNUMACH_KERNEL"
 
 print_qemu_hint
-exec "$QEMU" -nographic -m "$QEMU_MEM" $QEMU_MACHINE -cpu "$QEMU_CPU" \
+exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
   -drive file="$overlay",format=qcow2 \
   -no-reboot \
   "${extra_qemu_args[@]}"

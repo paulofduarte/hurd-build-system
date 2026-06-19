@@ -4,8 +4,6 @@
 # host-independence knobs not tied to the source layout (the caller still owns
 # `preConfigure`, the autoconf-flavor-specific version splice).
 
-{ lib }:
-
 {
   mkReproAttrs = { pname, version }: {
     # -frandom-seed comes from nixpkgs' reproducible-builds.sh hook, as the first
@@ -16,7 +14,8 @@
     # target+build.  nix32 (no symbols) avoids a `/` clashing with the hook's
     # `${randSeed##*/}` trim.
     NIX_OUTPATH_USED_AS_RANDOM_SEED =
-      "/" + builtins.convertHash {
+      "/"
+      + builtins.convertHash {
         hash = builtins.hashString "sha256" "${pname}-${version}";
         hashAlgo = "sha256";
         toHashFormat = "nix32";

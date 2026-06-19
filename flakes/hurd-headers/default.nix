@@ -23,16 +23,23 @@
 #
 # Source comes from the pinned `hurd-src` flake input.
 
-{ nixpkgs, system, targets, mig, srcInput, forkUrl
+{
+  nixpkgs,
+  system,
+  targets,
+  mig,
+  srcInput,
+  forkUrl,
   # Ship include/ only - drop share/ (the conditional msgids tables) from the
   # output.  No consumer reads it (the dist's msgids come from the hurd
   # package), and trimming also removes the configure-time "did MIG stub
   # generation succeed" variance from the output surface.
-, includeOnly ? false }:
+  includeOnly ? false,
+}:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
-  lib = nixpkgs.lib;
+  inherit (nixpkgs) lib;
   helpers = import ../lib { inherit lib; };
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
@@ -45,74 +52,87 @@ let
 
   # Hurd userland targets - the non-xen ones.  The xen variants share their CPU
   # sibling's userland ABI (only gnumach differs by platform), so excluded.
-  hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
+  hurdTargets = lib.filterAttrs (_name: target: (target.platform or null) != "xen") targets;
 
-  mkOne = name: target:
+  mkOne =
+    name: target:
     let
       crossMig = mig."mig-${name}";
       pname = "hurd-headers-${target.crossTarget}";
     in
-    pkgs.stdenv.mkDerivation ({
-      inherit pname;
-      version = fullVersion;
+    pkgs.stdenv.mkDerivation (
+      {
+        inherit pname;
+        version = fullVersion;
 
-      # The pinned `hurd-src` input, never the local src/hurd clone.
-      src = srcInput;
+        # The pinned `hurd-src` input, never the local src/hurd clone.
+        src = srcInput;
 
-      # autoreconfHook regenerates configure (the shipped script is older than
-      # current automake).  texinfo: configure checks for it.  perl: some
-      # build-time scripts shell out to perl.  crossMig: provides
-      # `<crossTarget>-mig` on PATH so AC_CHECK_TOOL([MIG], [mig]) resolves.
-      nativeBuildInputs =
-        [ pkgs.autoreconfHook ]
-        ++ (with pkgs; [ texinfo perl ])
+        # autoreconfHook regenerates configure (the shipped script is older than
+        # current automake).  texinfo: configure checks for it.  perl: some
+        # build-time scripts shell out to perl.  crossMig: provides
+        # `<crossTarget>-mig` on PATH so AC_CHECK_TOOL([MIG], [mig]) resolves.
+        nativeBuildInputs = [
+          pkgs.autoreconfHook
+        ]
+        ++ (with pkgs; [
+          texinfo
+          perl
+        ])
         ++ [ crossMig ];
 
-      CFLAGS = buildFlags.baseCflags;
+        CFLAGS = buildFlags.baseCflags;
 
-      # Splice the composed version into AC_INIT before autoreconfHook
-      # regenerates configure.
-      postPatch = ''
-        sed -i.bak \
-          -e 's|^AC_INIT(\[GNU Hurd\], \[[^]]*\],|AC_INIT([GNU Hurd], [${fullVersion}],|' \
-          configure.ac
-        rm configure.ac.bak
-        grep "^AC_INIT" configure.ac
-      '';
+        # Splice the composed version into AC_INIT before autoreconfHook
+        # regenerates configure.
+        postPatch = ''
+          sed -i.bak \
+            -e 's|^AC_INIT(\[GNU Hurd\], \[[^]]*\],|AC_INIT([GNU Hurd], [${fullVersion}],|' \
+            configure.ac
+          rm configure.ac.bak
+          grep "^AC_INIT" configure.ac
+        '';
 
-      # --host=<crossTarget> flips autoconf into cross mode (link-tests, not
-      # run-tests); the link tests false-positive against the host libc, fine for
-      # headers-only since no .c is compiled.  The `ac_cv_*` lies / disable-*
-      # flags break the chicken-and-egg with glibc/libpthread/parted/libtirpc,
-      # which we don't have at headers-only time.  Verbatim from Guix's
-      # gnu/packages/hurd.scm `hurd-headers`.
-      configureFlags = [
-        "--host=${target.crossTarget}"
-        "--disable-profile"
-        "--disable-ncursesw"
-        "--without-parted"
-        "--without-libbz2"
-        "--without-libz"
-        "--without-rump"
-        "ac_cv_search_clnt_create=no"  # would otherwise pull in libtirpc
-      ];
+        # --host=<crossTarget> flips autoconf into cross mode (link-tests, not
+        # run-tests); the link tests false-positive against the host libc, fine for
+        # headers-only since no .c is compiled.  The `ac_cv_*` lies / disable-*
+        # flags break the chicken-and-egg with glibc/libpthread/parted/libtirpc,
+        # which we don't have at headers-only time.  Verbatim from Guix's
+        # gnu/packages/hurd.scm `hurd-headers`.
+        configureFlags = [
+          "--host=${target.crossTarget}"
+          "--disable-profile"
+          "--disable-ncursesw"
+          "--without-parted"
+          "--without-libbz2"
+          "--without-libz"
+          "--without-rump"
+          "ac_cv_search_clnt_create=no" # would otherwise pull in libtirpc
+        ];
 
-      # Headers-only - skip the kernel-and-userland compile entirely.
-      dontBuild = true;
+        # Headers-only - skip the kernel-and-userland compile entirely.
+        dontBuild = true;
 
-      installPhase = ''
-        runHook preInstall
-        make install-headers prefix=$out no_deps=t
-        runHook postInstall
-      '';
+        installPhase = ''
+          runHook preInstall
+          make install-headers prefix=$out no_deps=t
+          runHook postInstall
+        '';
 
-      passthru = { inherit target; };
+        passthru = { inherit target; };
 
-      meta = with lib; {
-        description = "GNU Hurd public headers for ${target.crossTarget}";
-        platforms = platforms.all;
-      };
-    } // helpers.mkReproAttrs { inherit pname; version = fullVersion; }
-      // lib.optionalAttrs includeOnly { postInstall = ''rm -rf "$out/share"''; });
+        meta = with lib; {
+          description = "GNU Hurd public headers for ${target.crossTarget}";
+          platforms = platforms.all;
+        };
+      }
+      // helpers.mkReproAttrs {
+        inherit pname;
+        version = fullVersion;
+      }
+      // lib.optionalAttrs includeOnly { postInstall = ''rm -rf "$out/share"''; }
+    );
 in
-lib.mapAttrs' (name: target: lib.nameValuePair "hurd-headers-${name}" (mkOne name target)) hurdTargets
+lib.mapAttrs' (
+  name: target: lib.nameValuePair "hurd-headers-${name}" (mkOne name target)
+) hurdTargets

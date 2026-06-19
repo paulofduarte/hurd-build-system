@@ -27,19 +27,23 @@
 #   composeToolchainVersion - the same for TOOLCHAIN blocks: no `self`, no
 #     `+build.g...` field.
 
-{ lib, selfMeta, url }:
+{
+  selfMeta,
+  url,
+}:
 
 let
   inherit (selfMeta) buildRev;
   inherit (url) shortUrl;
 
-  composeFromParts = {
-    upstreamVersion,
-    srcShort,
-    srcDate,
-    forkId,
-    buildShort ? null,
-  }:
+  composeFromParts =
+    {
+      upstreamVersion,
+      srcShort,
+      srcDate,
+      forkId,
+      buildShort ? null,
+    }:
     "v${upstreamVersion}+git${srcDate}-g${srcShort}+${forkId}"
     + (if buildShort == null then "" else "+build.g${buildShort}");
 in
@@ -53,18 +57,19 @@ in
   # --override-input drops BOTH self.shortRev and self.dirtyShortRev on a clean
   # tree, baking `+build.gunknown` into override-resolved nix builds; the explicit
   # token keeps them identical to no-override/CI builds).
-  composeVersion = {
-    upstreamVersion,
-    srcInput,
-    forkUrl,
-    self,
-    buildRevToken ? null,
-  }:
+  composeVersion =
+    {
+      upstreamVersion,
+      srcInput,
+      forkUrl,
+      self,
+      buildRevToken ? null,
+    }:
     composeFromParts {
       inherit upstreamVersion;
-      srcShort   = srcInput.shortRev or "unknown";
-      srcDate    = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
-      forkId     = shortUrl { url = forkUrl; };
+      srcShort = srcInput.shortRev or "unknown";
+      srcDate = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
+      forkId = shortUrl { url = forkUrl; };
       buildShort = if buildRevToken != null then buildRevToken else buildRev self;
     };
 
@@ -72,15 +77,16 @@ in
   # The toolchain building blocks' identity is upstream version + source rev, so
   # a build-system commit must not rehash them; omitting buildShort drops the
   # `+build.g...` field.
-  composeToolchainVersion = {
-    upstreamVersion,
-    srcInput,
-    forkUrl,
-  }:
+  composeToolchainVersion =
+    {
+      upstreamVersion,
+      srcInput,
+      forkUrl,
+    }:
     composeFromParts {
       inherit upstreamVersion;
       srcShort = srcInput.shortRev or "unknown";
-      srcDate  = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
-      forkId   = shortUrl { url = forkUrl; };
+      srcDate = builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000");
+      forkId = shortUrl { url = forkUrl; };
     };
 }

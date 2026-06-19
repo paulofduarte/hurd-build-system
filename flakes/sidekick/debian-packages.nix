@@ -4,49 +4,218 @@
 # 42 packages (closure of: busybox grub-pc-bin grub-common xorriso mtools e2fsprogs).
 {
   snapshot = "20260515T000000Z";
-  suite = "bookworm"; arch = "amd64";
+  suite = "bookworm";
+  arch = "amd64";
   packages = {
-    "busybox" = { version = "1:1.35.0-4+b7"; sha256 = "b5b4aaf330c61d5ae4a527761dfa5fd1e730ed1a442171fce95551e67d23ee5d"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/b/busybox/busybox_1.35.0-4+b7_amd64.deb"; };
-    "dmsetup" = { version = "2:1.02.185-2"; sha256 = "c73fc490b93c83550ed272de69ec96c5da30d4456b889f9e93c7fd8e53860b85"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/l/lvm2/dmsetup_1.02.185-2_amd64.deb"; };
-    "dpkg" = { version = "1.21.22"; sha256 = "9d97f27d8a8a06dd4800e8e0291337ca02e11cdfd7df09a4566a982a6d9fe4c4"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/d/dpkg/dpkg_1.21.22_amd64.deb"; };
-    "e2fsprogs" = { version = "1.47.0-2+b2"; sha256 = "fedd424691c08ef0739729026be298e7be8236337bf8e031b3c7ec66794e6fc2"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/e2fsprogs_1.47.0-2+b2_amd64.deb"; };
-    "gcc-12-base" = { version = "12.2.0-14+deb12u1"; sha256 = "1896a2aacf4ad681ff5eacc24a5b0ca4d5d9c9b9c9e4b6de5197bc1e116ea619"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/gcc-12/gcc-12-base_12.2.0-14+deb12u1_amd64.deb"; };
-    "gettext-base" = { version = "0.21-12"; sha256 = "5cb39c7acc7125e677ec98d0426a987daf0ce062f749f2a9421b2511f6dd5ab7"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/gettext/gettext-base_0.21-12_amd64.deb"; };
-    "grub-common" = { version = "2.06-13+deb12u1"; sha256 = "0e04e5339cd45398ae32406651f4f5bdd54c2a271aeea9aa3d95b571888a19f3"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/grub2/grub-common_2.06-13+deb12u1_amd64.deb"; };
-    "grub-pc-bin" = { version = "2.06-13+deb12u1"; sha256 = "0925ad6648ce9470c3947ad959777f21b7a305418083528317fb5d83416d78bb"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/grub2/grub-pc-bin_2.06-13+deb12u1_amd64.deb"; };
-    "libacl1" = { version = "2.3.1-3"; sha256 = "8be9df5795114bfe90e2be3d208ef47a5edd3fc7b3e20d387a597486d444e5e2"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/a/acl/libacl1_2.3.1-3_amd64.deb"; };
-    "libblkid1" = { version = "2.38.1-5+deb12u3"; sha256 = "5a083377f29191cafcdf0f91ec124349b4a7895b531556633a136e43c6d53943"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/u/util-linux/libblkid1_2.38.1-5+deb12u3_amd64.deb"; };
-    "libbrotli1" = { version = "1.0.9-2+b6"; sha256 = "563b4caec1aa5e876bd3355b36e7a38e1484baf5a293b48d1e8bd22db786e4d7"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/b/brotli/libbrotli1_1.0.9-2+b6_amd64.deb"; };
-    "libburn4" = { version = "1.5.4-1"; sha256 = "55c516c9b770a889b74d0d472158ed342f0704b7493076f847abf64c251eafc3"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libb/libburn/libburn4_1.5.4-1_amd64.deb"; };
-    "libbz2-1.0" = { version = "1.0.8-5+b1"; sha256 = "54149da3f44b22d523b26b692033b84503d822cc5122fed606ea69cc83ca5aeb"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/b/bzip2/libbz2-1.0_1.0.8-5+b1_amd64.deb"; };
-    "libc6" = { version = "2.36-9+deb12u13"; sha256 = "3d8072c73b017e907bbf44b7db870687888a991961d74f1ecbba6b9458f32a2c"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/glibc/libc6_2.36-9+deb12u13_amd64.deb"; };
-    "libcom-err2" = { version = "1.47.0-2+b2"; sha256 = "a2bac7015e78fbc0c504df3e441f3a22292f1d2d77f9ccda760057f3690e22f2"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/libcom-err2_1.47.0-2+b2_amd64.deb"; };
-    "libdevmapper1.02.1" = { version = "2:1.02.185-2"; sha256 = "aaa78ca236055fedccf637eacf7bda02bf1980b2db668dccd202b04d0d2cfe04"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/l/lvm2/libdevmapper1.02.1_1.02.185-2_amd64.deb"; };
-    "libefiboot1" = { version = "37-6"; sha256 = "ca79e849a65dae2ec2eaefd9e7c1dff717464a7cf029e1d109cbea7d43ef9a48"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/efivar/libefiboot1_37-6_amd64.deb"; };
-    "libefivar1" = { version = "37-6"; sha256 = "2abb5ccbd287049da2eca79c34ef9d68923ae6c73366ce7c7d65f084588dc2c2"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/efivar/libefivar1_37-6_amd64.deb"; };
-    "libext2fs2" = { version = "1.47.0-2+b2"; sha256 = "dff731f2318df99da4b8bf5f330f415f95b94c609bac29e7b2edba0a38f22a98"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/libext2fs2_1.47.0-2+b2_amd64.deb"; };
-    "libfreetype6" = { version = "2.12.1+dfsg-5+deb12u4"; sha256 = "8043e479f73f29992d652e3f9dfe8b17f9780c7ea6330afe379ec5f9f188ac44"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/f/freetype/libfreetype6_2.12.1+dfsg-5+deb12u4_amd64.deb"; };
-    "libfuse2" = { version = "2.9.9-6+b1"; sha256 = "df32b8f65d819f854e096896890d6ad632b6e520977bb120bb3143b4c66e2fcd"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/f/fuse/libfuse2_2.9.9-6+b1_amd64.deb"; };
-    "libgcc-s1" = { version = "12.2.0-14+deb12u1"; sha256 = "3016e62cb4b7cd8038822870601f5ed131befe942774d0f745622cc77d8a88f7"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/gcc-12/libgcc-s1_12.2.0-14+deb12u1_amd64.deb"; };
-    "libisoburn1" = { version = "1.5.4-4"; sha256 = "32bd9f96b2c29700f6ab5848674a4439eda37b1e353c99d89e4afc996b01fb53"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libi/libisoburn/libisoburn1_1.5.4-4_amd64.deb"; };
-    "libisofs6" = { version = "1.5.4-1"; sha256 = "c3786ebd1340a70d7c91bb489310e33aa48f1a33b219013b9dd44e417961cc7f"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libi/libisofs/libisofs6_1.5.4-1_amd64.deb"; };
-    "libjte2" = { version = "1.22-3"; sha256 = "233b22e3465d909284f6a81621ea3cb985e477a46da079e527cfbb19720c59a2"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/j/jigit/libjte2_1.22-3_amd64.deb"; };
-    "liblzma5" = { version = "5.4.1-1"; sha256 = "d321b9502b16aac534e1c691afbe3dc5e125e5091aa35bea026c59b25ebe82e7"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/x/xz-utils/liblzma5_5.4.1-1_amd64.deb"; };
-    "libmd0" = { version = "1.0.4-2"; sha256 = "03539fd30c509e27101d13a56e52eda9062bdf1aefe337c07ab56def25a13eab"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libm/libmd/libmd0_1.0.4-2_amd64.deb"; };
-    "libpcre2-8-0" = { version = "10.42-1"; sha256 = "030db54f4d76cdfe2bf0e8eb5f9efea0233ab3c7aa942d672c7b63b52dbaf935"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/p/pcre2/libpcre2-8-0_10.42-1_amd64.deb"; };
-    "libpng16-16" = { version = "1.6.39-2+deb12u1"; sha256 = "3248ce896bfffb6bd9b71512d321d0997b95bd5f3bd5736715f97c7345cb59a7"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libp/libpng1.6/libpng16-16_1.6.39-2+deb12u1_amd64.deb"; };
-    "libreadline8" = { version = "8.2-1.3"; sha256 = "e02ebbd3701cf468dbf98d6d917fbe0325e881f07fe8b316150c8d2a64486e66"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/r/readline/libreadline8_8.2-1.3_amd64.deb"; };
-    "libselinux1" = { version = "3.4-1+b6"; sha256 = "2b07f5287b9105f40158b56e4d70cc1652dac56a408f3507b4ab3d061eed425f"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libs/libselinux/libselinux1_3.4-1+b6_amd64.deb"; };
-    "libss2" = { version = "1.47.0-2+b2"; sha256 = "24115749c09b4e259acff1f799faccd1748ff322bd638b09d820729cb3b24579"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/libss2_1.47.0-2+b2_amd64.deb"; };
-    "libtinfo6" = { version = "6.4-4"; sha256 = "072d908f38f51090ca28ca5afa3b46b2957dc61fe35094c0b851426859a49a51"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/n/ncurses/libtinfo6_6.4-4_amd64.deb"; };
-    "libudev1" = { version = "252.39-1~deb12u1"; sha256 = "849127705aaf4408f569870843ab26cb531c1361d5f6d7851f5a5ecbed54a0c7"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/s/systemd/libudev1_252.39-1~deb12u1_amd64.deb"; };
-    "libuuid1" = { version = "2.38.1-5+deb12u3"; sha256 = "5fff398321da62d28a842bcbabd193d72ae21724962c029dc32b1dc6b2deaeaf"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/u/util-linux/libuuid1_2.38.1-5+deb12u3_amd64.deb"; };
-    "libzstd1" = { version = "1.5.4+dfsg2-5"; sha256 = "6315b5ac38b724a710fb96bf1042019398cb656718b1522279a5185ed39318fa"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_amd64.deb"; };
-    "logsave" = { version = "1.47.0-2+b2"; sha256 = "12e051fb0d931c510d464ba93e87b937aa41a08f286735e0538d9f9e73efa3d0"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/logsave_1.47.0-2+b2_amd64.deb"; };
-    "mtools" = { version = "4.0.33-1+really4.0.32-1"; sha256 = "972e0857ff43dbfc4c9255844c97b5d2cb0287720216d04c95b4e7fa483aec99"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/m/mtools/mtools_4.0.33-1+really4.0.32-1_amd64.deb"; };
-    "readline-common" = { version = "8.2-1.3"; sha256 = "69317523fe56429aa361545416ad339d138c1500e5a604856a80dd9074b4e35c"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/r/readline/readline-common_8.2-1.3_all.deb"; };
-    "tar" = { version = "1.34+dfsg-1.2+deb12u1"; sha256 = "24fb92e98c2969171f81a8b589263d705f6b1670f95d121cd74c810d4605acc3"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/t/tar/tar_1.34+dfsg-1.2+deb12u1_amd64.deb"; };
-    "xorriso" = { version = "1.5.4-4"; sha256 = "9668c8c8d578e80e61bfffb7353bb5128cb16f3195ccd7979af2dadd9ee30875"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libi/libisoburn/xorriso_1.5.4-4_amd64.deb"; };
-    "zlib1g" = { version = "1:1.2.13.dfsg-1"; sha256 = "d7dd1d1411fedf27f5e27650a6eff20ef294077b568f4c8c5e51466dc7c08ce4"; url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_amd64.deb"; };
+    "busybox" = {
+      version = "1:1.35.0-4+b7";
+      sha256 = "b5b4aaf330c61d5ae4a527761dfa5fd1e730ed1a442171fce95551e67d23ee5d";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/b/busybox/busybox_1.35.0-4+b7_amd64.deb";
+    };
+    "dmsetup" = {
+      version = "2:1.02.185-2";
+      sha256 = "c73fc490b93c83550ed272de69ec96c5da30d4456b889f9e93c7fd8e53860b85";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/l/lvm2/dmsetup_1.02.185-2_amd64.deb";
+    };
+    "dpkg" = {
+      version = "1.21.22";
+      sha256 = "9d97f27d8a8a06dd4800e8e0291337ca02e11cdfd7df09a4566a982a6d9fe4c4";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/d/dpkg/dpkg_1.21.22_amd64.deb";
+    };
+    "e2fsprogs" = {
+      version = "1.47.0-2+b2";
+      sha256 = "fedd424691c08ef0739729026be298e7be8236337bf8e031b3c7ec66794e6fc2";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/e2fsprogs_1.47.0-2+b2_amd64.deb";
+    };
+    "gcc-12-base" = {
+      version = "12.2.0-14+deb12u1";
+      sha256 = "1896a2aacf4ad681ff5eacc24a5b0ca4d5d9c9b9c9e4b6de5197bc1e116ea619";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/gcc-12/gcc-12-base_12.2.0-14+deb12u1_amd64.deb";
+    };
+    "gettext-base" = {
+      version = "0.21-12";
+      sha256 = "5cb39c7acc7125e677ec98d0426a987daf0ce062f749f2a9421b2511f6dd5ab7";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/gettext/gettext-base_0.21-12_amd64.deb";
+    };
+    "grub-common" = {
+      version = "2.06-13+deb12u1";
+      sha256 = "0e04e5339cd45398ae32406651f4f5bdd54c2a271aeea9aa3d95b571888a19f3";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/grub2/grub-common_2.06-13+deb12u1_amd64.deb";
+    };
+    "grub-pc-bin" = {
+      version = "2.06-13+deb12u1";
+      sha256 = "0925ad6648ce9470c3947ad959777f21b7a305418083528317fb5d83416d78bb";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/grub2/grub-pc-bin_2.06-13+deb12u1_amd64.deb";
+    };
+    "libacl1" = {
+      version = "2.3.1-3";
+      sha256 = "8be9df5795114bfe90e2be3d208ef47a5edd3fc7b3e20d387a597486d444e5e2";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/a/acl/libacl1_2.3.1-3_amd64.deb";
+    };
+    "libblkid1" = {
+      version = "2.38.1-5+deb12u3";
+      sha256 = "5a083377f29191cafcdf0f91ec124349b4a7895b531556633a136e43c6d53943";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/u/util-linux/libblkid1_2.38.1-5+deb12u3_amd64.deb";
+    };
+    "libbrotli1" = {
+      version = "1.0.9-2+b6";
+      sha256 = "563b4caec1aa5e876bd3355b36e7a38e1484baf5a293b48d1e8bd22db786e4d7";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/b/brotli/libbrotli1_1.0.9-2+b6_amd64.deb";
+    };
+    "libburn4" = {
+      version = "1.5.4-1";
+      sha256 = "55c516c9b770a889b74d0d472158ed342f0704b7493076f847abf64c251eafc3";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libb/libburn/libburn4_1.5.4-1_amd64.deb";
+    };
+    "libbz2-1.0" = {
+      version = "1.0.8-5+b1";
+      sha256 = "54149da3f44b22d523b26b692033b84503d822cc5122fed606ea69cc83ca5aeb";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/b/bzip2/libbz2-1.0_1.0.8-5+b1_amd64.deb";
+    };
+    "libc6" = {
+      version = "2.36-9+deb12u13";
+      sha256 = "3d8072c73b017e907bbf44b7db870687888a991961d74f1ecbba6b9458f32a2c";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/glibc/libc6_2.36-9+deb12u13_amd64.deb";
+    };
+    "libcom-err2" = {
+      version = "1.47.0-2+b2";
+      sha256 = "a2bac7015e78fbc0c504df3e441f3a22292f1d2d77f9ccda760057f3690e22f2";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/libcom-err2_1.47.0-2+b2_amd64.deb";
+    };
+    "libdevmapper1.02.1" = {
+      version = "2:1.02.185-2";
+      sha256 = "aaa78ca236055fedccf637eacf7bda02bf1980b2db668dccd202b04d0d2cfe04";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/l/lvm2/libdevmapper1.02.1_1.02.185-2_amd64.deb";
+    };
+    "libefiboot1" = {
+      version = "37-6";
+      sha256 = "ca79e849a65dae2ec2eaefd9e7c1dff717464a7cf029e1d109cbea7d43ef9a48";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/efivar/libefiboot1_37-6_amd64.deb";
+    };
+    "libefivar1" = {
+      version = "37-6";
+      sha256 = "2abb5ccbd287049da2eca79c34ef9d68923ae6c73366ce7c7d65f084588dc2c2";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/efivar/libefivar1_37-6_amd64.deb";
+    };
+    "libext2fs2" = {
+      version = "1.47.0-2+b2";
+      sha256 = "dff731f2318df99da4b8bf5f330f415f95b94c609bac29e7b2edba0a38f22a98";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/libext2fs2_1.47.0-2+b2_amd64.deb";
+    };
+    "libfreetype6" = {
+      version = "2.12.1+dfsg-5+deb12u4";
+      sha256 = "8043e479f73f29992d652e3f9dfe8b17f9780c7ea6330afe379ec5f9f188ac44";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/f/freetype/libfreetype6_2.12.1+dfsg-5+deb12u4_amd64.deb";
+    };
+    "libfuse2" = {
+      version = "2.9.9-6+b1";
+      sha256 = "df32b8f65d819f854e096896890d6ad632b6e520977bb120bb3143b4c66e2fcd";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/f/fuse/libfuse2_2.9.9-6+b1_amd64.deb";
+    };
+    "libgcc-s1" = {
+      version = "12.2.0-14+deb12u1";
+      sha256 = "3016e62cb4b7cd8038822870601f5ed131befe942774d0f745622cc77d8a88f7";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/g/gcc-12/libgcc-s1_12.2.0-14+deb12u1_amd64.deb";
+    };
+    "libisoburn1" = {
+      version = "1.5.4-4";
+      sha256 = "32bd9f96b2c29700f6ab5848674a4439eda37b1e353c99d89e4afc996b01fb53";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libi/libisoburn/libisoburn1_1.5.4-4_amd64.deb";
+    };
+    "libisofs6" = {
+      version = "1.5.4-1";
+      sha256 = "c3786ebd1340a70d7c91bb489310e33aa48f1a33b219013b9dd44e417961cc7f";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libi/libisofs/libisofs6_1.5.4-1_amd64.deb";
+    };
+    "libjte2" = {
+      version = "1.22-3";
+      sha256 = "233b22e3465d909284f6a81621ea3cb985e477a46da079e527cfbb19720c59a2";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/j/jigit/libjte2_1.22-3_amd64.deb";
+    };
+    "liblzma5" = {
+      version = "5.4.1-1";
+      sha256 = "d321b9502b16aac534e1c691afbe3dc5e125e5091aa35bea026c59b25ebe82e7";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/x/xz-utils/liblzma5_5.4.1-1_amd64.deb";
+    };
+    "libmd0" = {
+      version = "1.0.4-2";
+      sha256 = "03539fd30c509e27101d13a56e52eda9062bdf1aefe337c07ab56def25a13eab";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libm/libmd/libmd0_1.0.4-2_amd64.deb";
+    };
+    "libpcre2-8-0" = {
+      version = "10.42-1";
+      sha256 = "030db54f4d76cdfe2bf0e8eb5f9efea0233ab3c7aa942d672c7b63b52dbaf935";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/p/pcre2/libpcre2-8-0_10.42-1_amd64.deb";
+    };
+    "libpng16-16" = {
+      version = "1.6.39-2+deb12u1";
+      sha256 = "3248ce896bfffb6bd9b71512d321d0997b95bd5f3bd5736715f97c7345cb59a7";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libp/libpng1.6/libpng16-16_1.6.39-2+deb12u1_amd64.deb";
+    };
+    "libreadline8" = {
+      version = "8.2-1.3";
+      sha256 = "e02ebbd3701cf468dbf98d6d917fbe0325e881f07fe8b316150c8d2a64486e66";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/r/readline/libreadline8_8.2-1.3_amd64.deb";
+    };
+    "libselinux1" = {
+      version = "3.4-1+b6";
+      sha256 = "2b07f5287b9105f40158b56e4d70cc1652dac56a408f3507b4ab3d061eed425f";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libs/libselinux/libselinux1_3.4-1+b6_amd64.deb";
+    };
+    "libss2" = {
+      version = "1.47.0-2+b2";
+      sha256 = "24115749c09b4e259acff1f799faccd1748ff322bd638b09d820729cb3b24579";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/libss2_1.47.0-2+b2_amd64.deb";
+    };
+    "libtinfo6" = {
+      version = "6.4-4";
+      sha256 = "072d908f38f51090ca28ca5afa3b46b2957dc61fe35094c0b851426859a49a51";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/n/ncurses/libtinfo6_6.4-4_amd64.deb";
+    };
+    "libudev1" = {
+      version = "252.39-1~deb12u1";
+      sha256 = "849127705aaf4408f569870843ab26cb531c1361d5f6d7851f5a5ecbed54a0c7";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/s/systemd/libudev1_252.39-1~deb12u1_amd64.deb";
+    };
+    "libuuid1" = {
+      version = "2.38.1-5+deb12u3";
+      sha256 = "5fff398321da62d28a842bcbabd193d72ae21724962c029dc32b1dc6b2deaeaf";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/u/util-linux/libuuid1_2.38.1-5+deb12u3_amd64.deb";
+    };
+    "libzstd1" = {
+      version = "1.5.4+dfsg2-5";
+      sha256 = "6315b5ac38b724a710fb96bf1042019398cb656718b1522279a5185ed39318fa";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_amd64.deb";
+    };
+    "logsave" = {
+      version = "1.47.0-2+b2";
+      sha256 = "12e051fb0d931c510d464ba93e87b937aa41a08f286735e0538d9f9e73efa3d0";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/e/e2fsprogs/logsave_1.47.0-2+b2_amd64.deb";
+    };
+    "mtools" = {
+      version = "4.0.33-1+really4.0.32-1";
+      sha256 = "972e0857ff43dbfc4c9255844c97b5d2cb0287720216d04c95b4e7fa483aec99";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/m/mtools/mtools_4.0.33-1+really4.0.32-1_amd64.deb";
+    };
+    "readline-common" = {
+      version = "8.2-1.3";
+      sha256 = "69317523fe56429aa361545416ad339d138c1500e5a604856a80dd9074b4e35c";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/r/readline/readline-common_8.2-1.3_all.deb";
+    };
+    "tar" = {
+      version = "1.34+dfsg-1.2+deb12u1";
+      sha256 = "24fb92e98c2969171f81a8b589263d705f6b1670f95d121cd74c810d4605acc3";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/t/tar/tar_1.34+dfsg-1.2+deb12u1_amd64.deb";
+    };
+    "xorriso" = {
+      version = "1.5.4-4";
+      sha256 = "9668c8c8d578e80e61bfffb7353bb5128cb16f3195ccd7979af2dadd9ee30875";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/libi/libisoburn/xorriso_1.5.4-4_amd64.deb";
+    };
+    "zlib1g" = {
+      version = "1:1.2.13.dfsg-1";
+      sha256 = "d7dd1d1411fedf27f5e27650a6eff20ef294077b568f4c8c5e51466dc7c08ce4";
+      url = "https://snapshot.debian.org/archive/debian/20260515T000000Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_amd64.deb";
+    };
   };
 }

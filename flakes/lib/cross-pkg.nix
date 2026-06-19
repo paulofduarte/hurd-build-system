@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Shared preConfigure prelude for the cross gnumach/hurd derivations.  Consumed via
 # flakes/lib (helpers.crossPkg).
-{ lib }:
 
 {
   # Configure + build in a sibling dir with an absolute $srcdir, so DWARF/__FILE__

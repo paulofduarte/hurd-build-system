@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Body of the `nix run .#<arch>` app - wrapped by writeShellApplication in
@@ -45,25 +46,45 @@ qemu_args=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --help|-h)      show_help; exit 0 ;;
-    --vanilla)      export RUN_VANILLA=1; shift ;;
-    --accel)        export RUN_ACCEL=1; shift ;;
+    --help | -h)
+      show_help
+      exit 0
+      ;;
+    --vanilla)
+      export RUN_VANILLA=1
+      shift
+      ;;
+    --accel)
+      export RUN_ACCEL=1
+      shift
+      ;;
     --keep-overlay=*)
       # `--keep-overlay=N`; empty (`--keep-overlay=`) defaults to 1.
       RUN_KEEP_OVERLAY="${1#*=}"
       export RUN_KEEP_OVERLAY="${RUN_KEEP_OVERLAY:-1}"
-      shift ;;
+      shift
+      ;;
     --keep-overlay)
       # Bare flag -> slot 1.  `--keep-overlay N` consumes N only when
       # numeric, so `--keep-overlay hurd-debian` still parses the
       # scenario.  The value is validated downstream.
       if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
-        export RUN_KEEP_OVERLAY="$2"; shift 2
+        export RUN_KEEP_OVERLAY="$2"
+        shift 2
       else
-        export RUN_KEEP_OVERLAY=1; shift
-      fi ;;
-    --refresh)      export RUN_REFRESH=1; shift ;;
-    --)             shift; qemu_args+=("$@"); break ;;
+        export RUN_KEEP_OVERLAY=1
+        shift
+      fi
+      ;;
+    --refresh)
+      export RUN_REFRESH=1
+      shift
+      ;;
+    --)
+      shift
+      qemu_args+=("$@")
+      break
+      ;;
     --*)
       echo "unknown flag: $1" >&2
       echo "(use '--' to pass extra args through to qemu, or --help)" >&2
@@ -98,7 +119,7 @@ mkdir -p "$WORK"
 # shellcheck source=/dev/null
 . "$DISTRO_URLS_FILE"
 export HURD_DEBIAN_X86_64_URL HURD_DEBIAN_I686_URL \
-       HURD_GENTOO_X86_64_URL HURD_GENTOO_I686_URL \
-       HURD_GUIX_I686_URL HURD_GUIX_X86_64_URL
+  HURD_GENTOO_X86_64_URL HURD_GENTOO_I686_URL \
+  HURD_GUIX_I686_URL HURD_GUIX_X86_64_URL
 
 exec "$DISPATCH_SCRIPT" "$SCENARIO" ${qemu_args[@]+"${qemu_args[@]}"}

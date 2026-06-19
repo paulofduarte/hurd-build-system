@@ -19,224 +19,245 @@
 # phase 5).  Cross-host reproducibility is via this derivation's OWN canon maps
 # (it need not byte-match glibc's in-tree stubs).
 
-{ nixpkgs, system, targets, mig, gnumachHeaders, hurdHeaders
-, binutils                               # cross-binutils-<name> attrset (absolute-path tools)
-, bootstrapGcc                           # bootstrap-gcc-<name> attrset (the base's builder)
-, base                                   # glibc-stub-base-<arch> (buildTree)
+{
+  nixpkgs,
+  system,
+  targets,
+  mig,
+  gnumachHeaders,
+  hurdHeaders,
+  binutils, # cross-binutils-<name> attrset (absolute-path tools)
+  bootstrapGcc, # bootstrap-gcc-<name> attrset (the base's builder)
+  base, # glibc-stub-base-<arch> (buildTree)
   # The cc that rebuilds the stubs - default bootstrap-gcc, the base's own
   # builder (matches the base's libc.so the stubs link against; no cross-gcc
   # dependency, so no cycle).  Unwrapped (bakes --with-as/--with-ld -> binutils),
   # so determinism rides CPPFLAGS (config.make), not the gone wrapper channel.
-, buildCC ? (name: target: bootstrapGcc."bootstrap-gcc-${name}")
+  buildCC ? (name: _target: bootstrapGcc."bootstrap-gcc-${name}"),
   # emitIR: additionally emit the stub TUs as a single LLVM-IR text module
   # ($out/share/rpc-stub-ir/all.ll) for the rpc-wire-drift gate's wire-fact manifest.
   # Off by default (the harvest re-compiles every stub with clang, ~minutes) so
   # only the gate - which builds the `hurd-stubs-ir-<arch>` variant - pays it.
-, emitIR ? false
+  emitIR ? false,
 }:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
-  lib = nixpkgs.lib;
+  inherit (nixpkgs) lib;
   buildFlags = import ./build-flags.nix { inherit lib; };
 
-  hurdTargets = lib.filterAttrs (name: target: (target.platform or null) != "xen") targets;
+  hurdTargets = lib.filterAttrs (_name: target: (target.platform or null) != "xen") targets;
 
-  mkOne = name: target:
+  mkOne =
+    name: target:
     let
-      crossCC       = buildCC name target;
-      crossBinu     = binutils."cross-binutils-${name}";
-      crossMig      = mig."mig-${name}";
-      gnumach-hdrs  = gnumachHeaders."gnumach-headers-${name}";
-      hurd-hdrs     = hurdHeaders."hurd-headers-${name}";
-      stubBase      = base."glibc-hurd-${name}";
-      tp            = target.crossTarget;
+      crossCC = buildCC name target;
+      crossBinu = binutils."cross-binutils-${name}";
+      crossMig = mig."mig-${name}";
+      gnumach-hdrs = gnumachHeaders."gnumach-headers-${name}";
+      hurd-hdrs = hurdHeaders."hurd-headers-${name}";
+      stubBase = base."glibc-hurd-${name}";
+      tp = target.crossTarget;
     in
-    pkgs.stdenv.mkDerivation ({
-      pname   = "hurd-stubs${lib.optionalString emitIR "-ir"}-${tp}";
-      version = "2.43";
+    pkgs.stdenv.mkDerivation (
+      {
+        pname = "hurd-stubs${lib.optionalString emitIR "-ir"}-${tp}";
+        version = "2.43";
 
-      dontUnpack = true;
-      # Same host tools glibc's build uses - notably perl, which the mig wrapper
-      # script needs to locate migcom (File::Spec->abs2rel); without it the migcom
-      # path collapses to bin//migcom and stub generation fails.
-      nativeBuildInputs = (with pkgs; [ bison perl gawk python3 gnumake ]) ++ [ crossMig ];
+        dontUnpack = true;
+        # Same host tools glibc's build uses - notably perl, which the mig wrapper
+        # script needs to locate migcom (File::Spec->abs2rel); without it the migcom
+        # path collapses to bin//migcom and stub generation fails.
+        nativeBuildInputs =
+          (with pkgs; [
+            bison
+            perl
+            gawk
+            python3
+            gnumake
+          ])
+          ++ [ crossMig ];
 
-      buildPhase = ''
-        runHook preBuild
-        host=${tp}
+        buildPhase = ''
+          runHook preBuild
+          host=${tp}
 
-        # Copy the glibc build tree (src root with build/ inside) to a writable dir.
-        cp -a ${stubBase}/tree ./g
-        chmod -R u+w ./g
-        srcdir=$PWD/g
-        bdir=$srcdir/build
+          # Copy the glibc build tree (src root with build/ inside) to a writable dir.
+          cp -a ${stubBase}/tree ./g
+          chmod -R u+w ./g
+          srcdir=$PWD/g
+          bdir=$srcdir/build
 
-        # Rebuild the alias-headers sysroot the base configured against (the base's
-        # original $TMPDIR/sysroot path is gone with its sandbox).  Recreate it from
-        # THIS derivation's alias header inputs and repoint config.make at it; canon-
-        # mapped below so the result is cross-host stable.
-        sysroot=$PWD/sysroot
-        mkdir -p $sysroot/include
-        cp -rs ${gnumach-hdrs}/include/. $sysroot/include/ ; chmod -R u+w $sysroot/include
-        cp -rs ${hurd-hdrs}/include/.    $sysroot/include/ ; chmod -R u+w $sysroot/include
-        # The symlink farm above resolves to OLD store mtimes (make follows symlinks),
-        # so the stubs read "up to date" and nothing rebuilds.  Overlay the RPC
-        # interface .defs as REAL files with a fresh mtime: just those trigger the
-        # stub regen (mig re-runs on the possibly-overridden alias surface) while every
-        # OTHER header stays an old-mtime symlink, so nothing else recompiles.
-        # mach/machine is a symlink to mach/<arch>; resolve real dirs and tolerate
-        # any unwritable spot (the critical mach/*.defs + hurd/*.defs are plain dirs).
-        for d in $sysroot/include/mach $sysroot/include/mach/i386 \
-                 $sysroot/include/mach/x86_64 $sysroot/include/device \
-                 $sysroot/include/hurd; do
-          [ -d "$d" ] || continue
-          for f in "$d"/*.defs; do
-            [ -e "$f" ] || continue
-            cp -L "$f" "$f.real" 2>/dev/null && mv -f "$f.real" "$f" 2>/dev/null || true
+          # Rebuild the alias-headers sysroot the base configured against (the base's
+          # original $TMPDIR/sysroot path is gone with its sandbox).  Recreate it from
+          # THIS derivation's alias header inputs and repoint config.make at it; canon-
+          # mapped below so the result is cross-host stable.
+          sysroot=$PWD/sysroot
+          mkdir -p $sysroot/include
+          cp -rs ${gnumach-hdrs}/include/. $sysroot/include/ ; chmod -R u+w $sysroot/include
+          cp -rs ${hurd-hdrs}/include/.    $sysroot/include/ ; chmod -R u+w $sysroot/include
+          # The symlink farm above resolves to OLD store mtimes (make follows symlinks),
+          # so the stubs read "up to date" and nothing rebuilds.  Overlay the RPC
+          # interface .defs as REAL files with a fresh mtime: just those trigger the
+          # stub regen (mig re-runs on the possibly-overridden alias surface) while every
+          # OTHER header stays an old-mtime symlink, so nothing else recompiles.
+          # mach/machine is a symlink to mach/<arch>; resolve real dirs and tolerate
+          # any unwritable spot (the critical mach/*.defs + hurd/*.defs are plain dirs).
+          for d in $sysroot/include/mach $sysroot/include/mach/i386 \
+                   $sysroot/include/mach/x86_64 $sysroot/include/device \
+                   $sysroot/include/hurd; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*.defs; do
+              [ -e "$f" ] || continue
+              cp -L "$f" "$f.real" 2>/dev/null && mv -f "$f.real" "$f" 2>/dev/null || true
+            done
           done
-        done
-        # Remap the base's dead sandbox sysroot path -> ours.  On linux nix's fixed
-        # /build sandbox makes the base and this build share the path (oldroot ==
-        # sysroot), so this is skipped; on darwin's per-build dirs it is needed.
-        # The path is baked across config.make AND the generated dependency files
-        # (*.udeps/*.o.d list <oldroot>/.../mach.defs as prereqs), so rewrite EVERY
-        # text file that carries it (grep -rlI skips binaries -> no DWARF damage).
-        # CRITICAL: do it MTIME-PRESERVING and non-in-place (sed to temp, touch -r,
-        # mv) - `sed -i` is BSD-incompatible (darwin sandbox sed is Apple's) AND
-        # bumps mtimes, which would make errno/config deps look fresh and trigger
-        # spurious regens (errnos' `mkdir bits`, config.make-from-config.status)
-        # that fail.  Preserving mtimes keeps the design's invariant: only the
-        # overlaid stub .defs are fresh, so only the stubs rebuild.
-        oldsys=$(sed -n 's/.*-isystem \([^ ]*\/sysroot\/include\).*/\1/p' $bdir/config.make | head -1)
-        oldroot=''${oldsys%/include}
-        if [ -n "$oldsys" ] && [ "$oldroot" != "$sysroot" ]; then
-          grep -rlI "$oldroot" $bdir 2>/dev/null | while IFS= read -r f; do
-            sed "s@$oldroot@$sysroot@g" "$f" > "$f.tmp$$" \
-              && touch -r "$f" "$f.tmp$$" && mv -f "$f.tmp$$" "$f" || rm -f "$f.tmp$$"
-          done
-        fi
+          # Remap the base's dead sandbox sysroot path -> ours.  On linux nix's fixed
+          # /build sandbox makes the base and this build share the path (oldroot ==
+          # sysroot), so this is skipped; on darwin's per-build dirs it is needed.
+          # The path is baked across config.make AND the generated dependency files
+          # (*.udeps/*.o.d list <oldroot>/.../mach.defs as prereqs), so rewrite EVERY
+          # text file that carries it (grep -rlI skips binaries -> no DWARF damage).
+          # CRITICAL: do it MTIME-PRESERVING and non-in-place (sed to temp, touch -r,
+          # mv) - `sed -i` is BSD-incompatible (darwin sandbox sed is Apple's) AND
+          # bumps mtimes, which would make errno/config deps look fresh and trigger
+          # spurious regens (errnos' `mkdir bits`, config.make-from-config.status)
+          # that fail.  Preserving mtimes keeps the design's invariant: only the
+          # overlaid stub .defs are fresh, so only the stubs rebuild.
+          oldsys=$(sed -n 's/.*-isystem \([^ ]*\/sysroot\/include\).*/\1/p' $bdir/config.make | head -1)
+          oldroot=''${oldsys%/include}
+          if [ -n "$oldsys" ] && [ "$oldroot" != "$sysroot" ]; then
+            grep -rlI "$oldroot" $bdir 2>/dev/null | while IFS= read -r f; do
+              sed "s@$oldroot@$sysroot@g" "$f" > "$f.tmp$$" \
+                && touch -r "$f" "$f.tmp$$" && mv -f "$f.tmp$$" "$f" || rm -f "$f.tmp$$"
+            done
+          fi
 
-        # Determinism: append THIS copy's canon maps to glibc's captured CPPFLAGS so
-        # the rebuilt stubs are cross-host identical.  The unwrapped bootstrap-gcc has
-        # no cc-wrapper NIX_CFLAGS_COMPILE channel; glibc bakes configure's CPPFLAGS
-        # into config.make's CPPFLAGS-config, which Makeconfig applies to every .c/.os
-        # compile (`CPPFLAGS = $(config-extra-cppflags) $(CPPFLAGS-config) ...`).  glibc
-        # ALREADY baked the gcc + binutils -fdebug-prefix-maps (the base used the SAME
-        # bootstrap-gcc + cross-binutils store paths) and the sysroot map was repointed
-        # to $sysroot by the remap above - so only $bdir/$srcdir (this copy's build/src
-        # dirs, disjoint from the base's dead sandbox paths, hence order-independent)
-        # need adding.  hurd/. comes last so -ffile-prefix-map's last-match-wins
-        # canonicalises the hurd subdir's `.` relative path after the broad $bdir map.
-        # No -frandom-seed (the raw cc's default output-name seed is deterministic, as
-        # in glibc.nix) and no NIX_DONT_SET_RPATH (the raw ld bakes no store rpath).
-        echo "CPPFLAGS-config += -ffile-prefix-map=$bdir=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$srcdir=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$bdir/hurd/.=${buildFlags.glibcCanonBuild}/hurd" >> $bdir/config.make
+          # Determinism: append THIS copy's canon maps to glibc's captured CPPFLAGS so
+          # the rebuilt stubs are cross-host identical.  The unwrapped bootstrap-gcc has
+          # no cc-wrapper NIX_CFLAGS_COMPILE channel; glibc bakes configure's CPPFLAGS
+          # into config.make's CPPFLAGS-config, which Makeconfig applies to every .c/.os
+          # compile (`CPPFLAGS = $(config-extra-cppflags) $(CPPFLAGS-config) ...`).  glibc
+          # ALREADY baked the gcc + binutils -fdebug-prefix-maps (the base used the SAME
+          # bootstrap-gcc + cross-binutils store paths) and the sysroot map was repointed
+          # to $sysroot by the remap above - so only $bdir/$srcdir (this copy's build/src
+          # dirs, disjoint from the base's dead sandbox paths, hence order-independent)
+          # need adding.  hurd/. comes last so -ffile-prefix-map's last-match-wins
+          # canonicalises the hurd subdir's `.` relative path after the broad $bdir map.
+          # No -frandom-seed (the raw cc's default output-name seed is deterministic, as
+          # in glibc.nix) and no NIX_DONT_SET_RPATH (the raw ld bakes no store rpath).
+          echo "CPPFLAGS-config += -ffile-prefix-map=$bdir=${buildFlags.glibcCanonBuild} -ffile-prefix-map=$srcdir=${buildFlags.glibcCanonSrc} -ffile-prefix-map=$bdir/hurd/.=${buildFlags.glibcCanonBuild}/hurd" >> $bdir/config.make
 
-        cd $bdir
-
-        export CC=${crossCC}/bin/${tp}-gcc
-        export CXX=${crossCC}/bin/${tp}-g++
-        export AR=${crossBinu}/bin/${tp}-ar
-        export AS=${crossBinu}/bin/${tp}-as
-        export LD=${crossBinu}/bin/${tp}-ld
-        export NM=${crossBinu}/bin/${tp}-nm
-        export OBJCOPY=${crossBinu}/bin/${tp}-objcopy
-        export RANLIB=${crossBinu}/bin/${tp}-ranlib
-
-        # Plain `make` (NOT rm + targeted - rm'ing the objects breaks glibc's rules):
-        # the fresh .defs make only the mach/hurd stubs stale, so make rebuilds just
-        # them (~the spike's 8 s) and leaves the rest of the base tree untouched.
-        # With emitIR, CC is a transparent logging wrapper (execs the real gcc,
-        # identical build) so the harvest below can replay glibc's EXACT per-TU
-        # flags when re-emitting the stubs as LLVM IR.
-        ${lib.optionalString emitIR ''
-          # Log each cc invocation's cwd+args so the IR harvest below can replay glibc's
-          # exact per-TU flags.  Each invocation writes its OWN file under $TMPDIR/cc.d
-          # (NOT a shared cc.log): under `make -j` hundreds of cc wrappers run at once,
-          # and concurrent appends to one file SPLICE glibc's very long compile lines
-          # into garbage (truncated -ffile-prefix-map, glued -M/path, stray source
-          # fragments) - which then breaks the harvest's replayed clang flags.  One file
-          # per shell PID ($$) has no write contention: concurrent cc wrappers are
-          # distinct live processes (distinct PIDs -> distinct files), and a reused PID
-          # only ever appends after the prior holder exited (never concurrent).  Uses
-          # only the shell built-in $$ - NOT mktemp, which isn't on the cc wrapper's
-          # PATH during glibc's build.  Write under $TMPDIR (the sandbox build temp),
-          # NOT /tmp (the darwin nix sandbox forbids /tmp); $TMPDIR is expanded HERE so
-          # the absolute path is baked into the wrapper.
-          mkdir -p "$TMPDIR/cc.d"
-          printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> "'"$TMPDIR"'/cc.d/$$"\nexec %s "$@"\n' \
-            "${crossCC}/bin/${tp}-gcc" > "$TMPDIR/cclog"; chmod +x "$TMPDIR/cclog"
-        ''}
-        make -j"''${NIX_BUILD_CORES:-1}" ${lib.optionalString emitIR "CC=$TMPDIR/cclog"}
-
-        # Versioned install (glibc's install-time layout): the build emits an
-        # unversioned mach/libmachuser.so carrying SONAME libmachuser.so.1 - ship it
-        # AS the SONAME file, with the dev .so a symlink to it.
-        mkdir -p $out/lib
-        install -m555 mach/libmachuser.so  $out/lib/libmachuser.so.1
-        install -m555 hurd/libhurduser.so  $out/lib/libhurduser.so.0.3
-        install -m444 mach/libmachuser.a   $out/lib/libmachuser.a
-        install -m444 hurd/libhurduser.a   $out/lib/libhurduser.a
-        ln -s libmachuser.so.1   $out/lib/libmachuser.so
-        ln -s libhurduser.so.0.3 $out/lib/libhurduser.so
-
-        ${lib.optionalString emitIR ''
-          # Re-emit each stub TU as LLVM IR for the rpc-wire-drift gate's wire-fact
-          # manifest (flakes/tools/mig-wire-manifest.cpp).  glibc-native -O2 (glibc
-          # #errors without __OPTIMIZE__) - the wire facts (msgh_id / struct field
-          # offsets+values / msgt descriptors) are -O-invariant; -g dropped so
-          # debug line numbers don't perturb them.  Replays glibc's captured per-TU
-          # flags from the matching logged cwd, then llvm-links to ONE text module
-          # (all.ll) for the gate's comparator.
-          #
-          # Scope - BOTH RPC_*.c (user stubs) AND *_server.c are harvested.  glibc
-          # freezes server stubs only for the interfaces libc itself SERVES (exc,
-          # msg, ...); those _S_*_server demuxers ARE frozen-in-libc, so they belong
-          # in the gate (their reply-marshal stores + request-unmarshal icmp checks
-          # are wire surface).  Translator-side servers (io/fs/...) are NOT frozen -
-          # they rebuild with the kernel/translators under the in-tree mig - so the
-          # frozen-vs-alias model doesn't apply; their wire compatibility with the
-          # frozen libc client is the MIRROR of the user stub we already diff (same
-          # mig emits both directions from one .defs), so the user-side facts cover
-          # it.  Hence no separate translator-server harvest is needed.
-          genir=$out/share/rpc-stub-ir; mkdir -p $genir
-          clangbin=${pkgs.llvmPackages.clang-unwrapped}/bin/clang
-          # `|| true`: grep exits 1 on no-match, which would abort under set -e/pipefail
-          # before the clearer check below.
-          rep=$(grep -rhE 'RPC_[a-z].*\.c|_server\.c' "$TMPDIR/cc.d" 2>/dev/null | head -1 | cut -f2- || true)
-          [ -n "$rep" ] || { echo "ERROR: no RPC compile line captured (cc.d empty - cc wrapper logging broke)"; ls -la "$TMPDIR/cc.d" 2>/dev/null | head; exit 1; }
-          repflags=$(printf '%s' "$rep" | sed -E 's#[^ ]*RPC_[^ ]*\.c##g; s#[^ ]*[^ ]_server\.c##g; s/-Werror//g; s/ -g / /g; s#-o /[^ ]+##g; s/-MD//g; s/-MP//g; s#-MF [^ ]+##g; s#-MT [^ ]+##g')
           cd $bdir
-          find $bdir \( -name 'RPC_*.c' -o -name '*_server.c' \) -type f | while read -r c; do
-            nm=$(basename "$c" .c); sub=$(basename "$(dirname "$c")")
-            $clangbin -target ${tp} -Wno-unknown-warning-option -Wno-error $repflags \
-              -emit-llvm -c -o "$genir/$sub-$nm.bc" "$c" 2>>$genir/clang-errs.log \
-              || echo "CLANG-FAIL $sub/$nm" >> $genir/clang-errs.log
-          done
-          n=$(find $genir -name '*.bc' | wc -l)
-          [ "$n" -gt 0 ] || { echo "ERROR: no stub IR emitted"; head $genir/clang-errs.log; exit 1; }
-          ${pkgs.llvmPackages.llvm}/bin/llvm-link $(find $genir -name '*.bc' | sort) -S -o $genir/all.ll
-          rm -f $genir/*.bc $genir/clang-errs.log
-          echo "emitted $n stub IR modules -> all.ll"
-        ''}
 
-        runHook postBuild
-      '';
+          export CC=${crossCC}/bin/${tp}-gcc
+          export CXX=${crossCC}/bin/${tp}-g++
+          export AR=${crossBinu}/bin/${tp}-ar
+          export AS=${crossBinu}/bin/${tp}-as
+          export LD=${crossBinu}/bin/${tp}-ld
+          export NM=${crossBinu}/bin/${tp}-nm
+          export OBJCOPY=${crossBinu}/bin/${tp}-objcopy
+          export RANLIB=${crossBinu}/bin/${tp}-ranlib
 
-      installPhase = ''
-        runHook preInstall
-        # $out/lib populated in buildPhase (the build dir is gone by install).
-        ls $out/lib/libmachuser.so.1  >/dev/null || { echo "ERROR: libmachuser.so.1 missing"; exit 1; }
-        ls $out/lib/libhurduser.so.0.3 >/dev/null || { echo "ERROR: libhurduser.so.0.3 missing"; exit 1; }
-        runHook postInstall
-      '';
+          # Plain `make` (NOT rm + targeted - rm'ing the objects breaks glibc's rules):
+          # the fresh .defs make only the mach/hurd stubs stale, so make rebuilds just
+          # them (~the spike's 8 s) and leaves the rest of the base tree untouched.
+          # With emitIR, CC is a transparent logging wrapper (execs the real gcc,
+          # identical build) so the harvest below can replay glibc's EXACT per-TU
+          # flags when re-emitting the stubs as LLVM IR.
+          ${lib.optionalString emitIR ''
+            # Log each cc invocation's cwd+args so the IR harvest below can replay glibc's
+            # exact per-TU flags.  Each invocation writes its OWN file under $TMPDIR/cc.d
+            # (NOT a shared cc.log): under `make -j` hundreds of cc wrappers run at once,
+            # and concurrent appends to one file SPLICE glibc's very long compile lines
+            # into garbage (truncated -ffile-prefix-map, glued -M/path, stray source
+            # fragments) - which then breaks the harvest's replayed clang flags.  One file
+            # per shell PID ($$) has no write contention: concurrent cc wrappers are
+            # distinct live processes (distinct PIDs -> distinct files), and a reused PID
+            # only ever appends after the prior holder exited (never concurrent).  Uses
+            # only the shell built-in $$ - NOT mktemp, which isn't on the cc wrapper's
+            # PATH during glibc's build.  Write under $TMPDIR (the sandbox build temp),
+            # NOT /tmp (the darwin nix sandbox forbids /tmp); $TMPDIR is expanded HERE so
+            # the absolute path is baked into the wrapper.
+            mkdir -p "$TMPDIR/cc.d"
+            printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> "'"$TMPDIR"'/cc.d/$$"\nexec %s "$@"\n' \
+              "${crossCC}/bin/${tp}-gcc" > "$TMPDIR/cclog"; chmod +x "$TMPDIR/cclog"
+          ''}
+          make -j"''${NIX_BUILD_CORES:-1}" ${lib.optionalString emitIR "CC=$TMPDIR/cclog"}
 
-      # dontPatchELF rides commonAttrs.
-      passthru = { inherit target; };
-      meta = with lib; {
-        description = "Extracted Mach/Hurd RPC stub libs for ${tp}";
-        platforms = platforms.all;
-      };
-    } // buildFlags.commonAttrs);
+          # Versioned install (glibc's install-time layout): the build emits an
+          # unversioned mach/libmachuser.so carrying SONAME libmachuser.so.1 - ship it
+          # AS the SONAME file, with the dev .so a symlink to it.
+          mkdir -p $out/lib
+          install -m555 mach/libmachuser.so  $out/lib/libmachuser.so.1
+          install -m555 hurd/libhurduser.so  $out/lib/libhurduser.so.0.3
+          install -m444 mach/libmachuser.a   $out/lib/libmachuser.a
+          install -m444 hurd/libhurduser.a   $out/lib/libhurduser.a
+          ln -s libmachuser.so.1   $out/lib/libmachuser.so
+          ln -s libhurduser.so.0.3 $out/lib/libhurduser.so
+
+          ${lib.optionalString emitIR ''
+            # Re-emit each stub TU as LLVM IR for the rpc-wire-drift gate's wire-fact
+            # manifest (flakes/tools/mig-wire-manifest.cpp).  glibc-native -O2 (glibc
+            # #errors without __OPTIMIZE__) - the wire facts (msgh_id / struct field
+            # offsets+values / msgt descriptors) are -O-invariant; -g dropped so
+            # debug line numbers don't perturb them.  Replays glibc's captured per-TU
+            # flags from the matching logged cwd, then llvm-links to ONE text module
+            # (all.ll) for the gate's comparator.
+            #
+            # Scope - BOTH RPC_*.c (user stubs) AND *_server.c are harvested.  glibc
+            # freezes server stubs only for the interfaces libc itself SERVES (exc,
+            # msg, ...); those _S_*_server demuxers ARE frozen-in-libc, so they belong
+            # in the gate (their reply-marshal stores + request-unmarshal icmp checks
+            # are wire surface).  Translator-side servers (io/fs/...) are NOT frozen -
+            # they rebuild with the kernel/translators under the in-tree mig - so the
+            # frozen-vs-alias model doesn't apply; their wire compatibility with the
+            # frozen libc client is the MIRROR of the user stub we already diff (same
+            # mig emits both directions from one .defs), so the user-side facts cover
+            # it.  Hence no separate translator-server harvest is needed.
+            genir=$out/share/rpc-stub-ir; mkdir -p $genir
+            clangbin=${pkgs.llvmPackages.clang-unwrapped}/bin/clang
+            # `|| true`: grep exits 1 on no-match, which would abort under set -e/pipefail
+            # before the clearer check below.
+            rep=$(grep -rhE 'RPC_[a-z].*\.c|_server\.c' "$TMPDIR/cc.d" 2>/dev/null | head -1 | cut -f2- || true)
+            [ -n "$rep" ] || { echo "ERROR: no RPC compile line captured (cc.d empty - cc wrapper logging broke)"; ls -la "$TMPDIR/cc.d" 2>/dev/null | head; exit 1; }
+            repflags=$(printf '%s' "$rep" | sed -E 's#[^ ]*RPC_[^ ]*\.c##g; s#[^ ]*[^ ]_server\.c##g; s/-Werror//g; s/ -g / /g; s#-o /[^ ]+##g; s/-MD//g; s/-MP//g; s#-MF [^ ]+##g; s#-MT [^ ]+##g')
+            cd $bdir
+            find $bdir \( -name 'RPC_*.c' -o -name '*_server.c' \) -type f | while read -r c; do
+              nm=$(basename "$c" .c); sub=$(basename "$(dirname "$c")")
+              $clangbin -target ${tp} -Wno-unknown-warning-option -Wno-error $repflags \
+                -emit-llvm -c -o "$genir/$sub-$nm.bc" "$c" 2>>$genir/clang-errs.log \
+                || echo "CLANG-FAIL $sub/$nm" >> $genir/clang-errs.log
+            done
+            n=$(find $genir -name '*.bc' | wc -l)
+            [ "$n" -gt 0 ] || { echo "ERROR: no stub IR emitted"; head $genir/clang-errs.log; exit 1; }
+            ${pkgs.llvmPackages.llvm}/bin/llvm-link $(find $genir -name '*.bc' | sort) -S -o $genir/all.ll
+            rm -f $genir/*.bc $genir/clang-errs.log
+            echo "emitted $n stub IR modules -> all.ll"
+          ''}
+
+          runHook postBuild
+        '';
+
+        installPhase = ''
+          runHook preInstall
+          # $out/lib populated in buildPhase (the build dir is gone by install).
+          ls $out/lib/libmachuser.so.1  >/dev/null || { echo "ERROR: libmachuser.so.1 missing"; exit 1; }
+          ls $out/lib/libhurduser.so.0.3 >/dev/null || { echo "ERROR: libhurduser.so.0.3 missing"; exit 1; }
+          runHook postInstall
+        '';
+
+        # dontPatchELF rides commonAttrs.
+        passthru = { inherit target; };
+        meta = with lib; {
+          description = "Extracted Mach/Hurd RPC stub libs for ${tp}";
+          platforms = platforms.all;
+        };
+      }
+      // buildFlags.commonAttrs
+    );
 in
-lib.mapAttrs' (name: target: lib.nameValuePair "hurd-stubs${lib.optionalString emitIR "-ir"}-${name}" (mkOne name target)) hurdTargets
+lib.mapAttrs' (
+  name: target:
+  lib.nameValuePair "hurd-stubs${lib.optionalString emitIR "-ir"}-${name}" (mkOne name target)
+) hurdTargets

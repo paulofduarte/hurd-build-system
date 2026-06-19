@@ -38,7 +38,7 @@ flakes/run/
 All three Hurd scenarios share the same shape: fetch the distro qcow2,
 overlay our kernel into it via the sidekick (which also regenerates a
 serial-clean grub.cfg from the disk's existing recipe), then boot it
-with plain `qemu -drive`.  No more host-side `-kernel`/`-initrd`
+with plain `qemu -drive`. No more host-side `-kernel`/`-initrd`
 construction or per-distro module-chain reverse engineering.
 
 The sidekick helper VM itself lives in `flakes/sidekick/` - see the
@@ -78,10 +78,10 @@ exec "$QEMU" ... "${extra_qemu_args[@]}"
 ### Adding a new scenario
 
 1. Drop `flakes/run/<scenario>.sh` following the template above.
-2. `chmod +x` it.
-3. That's it - `dispatch.sh` discovers scenarios by `find`'ing executable
-   `*.sh` files in its own directory.  `make run SCENARIO=<scenario>`
-   works immediately.  `--help` and "unknown scenario" listings update
+1. `chmod +x` it.
+1. That's it - `dispatch.sh` discovers scenarios by `find`'ing executable
+   `*.sh` files in its own directory. `make run SCENARIO=<scenario>`
+   works immediately. `--help` and "unknown scenario" listings update
    automatically.
 
 If the scenario needs the sidekick helper VM (i.e., it reads modules
@@ -93,14 +93,14 @@ name to the `sidekick` prereq filter in the parent Makefile's
 
 1. Add the URL to the parent Makefile (alongside the existing `HURD_*_URL`
    block).
-2. Export it from the `run:` recipe (add a line to the env-vars block).
-3. Add a case branch to the scenario script's `case "$ARCH" in ...` block.
-4. If the scenario supports a new ARCH, add it to the `supported_targets`
+1. Export it from the `run:` recipe (add a line to the env-vars block).
+1. Add a case branch to the scenario script's `case "$ARCH" in ...` block.
+1. If the scenario supports a new ARCH, add it to the `supported_targets`
    string in the `scenario_check_target` call.
 
 ## Modifier flags
 
-All opt-in.  Either env-form (`RUN_VANILLA=1 make run ...`) or make
+All opt-in. Either env-form (`RUN_VANILLA=1 make run ...`) or make
 command-line form (`make run RUN_VANILLA=1 ...`) works - see *Dispatch
 passthrough* below for why.
 
@@ -114,26 +114,26 @@ passthrough* below for why.
 ### Dispatch passthrough - adding a new env knob
 
 `make run` dispatches through `nix develop -i .#$(ARCH)` to enter
-the per-arch nix dev shell.  The `-i` flag means "isolated" - the
+the per-arch nix dev shell. The `-i` flag means "isolated" - the
 inner shell starts with a clean env, so arbitrary env vars set by
 the caller are wiped on the way in.
 
 Two things survive:
 
-1. **The dev-shell shellHook's exports.**  Per-target nix shells
-   re-export `ARCH`, `TARGET_CC`, `MIG_TARGET`, `CFLAGS`, etc.  That's why `ARCH=i686 make run` works without
+1. **The dev-shell shellHook's exports.** Per-target nix shells
+   re-export `ARCH`, `TARGET_CC`, `MIG_TARGET`, `CFLAGS`, etc. That's why `ARCH=i686 make run` works without
    needing explicit forwarding - the outer make parses `.#$(ARCH)`
    to select the shell, and the shell rebuilds the env.
 
-2. **Variables explicitly forwarded by the dispatch recipe.**  See
+1. **Variables explicitly forwarded by the dispatch recipe.** See
    `_RUN_PASSTHROUGH` in the parent `Makefile` - currently
    `SCENARIO`, `RUN_VANILLA`, `RUN_ACCEL`, `RUN_KEEP_OVERLAY`,
-   `RUN_ARGS`.  Outer-make expansion captures the value (env or
+   `RUN_ARGS`. Outer-make expansion captures the value (env or
    command line) and re-injects it as a command-line override into
    the inner make, surviving nix's wipe.
 
 **If you add a new env knob that the scenario script reads, add it
-to `_RUN_PASSTHROUGH` too.**  Otherwise env-form invocations
+to `_RUN_PASSTHROUGH` too.** Otherwise env-form invocations
 (`MY_FLAG=1 make run ...`) will silently drop your flag and the
 scenario gets defaults - exactly the bug pattern that demoted
 vanilla mode to inject mode for a few weeks before this comment
@@ -155,14 +155,14 @@ under TCG, that's useful upstream-bug data - worth filing.
 
 Compatibility matrix (host -> accelerated targets):
 
-| host    | i686 | x86_64 | aarch64 |
+| host | i686 | x86_64 | aarch64 |
 |---------|------|--------|---------|
-| x86_64  | yes  | yes    | no      |
-| i686    | yes  | no     | no      |
-| aarch64 | no   | no     | yes     |
+| x86_64 | yes | yes | no |
+| i686 | yes | no | no |
+| aarch64 | no | no | yes |
 
 KVM/HVF on an x86_64 host accelerates both x86_64 and i686 guests
-(32-bit is a subset of 64-bit, same `/dev/kvm`).  All other cross-ISA
+(32-bit is a subset of 64-bit, same `/dev/kvm`). All other cross-ISA
 combos fall back to TCG with a one-line warning.
 
 ## Sidekick helper VM
@@ -183,7 +183,7 @@ qcow2, running `grub-mkrescue`). Two operations today:
     the grub.cfg regen runs, so the distro's bundled kernel boots
     cleanly on serial.
 - **`mkiso`**: assemble a GRUB-bootable ISO from a host-prepared
-  staging dir + grub.cfg.  Used by `boot.sh` on x86_64, where
+  staging dir + grub.cfg. Used by `boot.sh` on x86_64, where
   qemu's `-kernel` rejects 64-bit ELFs (D18) and we wrap gnumach
   in a tiny ISO instead.
 
@@ -201,10 +201,10 @@ joins backslash-continued module lines (Debian).
 1. `fetchurl`s pinned Alpine 3.21 x86_64 APKs (listed with sha256s
    in `flakes/sidekick/packages.nix`) - kernel + busybox + kmod +
    e2fsprogs + grub + grub-bios + xorriso + mtools + their deps.
-2. `tar` + `cpio` + `gzip` (POSIX-only tools, work on darwin) to
+1. `tar` + `cpio` + `gzip` (POSIX-only tools, work on darwin) to
    unpack APKs into a rootfs, lay in our `/init` dispatcher, and
    pack the result as `initramfs.cpio.gz`.
-3. Extract the kernel `bzImage` from `linux-virt-*.apk` to `vmlinuz`.
+1. Extract the kernel `bzImage` from `linux-virt-*.apk` to `vmlinuz`.
 
 **No compilation happens during the build.** Every byte of the
 output is either a pre-built Alpine binary or our `/init` script.
@@ -347,10 +347,10 @@ kernel image" error from the alternative interpretation.
 - **`hurd-gentoo` + `ARCH=x86_64`** hangs in openrc's `servers`
   service after rumpdisk's rump kernel fails to attach the qemu
   e1000 NIC (`wm0`) - Gentoo's own wiki flags amd64 as "less stable
-  so far than x86".  i686 boots cleanly.  Image bug, not a harness
-  bug.  Comment in `hurd-gentoo.sh` for the full diagnosis.
+  so far than x86". i686 boots cleanly. Image bug, not a harness
+  bug. Comment in `hurd-gentoo.sh` for the full diagnosis.
 - **`hurd-guix` + `-M q35`** boots correctly but the visible serial
   output stalls for ~3 minutes during gnumach's in-kernel SATA
-  probe across q35's 6 empty ICH9-AHCI ports.  q35 is mandatory
+  probe across q35's 6 empty ICH9-AHCI ports. q35 is mandatory
   (Guix qcow2 won't boot on i440fx, tested), so the slow probe is
-  the accepted cost.  Boot does eventually complete.
+  the accepted cost. Boot does eventually complete.

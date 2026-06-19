@@ -30,11 +30,21 @@
 # + a host qemu, which the sandbox can't provide; tests stay under the parent
 # Makefile's check-mach target.
 
-{ nixpkgs, system, targets, mig, toolchainFor, self, srcInput, forkUrl, buildRevToken ? null }:
+{
+  nixpkgs,
+  system,
+  targets,
+  mig,
+  toolchainFor,
+  self,
+  srcInput,
+  forkUrl,
+  buildRevToken ? null,
+}:
 
 let
   pkgs = nixpkgs.legacyPackages.${system};
-  lib = nixpkgs.lib;
+  inherit (nixpkgs) lib;
   helpers = import ../lib { inherit lib; };
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
@@ -43,24 +53,31 @@ let
 
   # PACKAGE_VERSION composed at eval time - see flakes/lib (composeVersion).
   fullVersion = helpers.composeVersion {
-    inherit upstreamVersion srcInput self forkUrl buildRevToken;
+    inherit
+      upstreamVersion
+      srcInput
+      self
+      forkUrl
+      buildRevToken
+      ;
   };
 
-  mkOne = name: target:
+  mkOne =
+    name: target:
     let
-      crossMig  = mig."mig-${name}";
-      tp        = target.crossTarget;                 # e.g. i686-gnu
+      crossMig = mig."mig-${name}";
+      tp = target.crossTarget; # e.g. i686-gnu
       # The from-source toolchain: the unwrapped cross-gcc + cross-binutils (the same
       # cross-gcc-<arch> the userland uses).  The kernel builds freestanding
       # (configure.ac forces -ffreestanding -nostdlib) so glibc-hurd is never linked;
       # the cross-gcc's baked sysroot is inert for -nostdlib.  Native stdenv: cross
       # tools come in by name (on PATH) below.
-      tc        = toolchainFor target;
-      cc        = tc.cc;          # cross-gcc-<arch>      (provides ${tp}-gcc/-g++)
-      binu      = tc.binutils;    # cross-binutils-<arch> (provides ${tp}-ar/-ld/...)
-      pname     = "gnumach-${tp}";
+      tc = toolchainFor target;
+      inherit (tc) cc; # cross-gcc-<arch>      (provides ${tp}-gcc/-g++)
+      binu = tc.binutils; # cross-binutils-<arch> (provides ${tp}-ar/-ld/...)
+      pname = "gnumach-${tp}";
     in
-    pkgs.stdenv.mkDerivation ({
+    pkgs.stdenv.mkDerivation {
       inherit pname;
 
       # Drives both the store path suffix and (via the sed below) the
@@ -80,10 +97,19 @@ let
       # darwin stdenv ships no patchelf, so add it (a no-op for the freestanding
       # kernel, but the audit runs honestly).  dontPatchELF below disables
       # patchelf's OTHER hook (--shrink-rpath).
-      nativeBuildInputs =
-        [ pkgs.autoreconfHook ]
-        ++ (with pkgs; [ texinfo perl patchelf ])
-        ++ [ cc binu crossMig ];
+      nativeBuildInputs = [
+        pkgs.autoreconfHook
+      ]
+      ++ (with pkgs; [
+        texinfo
+        perl
+        patchelf
+      ])
+      ++ [
+        cc
+        binu
+        crossMig
+      ];
 
       # CFLAGS go via configureFlags (below), NOT a derivation env var: an env
       # CFLAGS is seen by configure (-> config.make) AND make, so `-g/-O/-std`
@@ -111,7 +137,11 @@ let
         # Determinism maps via CPPFLAGS (the raw cross-gcc ignores the wrapper's
         # NIX_CFLAGS_COMPILE).  Set AFTER outOfTreePreConfigure so $srcdir is defined
         # and configure bakes it; maps the gcc+binutils store paths + $srcdir/$PWD.
-        ${buildFlags.detCppflagsUnwrapped { gcc = cc; binutils = binu; canonBuild = buildFlags.gnumachCanonBuild; }}
+        ${buildFlags.detCppflagsUnwrapped {
+          gcc = cc;
+          binutils = binu;
+          canonBuild = buildFlags.gnumachCanonBuild;
+        }}
       '';
 
       # Force the cross binutils into the recursive sub-makes - configure's
@@ -124,8 +154,11 @@ let
       #   STRIP         host strip can't read the ELF.
       # Command-line make vars override the built-ins and propagate down.
       makeFlags = [
-        "AR=${tp}-ar" "RANLIB=${tp}-ranlib" "NM=${tp}-nm"
-        "LD=${tp}-ld" "STRIP=${tp}-strip"
+        "AR=${tp}-ar"
+        "RANLIB=${tp}-ranlib"
+        "NM=${tp}-nm"
+        "LD=${tp}-ld"
+        "STRIP=${tp}-strip"
       ];
 
       # --host is ours (the kernel is cross-compiled).  --enable-dependency-
@@ -133,9 +166,11 @@ let
       # per-object .Po files are the only thing teaching make the .defs ->
       # .server.h -> .o cascade (compile mach_port.c only after MIG generates
       # mach_port.server.h).
-      configureFlags =
-        [ "--host=${tp}" "--enable-dependency-tracking" ]
-        ++ lib.optional (target.platform != null) "--enable-platform=${target.platform}";
+      configureFlags = [
+        "--host=${tp}"
+        "--enable-dependency-tracking"
+      ]
+      ++ lib.optional (target.platform != null) "--enable-platform=${target.platform}";
 
       # gnumach's build is parallel-safe (unlike the Hurd userland); the MIG
       # codegen ordering is handled by --enable-dependency-tracking above.
@@ -203,6 +238,6 @@ let
       preBuild = ''
         touch -d @${toString srcInput.lastModified} "$srcdir"/doc/*.texi
       '';
-    });
+    };
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "gnumach-${name}" (mkOne name target)) targets

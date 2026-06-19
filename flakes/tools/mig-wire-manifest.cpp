@@ -65,7 +65,8 @@ struct BaseNamer {
   explicit BaseNamer(const DataLayout &dl) : DL(dl) {}
   std::string of(const Value *v) {
     auto it = cache.find(v);
-    if (it != cache.end()) return it->second;
+    if (it != cache.end())
+      return it->second;
     std::string s;
     if (auto *A = dyn_cast<Argument>(v))
       s = "a" + std::to_string(A->getArgNo());
@@ -96,8 +97,7 @@ std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int dep
 // opaque base.  Returns (root, offset-expr); for an all-constant GEP the expr is
 // just the integer, byte-identical to the old behaviour (so existing facts are
 // unchanged - only runtime-positioned ones gain precision).
-std::pair<const Value *, std::string> ptrParts(const Value *v,
-                                               const DataLayout &DL,
+std::pair<const Value *, std::string> ptrParts(const Value *v, const DataLayout &DL,
                                                BaseNamer &bn) {
   int64_t constOff = 0;
   std::vector<std::string> terms;
@@ -105,22 +105,22 @@ std::pair<const Value *, std::string> ptrParts(const Value *v,
     for (auto GTI = gep_type_begin(G), E = gep_type_end(G); GTI != E; ++GTI) {
       Value *idx = GTI.getOperand();
       if (StructType *ST = GTI.getStructTypeOrNull()) {
-        constOff += DL.getStructLayout(ST)->getElementOffset(
-            cast<ConstantInt>(idx)->getZExtValue());
+        constOff +=
+            DL.getStructLayout(ST)->getElementOffset(cast<ConstantInt>(idx)->getZExtValue());
       } else {
         uint64_t stride = DL.getTypeAllocSize(GTI.getIndexedType());
         if (auto *C = dyn_cast<ConstantInt>(idx))
           constOff += (int64_t)stride * C->getSExtValue();
         else
-          terms.push_back(std::to_string(stride) + "*" +
-                          valExpr(idx, DL, bn, 4));
+          terms.push_back(std::to_string(stride) + "*" + valExpr(idx, DL, bn, 4));
       }
     }
     v = G->getPointerOperand();
   }
   std::sort(terms.begin(), terms.end());
   std::string off = std::to_string(constOff);
-  for (auto &t : terms) off += "+" + t;
+  for (auto &t : terms)
+    off += "+" + t;
   return {v, off};
 }
 
@@ -145,23 +145,28 @@ std::string baseId(const Value *p, const DataLayout &DL, BaseNamer &bn) {
 // Canonical, name-independent expression of a value (depth-capped).
 std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int depth) {
   if (auto *C = dyn_cast<ConstantInt>(v))
-    return "c" + (C->getBitWidth() <= 64 ? std::to_string(C->getSExtValue())
-                                         : std::string("big"));
-  if (isa<ConstantPointerNull>(v)) return "null";
+    return "c" + (C->getBitWidth() <= 64 ? std::to_string(C->getSExtValue()) : std::string("big"));
+  if (isa<ConstantPointerNull>(v))
+    return "null";
   // Any pointer value (alloca / GEP / arg / global) -> base+offset, so a
   // message-buffer pointer is keyed the same way a store's destination is and
   // an offset/aliasing shift in a mach_msg buffer arg becomes visible.
-  if (v->getType()->isPointerTy()) return "p[" + ptrExpr(v, DL, bn) + "]";
-  if (auto *A = dyn_cast<Argument>(v)) return "a" + std::to_string(A->getArgNo());
-  if (auto *C = dyn_cast<Constant>(v)) return "C:" + tyStr(C->getType());
-  if (depth <= 0) return "...";
+  if (v->getType()->isPointerTy())
+    return "p[" + ptrExpr(v, DL, bn) + "]";
+  if (auto *A = dyn_cast<Argument>(v))
+    return "a" + std::to_string(A->getArgNo());
+  if (auto *C = dyn_cast<Constant>(v))
+    return "C:" + tyStr(C->getType());
+  if (depth <= 0)
+    return "...";
   if (auto *L = dyn_cast<LoadInst>(v))
     return "ld(" + ptrExpr(L->getPointerOperand(), DL, bn) + ")";
   if (auto *I = dyn_cast<Instruction>(v)) {
     std::string s = std::string(I->getOpcodeName()) + "(";
     bool first = true;
     for (const Use &u : I->operands()) {
-      if (!first) s += ",";
+      if (!first)
+        s += ",";
       first = false;
       s += valExpr(u.get(), DL, bn, depth - 1);
     }
@@ -177,9 +182,8 @@ std::string valExpr(const Value *v, const DataLayout &DL, BaseNamer &bn, int dep
 // and llvm.lifetime.* are local, not wire - excluded.  Note "__mig_deallocate"
 // is NOT a substring of "__mig_dealloc_reply_port", so the contains() is safe.
 bool isWireCall(StringRef n) {
-  return n.contains("mach_msg") || n.contains("__mig_memcpy") ||
-         n.contains("__mig_strncpy") || n.contains("__mig_allocate") ||
-         n.contains("__mig_deallocate");
+  return n.contains("mach_msg") || n.contains("__mig_memcpy") || n.contains("__mig_strncpy") ||
+         n.contains("__mig_allocate") || n.contains("__mig_deallocate");
 }
 
 std::set<std::string> manifest(Function &F) {
@@ -203,23 +207,27 @@ std::set<std::string> manifest(Function &F) {
                    valExpr(S->getValueOperand(), DL, bn, 6));
     } else if (auto *M = dyn_cast<MemCpyInst>(&I)) {
       facts.insert("mc@" + ptrExpr(M->getDest(), DL, bn) + "=" +
-                   valExpr(M->getLength(), DL, bn, 4) + "<-" +
-                   ptrExpr(M->getSource(), DL, bn));
+                   valExpr(M->getLength(), DL, bn, 4) + "<-" + ptrExpr(M->getSource(), DL, bn));
     } else if (auto *Cl = dyn_cast<CallInst>(&I)) {
       const Function *cf = Cl->getCalledFunction();
-      if (!cf) continue;
+      if (!cf)
+        continue;
       StringRef nm = cf->getName();
-      if (nm.starts_with("llvm.")) continue; // intrinsics: effect flows via args
+      if (nm.starts_with("llvm."))
+        continue; // intrinsics: effect flows via args
       bool wire = isWireCall(nm);
       if (!wire)
         for (const Use &u : Cl->args())
-          if (u.get()->getType()->isPointerTy() &&
-              bufBases.count(baseId(u.get(), DL, bn))) { wire = true; break; }
+          if (u.get()->getType()->isPointerTy() && bufBases.count(baseId(u.get(), DL, bn))) {
+            wire = true;
+            break;
+          }
       if (wire) {
         std::string s = "call:" + nm.str() + "(";
         bool first = true;
         for (const Use &u : Cl->args()) {
-          if (!first) s += ",";
+          if (!first)
+            s += ",";
           first = false;
           s += valExpr(u.get(), DL, bn, 6);
         }
@@ -243,8 +251,8 @@ std::set<std::string> manifest(Function &F) {
           std::swap(o0, o1);
           pr = Ic->getSwappedPredicate();
         }
-        facts.insert("cmp:" + CmpInst::getPredicateName(pr).str() + "(" +
-                     valExpr(o0, DL, bn, 4) + "," + valExpr(o1, DL, bn, 4) + ")");
+        facts.insert("cmp:" + CmpInst::getPredicateName(pr).str() + "(" + valExpr(o0, DL, bn, 4) +
+                     "," + valExpr(o1, DL, bn, 4) + ")");
       }
     }
   }
@@ -270,21 +278,25 @@ int main(int argc, char **argv) {
   }
   bool warn = false;
   for (int i = 3; i < argc; i++)
-    if (std::string(argv[i]) == "--warn-only") warn = true;
+    if (std::string(argv[i]) == "--warn-only")
+      warn = true;
 
   LLVMContext ctx;
   auto pin = load(argv[1], ctx), ali = load(argv[2], ctx);
 
   std::map<std::string, std::set<std::string>> pm;
   for (auto &F : *pin)
-    if (!F.isDeclaration()) pm[F.getName().str()] = manifest(F);
+    if (!F.isDeclaration())
+      pm[F.getName().str()] = manifest(F);
 
   int common = 0, diverge = 0;
   std::set<std::string> diffNames;
   for (auto &F : *ali) {
-    if (F.isDeclaration()) continue;
+    if (F.isDeclaration())
+      continue;
     auto it = pm.find(F.getName().str());
-    if (it == pm.end()) continue;
+    if (it == pm.end())
+      continue;
     common++;
     if (it->second != manifest(F)) {
       diverge++;
@@ -296,7 +308,8 @@ int main(int argc, char **argv) {
          << " stub functions diverge in the alias build\n";
   int shown = 0;
   for (const auto &n : diffNames) {
-    if (shown++ >= 20) break;
+    if (shown++ >= 20)
+      break;
     outs() << "    ! " << n << "\n";
   }
   if ((int)diffNames.size() > 20)

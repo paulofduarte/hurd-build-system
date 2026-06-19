@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Entry point for `make run`. Validates env, exec's the scenario script.
 set -euo pipefail
-. "$(dirname "$0")/lib/common.sh"   # provides die()
+# shellcheck source=lib/common.sh
+. "$(dirname "$0")/lib/common.sh" # provides die()
 
 scenarios_dir="$(dirname "$0")"
 
@@ -25,8 +26,8 @@ Options (all env-style; default in parens):
 
 Available scenarios:
 EOF
-  find "$scenarios_dir" -maxdepth 1 -name '*.sh' -not -name 'dispatch.sh' \
-    | sed 's|.*/||; s|\.sh$||' | sort | sed 's/^/  /'
+  find "$scenarios_dir" -maxdepth 1 -name '*.sh' -not -name 'dispatch.sh' |
+    sed 's|.*/||; s|\.sh$||' | sort | sed 's/^/  /'
   exit 0
 fi
 
@@ -42,8 +43,8 @@ script="$scenarios_dir/${scenario}.sh"
 if [ ! -x "$script" ]; then
   echo "unknown scenario: $scenario" >&2
   echo "available scenarios:" >&2
-  find "$scenarios_dir" -maxdepth 1 -name '*.sh' -not -name 'dispatch.sh' \
-    | sed 's|.*/||; s|\.sh$||' | sort | sed 's/^/  /' >&2
+  find "$scenarios_dir" -maxdepth 1 -name '*.sh' -not -name 'dispatch.sh' |
+    sed 's|.*/||; s|\.sh$||' | sort | sed 's/^/  /' >&2
   exit 2
 fi
 
