@@ -42,6 +42,9 @@
 let
   pkgs = nixpkgs.legacyPackages.${system};
   inherit (nixpkgs) lib;
+  # Headless qemu (no GUI/audio) - the apps always boot -nographic; see
+  # flakes/lib/qemu-headless.nix.
+  qemuHeadless = import ../lib/qemu-headless.nix pkgs;
   # Which arches we expose as `nix run` targets - the non-xen userland targets
   # that have a bootable `gnumach-<arch>`.  Xen variants don't boot under qemu
   # (gnumach disables tests + the boot harness on them); aarch64-gnu isn't a
@@ -61,7 +64,7 @@ let
       runScript = pkgs.writeShellApplication {
         name = "hurd-run-${arch}";
         runtimeInputs = with pkgs; [
-          qemu # qemu-system-* + qemu-img
+          qemuHeadless # qemu-system-* + qemu-img (GUI/audio stripped)
           curl # distro image fetch
           coreutils # mkdir / mv / cp / sha512sum
           gnused

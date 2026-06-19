@@ -65,6 +65,10 @@ in
       # install-info glibc/hurd's `make install` picks is deterministic.
       texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
+      # Headless qemu (no GUI/audio backends) - `make run` only ever boots
+      # -nographic; see flakes/lib/qemu-headless.nix.
+      qemuHeadless = import ../lib/qemu-headless.nix pkgs;
+
       tp = "${target.crossTarget}-"; # raw prefix (the unwrapped cc has no .targetPrefix)
       buildTriple = pkgs.stdenv.hostPlatform.config;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
@@ -109,7 +113,7 @@ in
       #   gcc        native compiler for in-tree `make mig` (a host tool)
       #   pkg-config hurd's optional PKG_CHECK probes
       #   git/nix    source ops + Makefile re-dispatch into a target shell
-      #   qemu       qemu-system-* (+ qemu-img) for `make run`
+      #   qemuHeadless  qemu-system-* (+ qemu-img) for `make run`, GUI/audio stripped
       #   curl/which run scenarios + gnumach's run-qemu.sh test gate
       #   fakeroot   `make dist-hurd`: hurd installs some programs -o root -m 4755
       #              (setuid); fakeroot fakes the chown/setuid for a non-root install.
@@ -136,7 +140,7 @@ in
             pkg-config
             git
             nix
-            qemu
+            qemuHeadless
             curl
             which
             fakeroot
