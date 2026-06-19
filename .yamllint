@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# yamllint config for `make lint-yaml` (the CI workflows live in .github/workflows).
+# Relaxed base; line-length is off (GitHub Actions ${{ }} expressions run long), and
+# `on:` is allowed as a key (GitHub's trigger block, which yamllint's truthy rule
+# would otherwise flag).
+extends: relaxed
+rules:
+  line-length: disable
+  truthy:
+    allowed-values: ["true", "false", "on"]

@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Let shellcheck follow the `# shellcheck source=<path>` directives in the
+# scenario/dispatch scripts (the sourced libs live alongside them but are
+# not passed as inputs).  Equivalent to invoking with `-x`; this is the
+# only way to enable external-source following project-wide (SC1144 forbids
+# the per-file `external-sources=true` directive).
+external-sources=true
+# Resolve every `source=<relpath>` directive relative to the directory of
+# the script being checked (not the caller's cwd), matching the scripts'
+# own `. "$(dirname "$0")/lib/..."` runtime resolution.  Set globally here
+# because a per-file `source-path=SCRIPTDIR` directive only affects the one
+# source statement that immediately follows it.
+source-path=SCRIPTDIR

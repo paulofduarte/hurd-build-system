@@ -734,14 +734,77 @@ pin-src:
 show-src-pins:
 	@bash flakes/sources/show-pins.sh
 
-# ---- lint-reuse (always-on, arch-independent) ----
-# REUSE license-compliance check (per-file SPDX headers + LICENSES/ +
-# REUSE.toml) - the same gate the `REUSE lint` CI workflow runs.  Top level,
-# no dispatch: licensing is arch-independent, so it runs reuse straight from
-# nixpkgs rather than entering a per-arch dev shell.
-.PHONY: lint-reuse
+# ============================ lint + format (always-on, arch-independent) ===========
+# Lint + format THIS repo's own sources - nix, C++, shell, markdown, yaml - plus the
+# REUSE license headers.  Tools are the pinned `lint-tools` bundle (flakes/lint/
+# tools.nix), the same set the dev shell puts on PATH.  Top level, no dispatch: if the
+# tools are already on PATH (dev shell) they're used directly, else `lint-tools` is
+# built ONCE and prepended - so this works outside a nix shell (and is exactly what the
+# .githooks pre-commit hook + the lint CI run).
+#
+#   make lint        all linters, check-only      lint-{reuse,nix,shell,yaml}
+#   make fmt         all formatters, REWRITE       fmt-{nix,cpp,shell,md,yaml}
+#   make fmt-check   formatters, check-only        fmt-check-{nix,cpp,shell,md,yaml}
+#   make install-hooks   git core.hooksPath -> .githooks (run once per clone)
+#
+# PATCHES ARE NEVER TOUCHED (file sets are git-tracked sources by kind, with */patches/*
+# and *.patch filtered out).  FILES="a b ..." restricts the set (the hook passes the
+# staged files); reuse always checks the whole tree.
+ifneq ($(filter lint lint-% fmt fmt-% fmt-check fmt-check-% install-hooks,$(MAKECMDGOALS)),)
+  # Resolve the tools by EXPLICIT bin path ($(_LB)tool), not via PATH: a bare
+  # `tool args` recipe line is exec'd directly by make (no shell), and that direct
+  # exec ignores a makefile-exported PATH for the lookup.  _LB = the lint-tools/bin/
+  # prefix (built once, cached); empty when the tools are already on PATH (dev shell),
+  # where the bare name resolves.
+  ifeq ($(shell command -v nixfmt 2>/dev/null),)
+    _LB := $(shell $(NIX_BUILD) --no-link --print-out-paths $(PROJ)\#lint-tools 2>/dev/null)/bin/
+  endif
+  _nopatch  = $(filter-out %/patches/% %.patch,$(1))
+  # Normalise FILES: $(strip) collapses any whitespace - crucially NEWLINES, since a
+  # caller (the pre-commit hook) may pass a newline-separated staged set; left raw,
+  # those newlines leak into the recipe and break the shell `for` loop / mis-word the
+  # $(filter).  Empty FILES => lint the whole tree (git ls-files).
+  _F := $(strip $(FILES))
+  LINT_NIX := $(call _nopatch,$(if $(_F),$(filter %.nix,$(_F)),$(shell git ls-files '*.nix')))
+  LINT_CPP := $(call _nopatch,$(if $(_F),$(filter %.cpp %.cc %.hpp,$(_F)),$(shell git ls-files '*.cpp' '*.cc' '*.hpp')))
+  LINT_SH  := $(call _nopatch,$(if $(_F),$(filter %.sh,$(_F)),$(shell git ls-files '*.sh')))
+  LINT_MD  := $(call _nopatch,$(if $(_F),$(filter %.md,$(_F)),$(shell git ls-files '*.md')))
+  LINT_YML := $(call _nopatch,$(if $(_F),$(filter %.yml %.yaml,$(_F)),$(shell git ls-files '*.yml' '*.yaml')))
+endif
+
+.PHONY: lint lint-reuse lint-nix lint-shell lint-yaml
+lint: lint-reuse lint-nix lint-shell lint-yaml
 lint-reuse:
-	@$(NIX_FLAKE) run nixpkgs#reuse -- lint
+	@echo "  LINT   reuse (SPDX/license headers)"; $(_LB)reuse lint
+lint-nix:
+	@echo "  LINT   nix (statix + deadnix)"
+	@for f in $(LINT_NIX); do $(_LB)statix check "$$f" || exit 1; done
+	@$(if $(LINT_NIX),$(_LB)deadnix --fail $(LINT_NIX),true)
+lint-shell:
+	@echo "  LINT   shell (shellcheck)"; $(if $(LINT_SH),$(_LB)shellcheck $(LINT_SH),true)
+lint-yaml:
+	@echo "  LINT   yaml (yamllint)"; $(if $(LINT_YML),$(_LB)yamllint $(LINT_YML),true)
+
+.PHONY: fmt fmt-nix fmt-cpp fmt-shell fmt-md fmt-yaml
+fmt: fmt-nix fmt-cpp fmt-shell fmt-md fmt-yaml
+fmt-nix:   ; @echo "  FMT    nix";   $(if $(LINT_NIX),$(_LB)nixfmt $(LINT_NIX),true)
+fmt-cpp:   ; @echo "  FMT    cpp";   $(if $(LINT_CPP),$(_LB)clang-format -i $(LINT_CPP),true)
+fmt-shell: ; @echo "  FMT    shell"; $(if $(LINT_SH),$(_LB)shfmt -w -i 2 -ci $(LINT_SH),true)
+fmt-md:    ; @echo "  FMT    md";    $(if $(LINT_MD),$(_LB)mdformat $(LINT_MD),true)
+fmt-yaml:  ; @echo "  FMT    yaml";  $(if $(LINT_YML),$(_LB)yamlfmt $(LINT_YML),true)
+
+.PHONY: fmt-check fmt-check-nix fmt-check-cpp fmt-check-shell fmt-check-md fmt-check-yaml
+fmt-check: fmt-check-nix fmt-check-cpp fmt-check-shell fmt-check-md fmt-check-yaml
+fmt-check-nix:   ; @echo "  FMT?   nix";   $(if $(LINT_NIX),$(_LB)nixfmt --check $(LINT_NIX),true)
+fmt-check-cpp:   ; @echo "  FMT?   cpp";   $(if $(LINT_CPP),$(_LB)clang-format --dry-run --Werror $(LINT_CPP),true)
+fmt-check-shell: ; @echo "  FMT?   shell"; $(if $(LINT_SH),$(_LB)shfmt -d -i 2 -ci $(LINT_SH),true)
+fmt-check-md:    ; @echo "  FMT?   md";    $(if $(LINT_MD),$(_LB)mdformat --check $(LINT_MD),true)
+fmt-check-yaml:  ; @echo "  FMT?   yaml";  $(if $(LINT_YML),$(_LB)yamlfmt -lint $(LINT_YML),true)
+
+.PHONY: install-hooks
+install-hooks:
+	@git config core.hooksPath .githooks
+	@echo "  git hooks installed -> .githooks/ (pre-commit runs lint + fmt-check on staged files)"
 
 # ---- per-source src / pin-src (always-on, arch-independent) ----
 # Per-source counterparts to src/pin-src.  The source name passes through to the
@@ -854,7 +917,7 @@ endif
 # build); pulled in as a `run` prereq it still runs inside.  `mig` is a build goal
 # ONLY when src/mig opts in; otherwise filtered out (top-level no-op recipe, no
 # dispatch) - like src/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint-reuse src-% pin-src-% glibc $(if $(MIG_IN_TREE),,mig) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree),$(_GOALS))
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint lint-% fmt fmt-% fmt-check fmt-check-% install-hooks src-% pin-src-% glibc $(if $(MIG_IN_TREE),,mig) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree),$(_GOALS))
 
 # Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
 #   _MARK.<goal>   the completion marker - its stamp/output.  Existence is the

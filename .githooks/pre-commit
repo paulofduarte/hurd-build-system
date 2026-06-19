@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Pre-commit gate: lint + format-check the STAGED files.  Delegates to the Makefile
+# (`make lint fmt-check FILES=<staged>`), which resolves the pinned lint-tools bundle
+# via nix - so this works for someone committing OUTSIDE a nix dev shell.  Patches are
+# never checked (the make targets filter them out).  Install once per clone with
+# `make install-hooks` (points git core.hooksPath here).
+#
+# This validates only; it never rewrites files.  If it fails, run `make fmt` to fix
+# formatting and address any lint findings, then re-stage and commit.
+set -eu
+
+# Space-separate the list (the make targets also $(strip) it, but a clean single-line
+# FILES keeps the recipe shell happy regardless).
+staged=$(git diff --cached --name-only --diff-filter=ACMR | tr '\n' ' ')
+[ -n "$staged" ] || exit 0
+
+exec make --no-print-directory lint fmt-check FILES="$staged"

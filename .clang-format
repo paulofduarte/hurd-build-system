@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Style for the repo's C++ (flakes/tools/*.cpp).  LLVM base (2-space, attached
+# braces) with a wider column limit so the existing wire-fact extractor isn't rewrapped.
+BasedOnStyle: LLVM
+ColumnLimit: 100

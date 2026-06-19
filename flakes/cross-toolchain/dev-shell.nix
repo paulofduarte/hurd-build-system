@@ -29,7 +29,7 @@
 { nixpkgs }:
 
 let
-  lib = nixpkgs.lib;
+  inherit (nixpkgs) lib;
   hurdConfig = import ./hurd-config.nix;
   buildFlags = import ./build-flags.nix { inherit lib; };
 in
@@ -46,7 +46,17 @@ in
   #     gnumach/mig/headers  this target's derivations, for build-tool inference.
   #   For a xen variant, cc/binutils/sysroot/etc. are the CPU sibling's.  glibc is
   #   nix-only - no in-tree glibc build env.
-  mkDevShell = system: name: target: { cc, binutils, sysroot, bootstrapGcc, gnumach, mig, headers }:
+  mkDevShell =
+    system: name: target:
+    {
+      cc,
+      binutils,
+      sysroot,
+      bootstrapGcc,
+      gnumach,
+      mig,
+      headers,
+    }:
     let
       pkgs = nixpkgs.legacyPackages.${system};
 
@@ -55,7 +65,7 @@ in
       # install-info glibc/hurd's `make install` picks is deterministic.
       texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
 
-      tp = "${target.crossTarget}-";    # raw prefix (the unwrapped cc has no .targetPrefix)
+      tp = "${target.crossTarget}-"; # raw prefix (the unwrapped cc has no .targetPrefix)
       buildTriple = pkgs.stdenv.hostPlatform.config;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
       hurdDeployFlags = lib.concatStringsSep " " hurdConfig.deployFlags;
@@ -64,15 +74,33 @@ in
       # gnumach/hurd builds apply): the cross-gcc + cross-binutils store paths, plus the
       # glibc sysroot (needed by the userland, inert for the -nostdlib kernel).  The
       # Makefile gnumach/hurd recipes append the per-build $srcdir/$PWD->canon maps.
-      detCppMaps = buildFlags.debugPrefixMapUnwrappedStr { gcc = cc; binutils = binutils; }
+      detCppMaps =
+        buildFlags.debugPrefixMapUnwrappedStr {
+          gcc = cc;
+          inherit binutils;
+        }
         + " -ffile-prefix-map=${sysroot}=${buildFlags.glibcCanonSysroot}";
 
       # Build-tool deps inferred from this target's own derivations.  Subtract the own
       # packages AND the libc-free bootstrap-gcc (pulled in via gnumach-headers): its
       # prefixed gcc must not shadow the cross-gcc on PATH.
-      ownDrvs = [ gnumach mig headers cc binutils bootstrapGcc ];
-      inferredBuildInputs = lib.subtractLists ownDrvs
-        (lib.unique (lib.concatMap (d: d.nativeBuildInputs or []) [ gnumach mig headers ]));
+      ownDrvs = [
+        gnumach
+        mig
+        headers
+        cc
+        binutils
+        bootstrapGcc
+      ];
+      inferredBuildInputs = lib.subtractLists ownDrvs (
+        lib.unique (
+          lib.concatMap (d: d.nativeBuildInputs or [ ]) [
+            gnumach
+            mig
+            headers
+          ]
+        )
+      );
     in
     pkgs.mkShell {
       # Inferred tools (autoreconfHook + bison/flex/perl/texinfo) come via
@@ -88,23 +116,53 @@ in
       #   python3/gettext/gawk/bison/perl/texinfo  glibc's host build tools, for the
       #              opt-in `make glibc` (mirrors glibc.nix); the dedup handles the
       #              overlap with inferredBuildInputs.
-      #   reuse      `reuse lint` - the REUSE license-compliance check the CI runs.
+      #   lint/format tools (nixfmt, statix, deadnix, clang-tools, shfmt, shellcheck,
+      #              mdformat, yamlfmt, yamllint, reuse) come from flakes/lint/tools.nix
+      #              - the SAME set the `lint-tools` package / `make lint` / the
+      #              pre-commit hook use - so in-shell linting matches CI exactly.
       # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo` strips
       # the unpatched texinfo wherever it appears, then texinfoDet is added once - so
       # the only install-info on PATH is the deterministic one.
       nativeBuildInputs =
         lib.remove pkgs.texinfo (
-          [ cc binutils mig ]
+          [
+            cc
+            binutils
+            mig
+          ]
           ++ inferredBuildInputs
-          ++ (with pkgs; [ gcc pkg-config git nix qemu curl which fakeroot
-                           python3 jq gettext gawk bison perl texinfo reuse ])
+          ++ (with pkgs; [
+            gcc
+            pkg-config
+            git
+            nix
+            qemu
+            curl
+            which
+            fakeroot
+            python3
+            jq
+            gettext
+            gawk
+            bison
+            perl
+            texinfo
+          ])
+          ++ import ../lint/tools.nix pkgs
           # gnumach's x86 `make check` builds a multiboot ISO with grub-mkrescue
           # (needs xorriso + mtools); nixpkgs' grub2 is linux-only, so gate on
           # x86 + linux hosts.
-          ++ lib.optionals
-               ((lib.hasPrefix "x86_64-" target.crossTarget || lib.hasPrefix "i686-" target.crossTarget)
-                && lib.hasSuffix "-linux" system)
-               [ pkgs.grub2 pkgs.xorriso pkgs.mtools ]
+          ++
+            lib.optionals
+              (
+                (lib.hasPrefix "x86_64-" target.crossTarget || lib.hasPrefix "i686-" target.crossTarget)
+                && lib.hasSuffix "-linux" system
+              )
+              [
+                pkgs.grub2
+                pkgs.xorriso
+                pkgs.mtools
+              ]
         )
         ++ [ texinfoDet ];
 
@@ -112,9 +170,12 @@ in
         export ARCH=${name}
         export GNUMACH_HOST=${target.crossTarget}
         export MIG_TARGET=${target.crossTarget}
-        ${if target.platform != null
-          then "export GNUMACH_PLATFORM=${target.platform}"
-          else "unset GNUMACH_PLATFORM"}
+        ${
+          if target.platform != null then
+            "export GNUMACH_PLATFORM=${target.platform}"
+          else
+            "unset GNUMACH_PLATFORM"
+        }
 
         # Cross tools by ABSOLUTE path so configure + sub-makes use exactly these
         # (never a host tool, never bootstrap-gcc).  CC/CXX/TARGET_CC from the cross-gcc;
