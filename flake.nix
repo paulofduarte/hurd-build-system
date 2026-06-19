@@ -140,18 +140,15 @@
           raw = nixpkgs.lib.removeSuffix "\n" (builtins.readFile "${build-rev}/rev");
         in
         if raw != "unknown" then raw else null;
-      # Host systems this flake supports. The build target is cross-compiled
-      # and chosen via `nix develop .#<target>` - independent of host.
+      # Host systems this flake supports - the four we actually build/cache on
+      # (the CI matrices in cache-toolchains / toolchain-sanity-check mirror these).
+      # The build target is cross-compiled and chosen via `nix develop .#<target>`,
+      # independent of host.
       supportedSystems = [
         "aarch64-darwin"
         "x86_64-darwin"
         "aarch64-linux"
         "x86_64-linux"
-        "i686-linux"
-        "armv6l-linux"
-        "armv7l-linux"
-        "riscv64-linux"
-        "powerpc64le-linux"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs supportedSystems f;
 
