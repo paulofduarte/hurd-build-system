@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Cache cross-toolchains
-
 # Populate the cachix cache with each target's cross-toolchain via `make push-cache`
 # (the same path a developer runs locally).  Per (host, target) that realises
 # `cross-gcc-<arch>` - whose build closure spans the whole bootstrap chain
@@ -16,28 +15,23 @@ name: Cache cross-toolchains
 # are all cached spins NO runner.  `populate` then builds only the missing
 # (host, target) pairs and pushes them.
 #
-# Triggered only by changes that can alter toolchain derivation hashes.  Each
-# host builds its own native view (hashes differ per host).
-
+# GATED on `Lint + format`: this runs only after that workflow succeeds on main
+# (workflow_run), so a lint/format failure stops the cache build before it starts.
+# It is no longer path-filtered - the `plan` job below probes cachix and only
+# populates hosts/targets actually missing, so a push that changes nothing
+# toolchain-relevant just re-confirms an all-cached plan (cheap) and builds nothing.
+# Each host builds its own native view (hashes differ per host).
 on:
-  push:
+  workflow_run:
+    workflows: ["Lint + format"]
+    types: [completed]
     branches: [main]
-    paths:
-      - flake.nix
-      - flake.lock
-      - target-archs.nix
-      - flakes/cross-toolchain/**/*.nix
-      - packages.nix
-      - .github/workflows/cache-toolchains.yml
-      - .github/actions/setup-nix/action.yml
   workflow_dispatch:
-
 # A newer commit supersedes an in-flight run - we only care about the cache
 # reflecting the latest main.
 concurrency:
   group: cache-toolchains-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   # Decide which (host, target) toolchains are missing from cachix.  Cross-eval
   # is pure, so one ubuntu runner computes every host's paths; `path-info
@@ -45,6 +39,8 @@ jobs:
   # the hosts with missing targets, and a build-plan artifact the sanity-check
   # reads to decide whether to run at all.
   plan:
+    # Run on a manual dispatch, or only when the gating lint run actually succeeded.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -55,7 +51,6 @@ jobs:
         uses: actions/checkout@v6
       - name: Set up nix
         uses: ./.github/actions/setup-nix
-
       - name: Plan - probe cachix for each (host, target) toolchain
         id: plan
         run: |
@@ -120,7 +115,6 @@ jobs:
               echo "All toolchains already cached - no build jobs."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
       # The sanity-check downloads this to gate itself: empty plan -> nothing was
       # rebuilt -> the toolchains are unchanged and don't need re-checking.
       - name: Upload build plan
@@ -129,7 +123,6 @@ jobs:
           name: build-plan
           path: build-plan.json
           retention-days: 14
-
   populate:
     needs: plan
     if: ${{ needs.plan.outputs.any == 'true' }}
@@ -140,14 +133,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Cross-GCC source bootstraps run ~30 min on the slower runners; leave room.
     timeout-minutes: 180
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
       - name: Set up nix
         uses: ./.github/actions/setup-nix
-
       # Auth + substituter setup ONLY (skipPush: true): the actual push is done by
       # `make push-cache` below, NOT this action's auto-push.  The action's auto-push
       # would capture the WHOLE store closure realised during the job - including our
@@ -161,7 +151,6 @@ jobs:
           name: hurd-build-system
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: true
-
       - name: Build + push missing toolchains (filtered)
         env:
           TARGETS: ${{ matrix.targets }}

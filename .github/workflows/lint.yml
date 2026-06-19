@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Lint + format
+# Full lint + format check of the repo's own sources (nix, C++, shell, markdown,
+# yaml) plus the REUSE license headers, via `make lint fmt-check` (the pinned
+# lint-tools bundle - flakes/lint/tools.nix; the same tools the dev shell and the
+# .githooks pre-commit hook use).  This workflow GATES the other two: both
+# `Cache cross-toolchains` and (transitively) `Toolchain sanity check` trigger on
+# this workflow's successful completion, so a lint/format failure stops them before
+# any toolchain is built or cached.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up nix
+        uses: ./.github/actions/setup-nix
+      # Builds the lint-tools bundle (cached from cache.nixos.org) and runs every
+      # linter + every formatter in check mode over the whole tree.  Patches excluded.
+      - name: Lint + format check
+        run: make lint fmt-check

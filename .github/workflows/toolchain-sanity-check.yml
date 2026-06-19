@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 name: Toolchain sanity check
-
 # Cross-host toolchain consistency.  For every (host x target) it runs
 # `make dist` and records the result; the `compare` job then gates PURELY on
 # whether the hosts AGREE - not on whether the kernel source is correct:
@@ -14,31 +13,28 @@ name: Toolchain sanity check
 # cross-toolchains` - but only when that run actually built >=1 toolchain (the
 # setup gate reads its build-plan artifact) - plus manual dispatch, and pulls
 # the toolchain from cachix rather than rebuilding it per host.
-
 on:
   workflow_run:
     workflows: ["Cache cross-toolchains"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
-
 concurrency:
   group: toolchain-sanity-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   # Gate + derive the matrix.  Sanity runs only when the triggering cache run
   # actually built >=1 toolchain (or on manual dispatch); otherwise the
   # toolchains are bit-identical to what was already checked.
   setup:
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      actions: read            # download the cache run's build-plan artifact
+      actions: read # download the cache run's build-plan artifact
     outputs:
       arches: ${{ steps.arches.outputs.arches }}
       run: ${{ steps.gate.outputs.run }}
@@ -81,7 +77,6 @@ jobs:
           arches=$(nix eval --json --file target-archs.nix --apply builtins.attrNames)
           echo "Arches: $arches"
           echo "arches=$arches" >> "$GITHUB_OUTPUT"
-
   build:
     needs: setup
     if: ${{ needs.setup.outputs.run == 'true' }}
@@ -90,21 +85,18 @@ jobs:
       fail-fast: false
       matrix:
         runner:
-          - { name: ubuntu-latest,    system: x86_64-linux   }
-          - { name: ubuntu-24.04-arm, system: aarch64-linux  }
-          - { name: macos-latest,     system: aarch64-darwin }
-          - { name: macos-15-intel,   system: x86_64-darwin  }
+          - {name: ubuntu-latest, system: x86_64-linux}
+          - {name: ubuntu-24.04-arm, system: aarch64-linux}
+          - {name: macos-latest, system: aarch64-darwin}
+          - {name: macos-15-intel, system: x86_64-darwin}
         arch: ${{ fromJSON(needs.setup.outputs.arches) }}
     runs-on: ${{ matrix.runner.name }}
     timeout-minutes: 60
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
       - name: Set up nix
         uses: ./.github/actions/setup-nix
-
       # Capture the outcome without failing the job - `compare` owns pass/fail.
       # result.txt = HOST/ARCH + either STATUS=ok and per-file dist hashes, or
       # STATUS=fail and a normalised error signature.
@@ -137,7 +129,6 @@ jobs:
               | LC_ALL=C sort -u >> "$res"
           fi
           echo "::group::result ($HOSTSYS / $ARCH)"; cat "$res"; echo "::endgroup::"
-
       - name: Upload result
         if: always()
         uses: actions/upload-artifact@v7
@@ -145,7 +136,6 @@ jobs:
           name: result-${{ matrix.runner.system }}-${{ matrix.arch }}
           path: result.txt
           retention-days: 14
-
   compare:
     name: Cross-host consistency (gate)
     needs: [setup, build]
@@ -160,7 +150,6 @@ jobs:
         with:
           path: results
           pattern: result-*
-
       - name: Compare across hosts - fail on divergence
         env:
           ARCHES: ${{ needs.setup.outputs.arches }}
