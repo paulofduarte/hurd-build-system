@@ -162,9 +162,11 @@ in
 
       # THE single glibc (design doc phase 4): ONE derivation, built by
       # bootstrap-gcc against the PIN headers, serving as cross-gcc's libcCross,
-      # the shipped libc, AND (via buildTree) the stub base.  Binds pin headers
-      # -> never rebuilt on an in-tree RPC hack (only hurd-stubs floats).
-      # shipStubs=false: the RPC stub libs come from hurd-stubs, not glibc.
+      # the shipped libc, AND (via its `buildtree` output) the stub base that
+      # hurd-stubs re-links from.  Binds pin headers -> never rebuilt on an in-tree
+      # RPC hack (only hurd-stubs floats).  The installed glibc ships the PIN RPC
+      # stub libs (libmachuser/libhurduser); hurd-stubs produces the FLOATING ones
+      # that `make dist` overlays when in-tree RPC headers change.
       glibc = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
         mig = migBootstrap;
@@ -173,18 +175,6 @@ in
         binutils = ownBinutils;
         bootstrapGcc = ownGcc.bootstrap;
         srcInput = glibc-src;
-      };
-      # The stub base: the SAME glibc build, shipping the build tree so hurd-stubs
-      # can rebuild just the RPC stubs.  Same pin headers + bootstrap-gcc builder.
-      glibcStubBase = import ./flakes/cross-toolchain/glibc.nix {
-        inherit nixpkgs system targets;
-        mig = migBootstrap;
-        gnumachHeaders = gnumachHeadersBootstrap;
-        hurdHeaders = hurdHeadersBootstrap;
-        binutils = ownBinutils;
-        bootstrapGcc = ownGcc.bootstrap;
-        srcInput = glibc-src;
-        buildTree = true;
       };
       hurdStubs = import ./flakes/cross-toolchain/hurd-stubs.nix {
         inherit
@@ -197,7 +187,7 @@ in
           ;
         binutils = ownBinutils;
         bootstrapGcc = ownGcc.bootstrap;
-        base = glibcStubBase;
+        base = glibc;
       };
       # IR-emitting variant (hurd-stubs-ir-<arch>) for the rpc-wire-drift gate: same
       # stub build, plus the stub TUs as one LLVM-IR module (all.ll) for the
@@ -214,7 +204,7 @@ in
           ;
         binutils = ownBinutils;
         bootstrapGcc = ownGcc.bootstrap;
-        base = glibcStubBase;
+        base = glibc;
         emitIR = true;
       };
       # The rpc-wire-drift gate's comparator (the wire-fact manifest tool, an LLVM-API
@@ -328,14 +318,6 @@ in
     // glibc
     // hurdStubs
     // hurdStubsIR
-    # The glibc stub base (buildTree glibc) exposed as `glibc-stub-base-<arch>` so it
-    # can be cached: it's deterministic (bound to the PIN headers, like the toolchain
-    # glibc) but isn't in cross-gcc's closure, so `push-cache` + the cache plan name
-    # it explicitly.  Renamed from its internal `glibc-hurd-<arch>` attr to avoid
-    # colliding with the shipped glibc.
-    // (nixpkgs.lib.mapAttrs' (
-      n: nixpkgs.lib.nameValuePair (nixpkgs.lib.replaceStrings [ "glibc-hurd-" ] [ "glibc-stub-base-" ] n)
-    ) glibcStubBase)
     // {
       mig-wire-manifest = tools.manifest;
       mig-wire-manifest-tidy = tools.lint;

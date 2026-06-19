@@ -4,8 +4,8 @@
 # libhurduser.so.0.3), split OUT of glibc so an in-tree RPC change rebuilds just
 # the stubs (~30 s) instead of the whole glibc (~100 s VM).
 #
-# Mechanism (the rt-base pattern applied to glibc): glibc-stub-base ships a full
-# glibc BUILD TREE (glibc.nix buildTree mode); this derivation copies it, points
+# Mechanism (the rt-base pattern applied to glibc): glibc's `buildtree` output ships
+# a full glibc BUILD TREE (glibc.nix); this derivation copies it, points
 # the sysroot at the (overridable) ALIAS gnumach/hurd headers, force-rebuilds the
 # mach/ + hurd/ subdir stub targets with the ALIAS mig, and extracts the libs.
 # The stubs link against the base tree's own libc.so/csu/htl (glibc's -z defs
@@ -28,7 +28,7 @@
   hurdHeaders,
   binutils, # cross-binutils-<name> attrset (absolute-path tools)
   bootstrapGcc, # bootstrap-gcc-<name> attrset (the base's builder)
-  base, # glibc-stub-base-<arch> (buildTree)
+  base, # the glibc attrset; this reads its `buildtree` output (glibc.nix)
   # The cc that rebuilds the stubs - default bootstrap-gcc, the base's own
   # builder (matches the base's libc.so the stubs link against; no cross-gcc
   # dependency, so no cycle).  Unwrapped (bakes --with-as/--with-ld -> binutils),
@@ -56,7 +56,8 @@ let
       crossMig = mig."mig-${name}";
       gnumach-hdrs = gnumachHeaders."gnumach-headers-${name}";
       hurd-hdrs = hurdHeaders."hurd-headers-${name}";
-      stubBase = base."glibc-hurd-${name}";
+      # The glibc `buildtree` output (the kept src+build/ tree) - see glibc.nix.
+      stubBase = base."glibc-hurd-${name}".buildtree;
       tp = target.crossTarget;
     in
     pkgs.stdenv.mkDerivation (

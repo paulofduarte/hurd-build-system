@@ -50,12 +50,6 @@
   # the old path needed apply here.
   binutils,
   bootstrapGcc,
-  # buildTree mode (the stub-split base): instead of installing, ship the WRITABLE
-  # src + build tree (src/ with build/ inside) so flakes/cross-toolchain/hurd-stubs.nix
-  # can copy it, swap the alias RPC headers, and rebuild ONLY libmachuser/libhurduser
-  # (~30 s) without touching glibc.  Irreproducible (config.log timestamps + sandbox
-  # paths in the build tree), like the old gcc rt-base - input-addressed, never shipped.
-  buildTree ? false,
   # Which cross-cc builds this glibc, as a `name: target: cc` function (referenced
   # by absolute path for CC=, so pass a derivation with bin/<tp>-gcc).  Default = the
   # from-source libc-free bootstrap-gcc (single-glibc model: cross-gcc consumes this
@@ -139,6 +133,17 @@ let
       {
         inherit pname;
         version = upstreamVersion;
+        # `out` = the installed glibc.  `buildtree` = the writable src+build/ tree,
+        # kept as a SECOND output of this one build so hurd-stubs.nix can copy it,
+        # swap the alias RPC headers, and re-link ONLY libmachuser/libhurduser (~30s)
+        # without recompiling glibc - the rt-base pattern.  Previously this was a
+        # separate `buildTree=true` derivation, i.e. a whole second glibc compile.
+        # `buildtree` is irreproducible (sandbox paths + config.log timestamps) and
+        # input-addressed; consumed only by hurd-stubs.nix, never shipped.
+        outputs = [
+          "out"
+          "buildtree"
+        ];
         src = srcInput;
 
         # rtld.c: walk _environ directly in process_envvars_secure, else the ld.so
@@ -323,6 +328,14 @@ let
           ls $out/include/stdio.h               || { echo "ERROR: stdio.h missing"; exit 1; }
           ls $out/include/mach/machine/fp_reg.h || { echo "ERROR: mach kernel headers not merged"; exit 1; }
           grep -q libmachuser $out/lib/libc.so  || { echo "ERROR: libc.so not augmented"; exit 1; }
+
+          # Second output: the writable src+build/ tree for hurd-stubs' fast stub
+          # re-link.  $PWD is the build dir; its parent is the unpacked src root
+          # (with build/ inside).  cp -a from there mirrors the old buildTree=true
+          # derivation's layout ($buildtree/tree), so hurd-stubs.nix is unchanged
+          # bar the output it reads.
+          mkdir -p $buildtree
+          ( cd .. && cp -a . $buildtree/tree )
         '';
 
         # No meta.platforms restriction - only built for the non-xen userland targets
@@ -349,22 +362,6 @@ let
         # scripts run on the TARGET, so disable the rewrite and keep the /-rooted
         # shebang (fixed at build, no dist sed).
         dontPatchShebangs = true;
-      }
-      // lib.optionalAttrs buildTree {
-        # Ship the writable src + build tree instead of installing.  PWD is the
-        # build dir (configurePhase cd'd there); its parent is the unpacked src
-        # root, which now contains build/.  hurd-stubs.nix copies $out/tree,
-        # swaps the alias headers, and rebuilds just the stubs.
-        installPhase = ''
-          runHook preInstall
-          mkdir -p $out
-          cd ..
-          cp -a . $out/tree
-          runHook postInstall
-        '';
-        postInstall = ""; # no install layout -> no header merge / GROUP augment
-        installFlags = [ ]; # no DESTDIR make-install
-        dontFixup = true; # build-tree intermediate; nothing here ships
       }
     );
 in
