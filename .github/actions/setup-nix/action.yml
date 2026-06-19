@@ -24,3 +24,24 @@ runs:
           accept-flake-config = true
           extra-substituters = https://hurd-build-system.cachix.org
           extra-trusted-public-keys = hurd-build-system.cachix.org-1:dJ/avTKQFMBKT8halHXN+hN/4Dg5oP++Uz/goz4fZSE=
+    # Hard guarantee: every CI nix install goes through this action, so assert here
+    # that the /nix volume - where nix runs its build sandboxes - is genuinely
+    # case-sensitive, and fail fast otherwise.  Stops the glibc htl case-collision
+    # (stamp.os vs stamp.oS) from ever silently returning if a future installer or
+    # runner image stops honouring NIX_VOLUME_FS.  macOS only: Linux filesystems are
+    # always case-sensitive.  diskutil reports the volume's FS personality directly
+    # (no write into the root-owned store needed).
+    - name: Assert /nix is case-sensitive (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if diskutil info /nix | grep -qiE 'Case-sensitive'; then
+          echo "/nix volume is case-sensitive."
+        else
+          echo "::error::/nix is NOT case-sensitive - glibc's htl build (stamp.os vs"
+          echo "::error::stamp.oS) will collide.  NIX_VOLUME_FS not honoured by the"
+          echo "::error::installer?"
+          diskutil info /nix | grep -iE 'Personality|Name \(User Visible\)' || true
+          exit 1
+        fi
