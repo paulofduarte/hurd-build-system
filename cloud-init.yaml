@@ -42,6 +42,13 @@ write_files:
 
       NIX=/nix/var/nix/profiles/default/bin/nix
       SYSTEM_PROFILE=/nix/var/nix/profiles/system-tools
+      # Pin the dev tools to the project's nixpkgs channel (nixos-26.05) instead of
+      # the default floating `nixpkgs#` (= nixpkgs-unstable).  Unstable churns -
+      # notably ble.sh, which nixpkgs ships as a fast-moving devel snapshot - so a VM
+      # recreate could pull a different ble.sh whose cache version mismatches the
+      # persisted ~/.cache/blesh and FREEZES the interactive prompt.  Matches
+      # flake.nix's nixpkgs branch; explicit flakeref so it needs no registry/HOME.
+      NIXPKGS_REF="github:NixOS/nixpkgs/nixos-26.05"
 
       # ---- 1. Install upstream nix (multi-user, daemon-managed) ----
       #
@@ -117,13 +124,13 @@ write_files:
       "$NIX" --extra-experimental-features 'nix-command flakes' \
         profile add \
           --profile "$SYSTEM_PROFILE" \
-          nixpkgs#cachix \
-          nixpkgs#git \
-          nixpkgs#gnumake \
-          nixpkgs#starship \
-          nixpkgs#blesh \
-          nixpkgs#fzf \
-          nixpkgs#bash-completion
+          "$NIXPKGS_REF#cachix" \
+          "$NIXPKGS_REF#git" \
+          "$NIXPKGS_REF#gnumake" \
+          "$NIXPKGS_REF#starship" \
+          "$NIXPKGS_REF#blesh" \
+          "$NIXPKGS_REF#fzf" \
+          "$NIXPKGS_REF#bash-completion"
 
       # ---- 3. /etc/profile.d entry - PATH + TERM + starship hook ----
       # /etc/profile sources /etc/profile.d/* for every login shell.
