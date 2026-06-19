@@ -9,67 +9,31 @@ name: Toolchain sanity check
 #                  bug, e.g. i686-xen htonl = PASS)
 #   * otherwise -> divergence = FAIL
 #
-# Targets come from target-archs.nix (not hardcoded).  Runs after `Cache
-# cross-toolchains` - but only when that run actually built >=1 toolchain (the
-# setup gate reads its build-plan artifact) - plus manual dispatch, and pulls
-# the toolchain from cachix rather than rebuilding it per host.
+# Targets come from target-archs.nix (not hardcoded).  DISPATCHED by `Cache
+# cross-toolchains` when that run actually (re)built >=1 toolchain - so the
+# "only run when something changed" decision lives there, and a dispatch here
+# always runs.  (Explicit dispatch, not a `workflow_run` trigger: that linking
+# proved unreliable.)  Also runnable manually.  Pulls the toolchain from cachix
+# rather than rebuilding it per host.
 on:
-  workflow_run:
-    workflows: ["Cache cross-toolchains"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 concurrency:
   group: toolchain-sanity-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  # Gate + derive the matrix.  Sanity runs only when the triggering cache run
-  # actually built >=1 toolchain (or on manual dispatch); otherwise the
-  # toolchains are bit-identical to what was already checked.
+  # Derive the per-target matrix.  The "only when something changed" gate now lives
+  # in the cache workflow (it dispatches this only when it actually rebuilt >=1
+  # toolchain), so when this runs, it runs in full.
   setup:
-    if: >
-      github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
-      actions: read # download the cache run's build-plan artifact
     outputs:
       arches: ${{ steps.arches.outputs.arches }}
-      run: ${{ steps.gate.outputs.run }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Set up nix
         uses: ./.github/actions/setup-nix
-      - name: Fetch the cache run's build plan
-        if: github.event_name == 'workflow_run'
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: build-plan
-          path: plan
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-      - name: Gate - run only if >=1 toolchain was (re)built
-        id: gate
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual dispatch -> run."; echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          # No artifact (old run / expired) -> run rather than silently skip a check.
-          if [ ! -f plan/build-plan.json ]; then
-            echo "No build plan -> run (fail-safe)."; echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if [ "$(jq 'length' plan/build-plan.json)" -gt 0 ]; then
-            echo "Cache run built $(jq -c . plan/build-plan.json) -> run."
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Cache run built nothing -> skip."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Derive ARCH list
         id: arches
         run: |
@@ -79,7 +43,6 @@ jobs:
           echo "arches=$arches" >> "$GITHUB_OUTPUT"
   build:
     needs: setup
-    if: ${{ needs.setup.outputs.run == 'true' }}
     name: ${{ matrix.runner.system }} -> ${{ matrix.arch }}
     strategy:
       fail-fast: false
@@ -139,9 +102,9 @@ jobs:
   compare:
     name: Cross-host consistency (gate)
     needs: [setup, build]
-    # Run even if some build jobs failed (captured in artifacts); skip if setup
-    # didn't run or the gate decided sanity isn't needed (nothing rebuilt).
-    if: ${{ always() && needs.setup.result == 'success' && needs.setup.outputs.run == 'true' }}
+    # Run even if some build jobs failed (results captured in artifacts); skip only
+    # if setup itself failed.
+    if: ${{ always() && needs.setup.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

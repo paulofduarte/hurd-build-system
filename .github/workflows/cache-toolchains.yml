@@ -166,3 +166,21 @@ jobs:
             make push-cache ARCH="$t"
             echo "::endgroup::"
           done
+  # Hand off to the cross-host sanity check.  Dispatched explicitly rather than via
+  # a `workflow_run` trigger on the sanity side - that linking is unreliable (it
+  # intermittently never fires).  Only when `plan` found something to (re)build and
+  # `populate` succeeded: if nothing was rebuilt the toolchains are bit-identical to
+  # what was already checked, so sanity would only skip anyway.  The implicit
+  # success() on this `if` means a failed populate skips the hand-off.
+  dispatch-sanity:
+    needs: [plan, populate]
+    if: ${{ needs.plan.outputs.any == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # dispatch the Toolchain sanity check workflow
+    steps:
+      - name: Trigger sanity check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "Toolchain sanity check" --ref main
