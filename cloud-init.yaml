@@ -158,6 +158,14 @@ write_files:
             # completion for interactive bash.  Its documented composition
             # pattern: source --noattach first, other rc hooks (fzf,
             # starship) in between, ble-attach last.
+            #
+            # ble.sh's XDG cache init REQUIRES ${XDG_CACHE_HOME:-$HOME/.cache} to
+            # already exist - it won't create the parent.  On a fresh machine it
+            # doesn't, so ble.sh falls back to its own dir under the read-only
+            # /nix/store and dies with "mkdir: Permission denied / failed to
+            # initialize $_ble_base_cache".  Pre-create the cache dir so it uses
+            # ~/.cache/blesh instead.
+            mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}"
             if [ -f /nix/var/nix/profiles/system-tools/share/blesh/ble.sh ]; then
               . /nix/var/nix/profiles/system-tools/share/blesh/ble.sh --noattach
             fi
