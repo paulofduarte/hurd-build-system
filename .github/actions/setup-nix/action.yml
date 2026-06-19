@@ -5,24 +5,19 @@ description: Install nix (flakes on) with the project cachix cache as a pull sub
 runs:
   using: composite
   steps:
-    # glibc's htl subdir emits objects that differ only in case (stamp.os vs
-    # stamp.oS); the GitHub macOS runners' default APFS volume is case-INSENSITIVE,
-    # so those collide and the glibc build dies at htl/subdir_lib (Linux fs is
-    # always case-sensitive; local dev uses a dedicated case-sensitive /nix volume).
-    # Create a case-SENSITIVE APFS volume at /nix BEFORE installing nix, so the
-    # store + build sandboxes are case-sensitive.
-    - name: Case-sensitive /nix volume (macOS)
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        set -euo pipefail
-        container=$(diskutil info / | sed -n 's/.*Part of Whole: *//p' | tr -d ' ')
-        echo "APFS container backing /: $container"
-        sudo diskutil apfs addVolume "$container" "Case-sensitive APFS" Nix -mountpoint /nix
-        diskutil info /nix | grep -iE 'Personality|Mount Point'
     # v31+ ships nix 2.30.x, which understands the `inputs.self.submodules`
     # flake attribute this project relies on (v30 and earlier reject it).
+    #
+    # NIX_VOLUME_FS makes the darwin installer create a CASE-SENSITIVE /nix volume
+    # (the official create-darwin-volume.sh passes it straight to `diskutil apfs
+    # addVolume`, and sets up the /nix firmlink itself).  Needed because glibc's htl
+    # subdir emits objects differing only in case (stamp.os vs stamp.oS), which
+    # collide on the runners' default case-INSENSITIVE APFS and break the build at
+    # htl/subdir_lib.  Harmless on Linux (no APFS volume created).  Local dev already
+    # uses a case-sensitive /nix volume.
     - uses: cachix/install-nix-action@v31
+      env:
+        NIX_VOLUME_FS: Case-sensitive APFS
       with:
         extra_nix_config: |
           experimental-features = nix-command flakes
