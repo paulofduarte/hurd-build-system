@@ -15,17 +15,17 @@ name: Cache cross-toolchains
 # are all cached spins NO runner.  `populate` then builds only the missing
 # (host, target) pairs and pushes them.
 #
-# GATED on `Lint + format`: this runs only after that workflow succeeds on main
-# (workflow_run), so a lint/format failure stops the cache build before it starts.
-# It is no longer path-filtered - the `plan` job below probes cachix and only
-# populates hosts/targets actually missing, so a push that changes nothing
-# toolchain-relevant just re-confirms an all-cached plan (cheap) and builds nothing.
-# Each host builds its own native view (hashes differ per host).
+# GATED on `Lint + format`: that workflow DISPATCHES this one on a successful run
+# for a push to main, so a lint/format failure stops the cache build before it
+# starts.  (Explicit workflow_dispatch rather than a `workflow_run` trigger:
+# GitHub's workflow_run linking for a freshly-added producer/consumer pair proved
+# unreliable - it never fired - so lint kicks this off directly via `gh workflow
+# run`.)  Also runnable manually.  Not path-filtered - the `plan` job below probes
+# cachix and only populates the (host, target) toolchains actually missing, so a
+# push that changes nothing toolchain-relevant just re-confirms an all-cached plan
+# (cheap) and builds nothing.  Each host builds its own native view (hashes differ
+# per host).
 on:
-  workflow_run:
-    workflows: ["Lint + format"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 # A newer commit supersedes an in-flight run - we only care about the cache
 # reflecting the latest main.
@@ -39,8 +39,6 @@ jobs:
   # the hosts with missing targets, and a build-plan artifact the sanity-check
   # reads to decide whether to run at all.
   plan:
-    # Run on a manual dispatch, or only when the gating lint run actually succeeded.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:

@@ -4,10 +4,10 @@ name: Lint + format
 # Full lint + format check of the repo's own sources (nix, C++, shell, markdown,
 # yaml) plus the REUSE license headers, via `make lint fmt-check` (the pinned
 # lint-tools bundle - flakes/lint/tools.nix; the same tools the dev shell and the
-# .githooks pre-commit hook use).  This workflow GATES the other two: both
-# `Cache cross-toolchains` and (transitively) `Toolchain sanity check` trigger on
-# this workflow's successful completion, so a lint/format failure stops them before
-# any toolchain is built or cached.
+# .githooks pre-commit hook use).  This workflow GATES the other two: on a
+# successful push to main it DISPATCHES `Cache cross-toolchains` (which in turn
+# triggers `Toolchain sanity check`), so a lint/format failure stops the whole
+# chain before any toolchain is built or cached.
 on:
   push:
     branches: [main]
@@ -20,6 +20,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write # dispatch the Cache cross-toolchains workflow on success
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -29,3 +32,13 @@ jobs:
       # linter + every formatter in check mode over the whole tree.  Patches excluded.
       - name: Lint + format check
         run: make lint fmt-check
+      # Gate the toolchain cache (and, downstream, the sanity check) on lint: only
+      # after the checks above pass, and only for a push to main, kick off the cache
+      # build.  Explicit dispatch instead of a workflow_run trigger on the cache side
+      # - that linking is unreliable for a newly added producer/consumer pair.  The
+      # implicit success() on this `if` means a failed check skips the dispatch.
+      - name: Trigger toolchain cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "Cache cross-toolchains" --ref main
