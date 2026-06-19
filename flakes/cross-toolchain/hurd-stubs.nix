@@ -151,12 +151,21 @@ let
         # flags when re-emitting the stubs as LLVM IR.
         ${lib.optionalString emitIR ''
           # Log each cc invocation's cwd+args so the IR harvest below can replay glibc's
-          # exact per-TU flags.  Write under $TMPDIR (the sandbox build temp), NOT /tmp:
-          # the darwin nix sandbox forbids writing /tmp (linux maps it into the build).
-          # $TMPDIR is expanded HERE so the absolute path is baked into the cc wrapper.
-          printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> '"$TMPDIR"'/cc.log\nexec %s "$@"\n' \
+          # exact per-TU flags.  Each invocation writes its OWN file under $TMPDIR/cc.d
+          # (NOT a shared cc.log): under `make -j` hundreds of cc wrappers run at once,
+          # and concurrent appends to one file SPLICE glibc's very long compile lines
+          # into garbage (truncated -ffile-prefix-map, glued -M/path, stray source
+          # fragments) - which then breaks the harvest's replayed clang flags.  One file
+          # per shell PID ($$) has no write contention: concurrent cc wrappers are
+          # distinct live processes (distinct PIDs -> distinct files), and a reused PID
+          # only ever appends after the prior holder exited (never concurrent).  Uses
+          # only the shell built-in $$ - NOT mktemp, which isn't on the cc wrapper's
+          # PATH during glibc's build.  Write under $TMPDIR (the sandbox build temp),
+          # NOT /tmp (the darwin nix sandbox forbids /tmp); $TMPDIR is expanded HERE so
+          # the absolute path is baked into the wrapper.
+          mkdir -p "$TMPDIR/cc.d"
+          printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> "'"$TMPDIR"'/cc.d/$$"\nexec %s "$@"\n' \
             "${crossCC}/bin/${tp}-gcc" > "$TMPDIR/cclog"; chmod +x "$TMPDIR/cclog"
-          : > "$TMPDIR/cc.log"
         ''}
         make -j"''${NIX_BUILD_CORES:-1}" ${lib.optionalString emitIR "CC=$TMPDIR/cclog"}
 
@@ -192,7 +201,10 @@ let
           # it.  Hence no separate translator-server harvest is needed.
           genir=$out/share/rpc-stub-ir; mkdir -p $genir
           clangbin=${pkgs.llvmPackages.clang-unwrapped}/bin/clang
-          rep=$(grep -m1 -E 'RPC_[a-z].*\.c|_server\.c' "$TMPDIR/cc.log" | cut -f2-)
+          # `|| true`: grep exits 1 on no-match, which would abort under set -e/pipefail
+          # before the clearer check below.
+          rep=$(grep -rhE 'RPC_[a-z].*\.c|_server\.c' "$TMPDIR/cc.d" 2>/dev/null | head -1 | cut -f2- || true)
+          [ -n "$rep" ] || { echo "ERROR: no RPC compile line captured (cc.d empty - cc wrapper logging broke)"; ls -la "$TMPDIR/cc.d" 2>/dev/null | head; exit 1; }
           repflags=$(printf '%s' "$rep" | sed -E 's#[^ ]*RPC_[^ ]*\.c##g; s#[^ ]*[^ ]_server\.c##g; s/-Werror//g; s/ -g / /g; s#-o /[^ ]+##g; s/-MD//g; s/-MP//g; s#-MF [^ ]+##g; s#-MT [^ ]+##g')
           cd $bdir
           find $bdir \( -name 'RPC_*.c' -o -name '*_server.c' \) -type f | while read -r c; do
