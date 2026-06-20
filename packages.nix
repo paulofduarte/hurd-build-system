@@ -188,6 +188,7 @@ in
         binutils = ownBinutils;
         bootstrapGcc = ownGcc.bootstrap;
         base = glibc;
+        srcInput = glibc-src;
       };
       # IR-emitting variant (hurd-stubs-ir-<arch>) for the rpc-wire-drift gate: same
       # stub build, plus the stub TUs as one LLVM-IR module (all.ll) for the
@@ -205,6 +206,7 @@ in
         binutils = ownBinutils;
         bootstrapGcc = ownGcc.bootstrap;
         base = glibc;
+        srcInput = glibc-src;
         emitIR = true;
       };
       # The rpc-wire-drift gate's comparator (the wire-fact manifest tool, an LLVM-API

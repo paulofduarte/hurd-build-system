@@ -329,13 +329,37 @@ let
           ls $out/include/mach/machine/fp_reg.h || { echo "ERROR: mach kernel headers not merged"; exit 1; }
           grep -q libmachuser $out/lib/libc.so  || { echo "ERROR: libc.so not augmented"; exit 1; }
 
-          # Second output: the writable src+build/ tree for hurd-stubs' fast stub
-          # re-link.  $PWD is the build dir; its parent is the unpacked src root
-          # (with build/ inside).  cp -a from there mirrors the old buildTree=true
-          # derivation's layout ($buildtree/tree), so hurd-stubs.nix is unchanged
-          # bar the output it reads.
+          # Second output (buildtree): the build/ OBJDIR ONLY, for hurd-stubs' fast
+          # stub re-link.  $PWD is the build dir.  We deliberately DON'T ship the
+          # source root: glibc is an objdir build (build/Makefile does `make -C
+          # $(srcdir)`), so a copy of the source here would be dead weight.
+          #
+          # We also canonicalise the glibc SOURCE store path ($src) out of the kept
+          # make files (-> the @GLIBC_SRCDIR@ sentinel) so the buildtree does NOT
+          # reference it.  Otherwise the buildtree's closure would drag the (large,
+          # re-fetchable-from-upstream) source into the binary cache.  hurd-stubs.nix
+          # substitutes @GLIBC_SRCDIR@ with a fresh source checkout at build time.
+          # The .o/.d files already carry the canonical /glibc-src (configure's
+          # -ffile-prefix-map), not $src, so only a handful of make files match.
+          # config.log / debugglibc.sh are pure artefacts that also bake $src - drop
+          # them.  All rewrites are mtime-preserving (sed-to-temp + touch -r + mv,
+          # also dodging BSD sed's lack of -i) so hurd-stubs' make still sees only the
+          # stub targets as stale.
           mkdir -p $buildtree
-          ( cd .. && cp -a . $buildtree/tree )
+          cp -a . $buildtree/build
+          rm -f $buildtree/build/config.log $buildtree/build/debugglibc.sh
+          for f in $(grep -rlIF "$src" $buildtree/build 2>/dev/null); do
+            sed "s|$src|@GLIBC_SRCDIR@|g" "$f" > "$f.tmp" \
+              && touch -r "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+          done
+          # A few glibc TEST-support objects (support/support_paths.oS, test-container,
+          # ...) bake $src as a -DSRCDIR STRING macro, not a DWARF path, so the
+          # -ffile-prefix-map can't canonicalise it and the text sed above (-I = skip
+          # binary) doesn't touch them.  They're the test harness - not used by the
+          # stub relink - so drop any file still carrying $src; hurd-stubs' make
+          # rebuilds whatever it actually needs from the supplied source.  Otherwise
+          # they'd pin the (re-fetchable) source into the binary cache.
+          for f in $(grep -rlaF "$src" $buildtree/build 2>/dev/null); do rm -f "$f"; done
         '';
 
         # No meta.platforms restriction - only built for the non-xen userland targets

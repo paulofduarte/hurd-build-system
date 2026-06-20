@@ -5,7 +5,8 @@
 # the stubs (~30 s) instead of the whole glibc (~100 s VM).
 #
 # Mechanism (the rt-base pattern applied to glibc): glibc's `buildtree` output ships
-# a full glibc BUILD TREE (glibc.nix); this derivation copies it, points
+# the glibc OBJDIR (build/ only, source path canonicalised out); this derivation
+# copies it alongside a fresh source checkout, points
 # the sysroot at the (overridable) ALIAS gnumach/hurd headers, force-rebuilds the
 # mach/ + hurd/ subdir stub targets with the ALIAS mig, and extracts the libs.
 # The stubs link against the base tree's own libc.so/csu/htl (glibc's -z defs
@@ -29,6 +30,11 @@
   binutils, # cross-binutils-<name> attrset (absolute-path tools)
   bootstrapGcc, # bootstrap-gcc-<name> attrset (the base's builder)
   base, # the glibc attrset; this reads its `buildtree` output (glibc.nix)
+  # The glibc source (re-fetched from upstream).  The buildtree carries only the
+  # OBJDIR with the source path canonicalised out (@GLIBC_SRCDIR@), so we supply a
+  # fresh source checkout here and substitute it in - this is why the (large,
+  # ftp-available) source is NOT in the buildtree's closure / the binary cache.
+  srcInput,
   # The cc that rebuilds the stubs - default bootstrap-gcc, the base's own
   # builder (matches the base's libc.so the stubs link against; no cross-gcc
   # dependency, so no cycle).  Unwrapped (bakes --with-as/--with-ld -> binutils),
@@ -83,11 +89,27 @@ let
           runHook preBuild
           host=${tp}
 
-          # Copy the glibc build tree (src root with build/ inside) to a writable dir.
-          cp -a ${stubBase}/tree ./g
+          # The buildtree ships the OBJDIR only (glibc.nix canonicalised the source
+          # path out of it).  Reconstruct glibc's expected layout - a writable source
+          # checkout with build/ NESTED inside it (objdir = $srcdir/build) - so glibc's
+          # relative `-I../include` resolves to the source's include/ for BOTH the make
+          # and the emitIR clang replay (which cd's to $bdir).  Writable: glibc's objdir
+          # build writes into bdir, and the re-run mig stub generation needs a writable
+          # srcdir.
+          cp -a ${srcInput} ./g
           chmod -R u+w ./g
+          cp -a ${stubBase}/build ./g/build
+          chmod -R u+w ./g/build
           srcdir=$PWD/g
           bdir=$srcdir/build
+          # Substitute the @GLIBC_SRCDIR@ sentinel with our checkout (mtime-preserving,
+          # so only the stub .defs overlaid below go stale - everything else stays
+          # "up to date" and is not recompiled).
+          for f in $bdir/Makefile $bdir/config.make $bdir/config.status; do
+            [ -f "$f" ] || continue
+            sed "s|@GLIBC_SRCDIR@|$srcdir|g" "$f" > "$f.tmp$$" \
+              && touch -r "$f" "$f.tmp$$" && mv -f "$f.tmp$$" "$f"
+          done
 
           # Rebuild the alias-headers sysroot the base configured against (the base's
           # original $TMPDIR/sysroot path is gone with its sandbox).  Recreate it from
