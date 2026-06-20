@@ -283,10 +283,20 @@ let
         # patchelf is in nativeBuildInputs for glibc's own `--clear-execstack` step,
         # but pulling it in also registers patchelf's `--shrink-rpath` setup-hook.
         # We don't want that mutating the cross libc's .so RPATHs (output stability),
-        # and it spams "shrinking ..." / "wrong ELF type" (patchelf refusing the crt*.o
-        # relocatables; harmless).  `dontPatchELF` guards ONLY that shrink hook -
-        # glibc's own patchelf call is unaffected.
+        # and it spams "shrinking RPATHs ..." over the tree (harmless).  `dontPatchELF`
+        # guards ONLY that shrink hook - glibc's own patchelf call is unaffected.
         dontPatchELF = true;
+
+        # audit-tmpdir is a SEPARATE hook (NOT covered by dontPatchELF): it runs
+        # `patchelf --print-rpath` on every ELF to catch RPATHs leaking the build
+        # sandbox.  On the buildtree - a raw glibc OBJDIR of thousands of .o/.os
+        # ET_REL relocatables - patchelf rejects each one with "patchelf: wrong ELF
+        # type" (~9k lines of noise; a relocatable carries no RPATH, so there is
+        # nothing to check anyway).  Disable the blanket hook and re-run the check on
+        # $out alone in postFixup: the buildtree is an in-sandbox intermediate
+        # (consumed only by hurd-stubs, which is itself audited), so it needs no
+        # separate purity gate of its own.
+        noAuditTmpdir = true;
 
         # Smoke-validate the deliverable: libc.so.0.3 (Hurd SONAME, NOT libc.so.6) +
         # the per-arch dynamic linker; fails early on a wrong install layout.
@@ -360,6 +370,13 @@ let
           # rebuilds whatever it actually needs from the supplied source.  Otherwise
           # they'd pin the (re-fetchable) source into the binary cache.
           for f in $(grep -rlaF "$src" $buildtree/build 2>/dev/null); do rm -f "$f"; done
+        '';
+
+        # The blanket audit-tmpdir hook is off (noAuditTmpdir, above) to spare the
+        # buildtree's relocatables; re-run the build-sandbox-reference check on the
+        # shipped libc, where it is both cheap and meaningful.
+        postFixup = ''
+          auditTmpdir "$out"
         '';
 
         # No meta.platforms restriction - only built for the non-xen userland targets
