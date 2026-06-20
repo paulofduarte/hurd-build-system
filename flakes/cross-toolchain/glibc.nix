@@ -358,8 +358,48 @@ let
           mkdir -p $buildtree
           cp -a . $buildtree/build
           rm -f $buildtree/build/config.log $buildtree/build/debugglibc.sh
+          # config.status alone wraps long S["VAR"]="..." values with autoconf's
+          # `"<NL>"` adjacent-string splits, at a column that depends on the value's
+          # LENGTH - so the sandbox path lands split mid-token across lines (and the wrap
+          # column itself shifts with $NIX_BUILD_TOP's length), which the line-based seds
+          # below cannot canonicalise.  Rejoin those splits first, but ONLY where the next
+          # line resumes with `"` (the concat pattern) so the ac_cs_usage / ac_cs_version
+          # here-text - which also opens with `"\` but continues in plain text - is left
+          # intact.  A joined value is byte-for-byte the same string and width-independent.
+          # config.status is dormant (config.make is mtime-pinned, so its rule never
+          # re-runs) but must still be reproducible.  mtime-preserving.
+          if [ -f $buildtree/build/config.status ]; then
+            cs=$buildtree/build/config.status
+            awk '
+              function flush() { print buf; buf = "" }
+              {
+                if (buf == "") { buf = $0 }
+                else if (buf ~ /"\\$/ && $0 ~ /^"/) {
+                  sub(/"\\$/, "", buf); sub(/^"/, "", $0); buf = buf $0
+                } else { flush(); buf = $0 }
+              }
+              END { if (buf != "") flush() }
+            ' "$cs" > "$cs.tmp" && touch -r "$cs" "$cs.tmp" && mv -f "$cs.tmp" "$cs"
+          fi
           for f in $(grep -rlIF "$src" $buildtree/build 2>/dev/null); do
             sed "s|$src|@GLIBC_SRCDIR@|g" "$f" > "$f.tmp" \
+              && touch -r "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+          done
+          # The kept make files + generated dep files also bake the EPHEMERAL build-
+          # sandbox top ($NIX_BUILD_TOP) as absolute paths: config.make's sysheaders /
+          # sysincludes (-I/-isystem <top>/sysroot/include), its -ffile-prefix-map flags,
+          # and ~7k *.d/*.dt/*.udeps dependency files listing <top>/sysroot/include/mach/
+          # *.h as prereqs.  $NIX_BUILD_TOP varies per build (darwin's per-build sandbox
+          # dirs) and differs from linux's fixed /build, so leaving it makes the buildtree
+          # non-reproducible across builds AND hosts.  Canonicalise it to a stable sentinel
+          # (text files only - the .o/.os DWARF was already -ffile-prefix-map'd to
+          # /glibc-{build,sysroot,src}, never the sandbox top, so no binary is touched).
+          # hurd-stubs' consumption-time remap reads the -isystem <sentinel>/sysroot path
+          # straight out of config.make and repoints it at its real sysroot; the dep-file
+          # prereqs are glibc -MP phony targets, so the now-canonical (absent) paths are
+          # tolerated.  mtime-preserving, as above.
+          for f in $(grep -rlIF "$NIX_BUILD_TOP" $buildtree/build 2>/dev/null); do
+            sed "s|$NIX_BUILD_TOP|/glibc-buildtop|g" "$f" > "$f.tmp" \
               && touch -r "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
           done
           # A few glibc TEST-support objects (support/support_paths.oS, test-container,
