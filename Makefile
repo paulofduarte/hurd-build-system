@@ -695,7 +695,7 @@ push-cache:
 	@command -v cachix >/dev/null 2>&1 || \
 	  { echo "push-cache: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
-	roots=".#cross-gcc-$(_TC_ARCH) .#devShells.$$system.$(ARCH).inputDerivation"; \
+	roots=".#cross-gcc-$(_TC_ARCH) .#glibc-hurd-$(_TC_ARCH).buildtree .#devShells.$$system.$(ARCH).inputDerivation"; \
 	echo "==> Pushing build closure of toolchain + dev shell for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
 	echo "  realising $$roots"; \
 	$(NIX) --accept-flake-config build --no-link $$roots 2>/dev/null || \
@@ -704,7 +704,7 @@ push-cache:
 	drvs=$$($(NIX) --accept-flake-config path-info --derivation $$roots) || \
 	  { echo "    could not resolve derivations" >&2; exit 1; }; \
 	echo "  pushing (input-addressed outputs only; sources/patches re-fetch from upstream)"; \
-	: "--include-outputs grabs ALL outputs of each drv, so glibc's buildtree output (the hurd-stubs stub base) rides along via cross-gcc's glibc dep - no separate root"; \
+	: "--include-outputs LISTS glibc's buildtree output (the hurd-stubs stub base), but cross-gcc only REALISES glibc's .out (its sysroot), never .buildtree; an unrealised .out-substituted glibc leaves .buildtree absent locally => unpushable, and 'make dist' would then rebuild glibc just to get it.  So realise .buildtree as its own root above (free when glibc builds from source, one build when .out is a cache hit)"; \
 	closure=$$(nix-store --query --requisites --include-outputs $$drvs | grep -v '\.drv$$'); \
 	$(NIX) path-info --json --json-format 1 $$closure \
 	  | $(NIX) run --inputs-from . nixpkgs#jq -- -r 'if type=="array" then .[]|select(.ca==null)|.path else to_entries[]|select(.value.ca==null)|.key end' \
