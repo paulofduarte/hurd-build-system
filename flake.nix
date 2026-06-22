@@ -75,6 +75,14 @@
       url = "https://ftp.gnu.org/gnu/gcc/gcc-16.1.0/gcc-16.1.0.tar.xz";
       flake = false;
     };
+    # NOTE: building glibc REQUIRES a case-sensitive /nix/store (case-sensitive
+    # APFS volume on macOS; any Linux fs is fine).  glibc's build emits per-subdir
+    # stamp.os (shared) and stamp.oS (static-nonshared) sentinels that differ only
+    # in case, so a case-insensitive store collapses them and corrupts the build.
+    # Bumping this URL re-runs glibc from source, so it hits that requirement -
+    # keep your store case-sensitive when updating.  (Only BUILDING glibc needs
+    # this; the shipped buildtree is canonicalised collision-free, so consuming the
+    # toolchain - incl. hurd-stubs RPC regen - works on a case-insensitive store.)
     glibc-src = {
       type = "tarball";
       url = "https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz";
