@@ -137,6 +137,7 @@ in
           ++ inferredBuildInputs
           ++ (with pkgs; [
             gcc
+            ccache # in-tree build cache; Makefile wraps CC, store at $(PROJ)/.ccache
             pkg-config
             git
             nix

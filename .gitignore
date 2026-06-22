@@ -6,6 +6,9 @@
 /dist/
 /.sidekick/
 
+# Compilation cache (ccache) for the in-tree builds - CCACHE_DIR in the Makefile.
+/.ccache/
+
 # Source working clones under src/ - populated by `make src`.
 # No longer git submodules: nix builds from the pinned `*-src` flake inputs
 # (see flake.nix + flakes/sources), so src/ is a dev convenience, not tracked.

@@ -84,6 +84,25 @@ DIST_ROOT     := $(PROJ)/dist
 _lc   = $(shell printf %s '$(1)' | tr 'A-Z' 'a-z')
 _bool = $(if $(filter-out 0 no off false,$(call _lc,$(strip $(1)))),1)
 
+# ---- Compilation cache (ccache) for the in-tree builds ----
+# The in-tree gnumach/hurd/mig builds are raw configure+make under work/ (NOT the
+# nix path), so they invoke the compiler directly and ccache can memoise their
+# objects keyed by {preprocessed source, exact compiler, exact flags} - turning the
+# repeated compiles of a matrix rebuild into cache hits.  Determinism-safe by
+# construction: a hit returns the SAME bytes the compiler would emit (CCACHE_BASEDIR
+# stays off, so -ffile-prefix-map + the DWARF canon maps are untouched), and ccache
+# strips itself from argv before exec (so -grecord-gcc-switches never records it).
+# The store is per-host, so cross-host byte-identity is unaffected - and since the
+# nix builds DON'T use ccache, the existing in-tree==nix identity check also proves
+# ccache leaks nothing.  Store = a gitignored dot-dir in the repo.  On by default;
+# disable with CCACHE=0.  (The nix-sandbox builds are a separate, future opt-in.)
+CCACHE        ?= 1
+override CCACHE := $(call _bool,$(CCACHE))
+CCACHE_DIR    := $(PROJ)/.ccache
+export CCACHE_DIR
+# Splice before a compiler in a recipe: $(CC_WRAP)$$CC -> "ccache <cc>" / "<cc>".
+CC_WRAP       := $(if $(CCACHE),ccache ,)
+
 # $(eval $(call _detect_in_tree,FLAG,SRC)): shared opt-in rule for the four
 # in-tree-able modules (mig, glibc, gnumach, hurd).  Auto-enable FLAG when
 # src/<m>/.git is present unless an explicit value was given ($(origin) guard
@@ -583,7 +602,7 @@ help:
 	@echo "                   (new gcc ABI baseline; ~25min)"
 	@echo "  clean            per-subdir 'make clean' - preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
-	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + cached build links"
+	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + cached build links (src/ left intact)"
 	@if [ -z "$(NIX)" ]; then \
 	  echo ""; \
 	  echo "Warning: nix is not installed. Targets require it."; \
@@ -637,12 +656,16 @@ mrproper:
 	@# unlink inside them (a read-only dir blocks removal of its entries).
 	@$(call _make_writable,$(DIST_ROOT))
 	rm -rf $(DIST_ROOT)
-	@# git clean each working src clone, guarded by `-d .git`: the opt-in clones
-	@# (src/mig) may be absent, and a bare `git -C` on a missing dir
-	@# would abort mrproper.
-	@for s in $(GNUMACH_SRC) $(MIG_SRC) $(HURD_SRC); do \
-	  if [ -d "$$s/.git" ]; then echo "  CLEAN  $$s"; git -C "$$s" clean -fdX; fi; \
-	done
+	@# The src/ working clones are deliberately LEFT ALONE - they're your hacking
+	@# copies, not build output.  mrproper nukes work/ (config.status + every object),
+	@# so the next build re-runs configure from scratch; the only thing that survives
+	@# in src/ is the regenerable autotools output (configure, Makefile.in, ...).
+	@# Keeping it is harmless (configure is not a shipped artifact - only the config.h/
+	@# Makefiles it emits at run time matter, and those track the build env, identical
+	@# in-tree vs nix) and AVOIDS a needless re-autoreconf: `configure: configure.ac
+	@# version.m4 $(notdir $(VERSION_FP_STAMP))` only refires when those truly change.
+	@# For a true upstream-pristine source reset, do it explicitly per clone:
+	@#   git -C src/<m> clean -fdX
 
 # ---- sidekick (always-on, arch-independent) ----
 # Builds the x86_64 Alpine helper VM for operations darwin can't do natively - ext2
@@ -1351,7 +1374,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES) $(if $(
 	@# to the native pkgs.gcc; keep TARGET_CC (bootstrap-gcc, exported
 	@# by the dev shell) for the cpu.symc compile.
 	cd $(MIG_BUILD) && [ -f config.status ] || \
-	  CC=gcc LD= AR= NM= RANLIB= STRIP= OBJCOPY= \
+	  CC="$(CC_WRAP)gcc" LD= AR= NM= RANLIB= STRIP= OBJCOPY= \
 	  $(MIG_SRC)/configure \
 	    --target=$(MIG_TARGET) \
 	    --prefix=$(MIG_INSTALL_DIR) \
@@ -1361,7 +1384,7 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES) $(if $(
 	@# leaves an empty file a resume would trust by mtime (empty cpu.h -> the
 	@# global.c "undeclared identifier" wall).
 	@find $(MIG_BUILD) -maxdepth 1 \( -name 'cpu.sym[co]' -o -name cpu.h \) -size 0 -delete 2>/dev/null || true
-	cd $(MIG_BUILD) && $(MAKE) CC=gcc install
+	cd $(MIG_BUILD) && $(MAKE) CC="$(CC_WRAP)gcc" install
 	@$(call _fp_write,mig)
 
 $(MIG_SRC)/configure: $(MIG_SRC)/configure.ac $(VERSION_FP_STAMP)
@@ -1743,6 +1766,7 @@ $(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG) $(if $(call _fp_stale,gnu
 	mkdir -p $(GNUMACH_BUILD)
 	cd $(GNUMACH_BUILD) && \
 	  USER_MIG=$(MIG) MIG=$(MIG) \
+	  CC="$(CC_WRAP)$$CC" \
 	  CFLAGS="$(BASE_CFLAGS) $(call _macro_prefix_map,$(GNUMACH_SRC))" \
 	  CPPFLAGS="$$CPPFLAGS $(call _det_maps,$(GNUMACH_BUILD),$(GNUMACH_SRC),$(GNUMACH_CANON_BUILD))" \
 	  $(GNUMACH_SRC)/configure --host=$(GNUMACH_HOST) --prefix=$(DIST_GNUMACH) \
@@ -1890,6 +1914,7 @@ $(HURD_CONFIGURED): $(MIG) $(HURD_SRC)/configure $(if $(call _fp_stale,hurd),_FO
 	cd $(HURD_BUILD) && \
 	  $(HURD_SRC)/configure $(HURD_CONFIGURE_FLAGS) \
 	    MIG=$(MIG) USER_MIG=$(MIG) \
+	    CC="$(CC_WRAP)$$CC" \
 	    CFLAGS="$(HURD_EXTRA_CFLAGS) $(BASE_CFLAGS) $(call _macro_prefix_map,$(HURD_SRC))" \
 	    $(HURD_DEPLOY_FLAGS)
 
