@@ -4,22 +4,24 @@
 # make + make install), producing the per-target MIG binary + migcom under
 # $out/{bin,libexec}.
 #
-# Two build modes, selected by the optional `checkToolchains` arg:
+# Two build modes, selected by the optional `checkCC` arg:
 #
-#   BOOTSTRAP (checkToolchains == null) - `mig-<name>`, built with the libc-free
-#     bootstrap-gcc, `doCheck = false`.  This is the mig that builds the
-#     toolchain itself (hurd-headers, glibc-hurd), so it MUST precede any libc
-#     and can't run its tests (they compile stubs that #include <string.h>, a
-#     hosted-libc header the nolibc cc lacks).
+#   BOOTSTRAP (checkCC == null) - `bootstrap-mig-<name>`, built with the libc-free
+#     bootstrap-gcc, `doCheck = false`.  This is the mig that builds glibc-hurd
+#     itself, so it MUST precede any libc and can't run its tests (they compile
+#     stubs that #include <string.h>, a hosted-libc header the nolibc cc lacks).
+#     Used ONLY to build glibc; nothing downstream consumes it.
 #
-#   CHECKED (checkToolchains = the wrapped-cc attrset) - built with the wrapped
-#     cc (toolchain-<name>), whose glibc-hurd sysroot provides <string.h>, so
-#     `doCheck = true` can compile the test stubs.  migcom is native-host-cc and
-#     cpu.h an -ffreestanding TARGET_CC compile in BOTH modes, so the installed
-#     bytes are identical to the bootstrap mig - a byte-identical revalidation
-#     that the mig which built glibc is sound, not a different artifact.  It sits
-#     downstream of glibc-hurd; packages.nix wires it in after the final
-#     toolchain (no cycle) and routes glibc's consumers at it.
+#   CHECKED (checkCC = the cross-gcc attrset) - `mig-<name>`, THE mig everything
+#     downstream uses (dev shell, hurd-stubs, gnumach, hurd).  Built with the
+#     cross-gcc whose glibc-hurd sysroot provides <string.h>, so `doCheck = true`
+#     compiles+runs the test stubs - so every downstream consumer is gated on the
+#     mig tests passing, by construction (no separate "checked" artifact, no
+#     marker).  migcom is native-host-cc and cpu.h an -ffreestanding TARGET_CC
+#     compile in BOTH modes, so the installed bytes are identical to the bootstrap
+#     mig - a byte-identical revalidation that the mig which built glibc is sound.
+#     Sits downstream of glibc-hurd; packages.nix wires it after the final
+#     toolchain (no cycle).
 #
 # `doCheck` runs MIG's own `make check` (good/, bad/, generate-only/) in the
 # sandbox.  The test_lib.sh harness uses `$CC -E -x c` for cpp, so preprocessing
@@ -78,7 +80,7 @@ let
       # compile cpu.symc identically (-ffreestanding), so the installed bytes match.
       cc = if checked then checkCC.${name} else bootstrapGcc."bootstrap-gcc-${name}";
       toolPrefix = "${target.crossTarget}-";
-      pname = "mig-${target.crossTarget}";
+      pname = "${if checked then "mig" else "bootstrap-mig"}-${target.crossTarget}";
     in
     # Native stdenv: MIG itself is a host tool.  Cross tools come in via
     # nativeBuildInputs + explicit env vars below.
@@ -206,6 +208,10 @@ let
   # (xen variants share a crossTarget, so a checked xen mig would be redundant).
   migTargets =
     if checked then lib.filterAttrs (_: t: (t.platform or null) != "xen") targets else targets;
-  outPrefix = if checked then "mig-checked-" else "mig-";
+  # Attrset KEY is the uniform `mig-<name>` consumers look up (glibc, hurd-headers,
+  # hurd-stubs, gnumach, hurd all do `mig."mig-${name}"`); the bootstrap vs checked
+  # distinction lives in the store-path name (pname, above) and the public output
+  # name (packages.nix re-keys the bootstrap mig to bootstrap-mig-<arch>).
+  outPrefix = "mig-";
 in
 lib.mapAttrs' (name: target: lib.nameValuePair "${outPrefix}${name}" (mkOne name target)) migTargets

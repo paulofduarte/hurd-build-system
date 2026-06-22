@@ -51,8 +51,9 @@ in
   packages = forAllSystems (
     system:
     let
-      # The ALIAS-side chain (headers, mig, glibc, ...) reads the overridable
-      # *-dev-src aliases; the bootstrap-side instances below read the frozen pins.
+      # The ALIAS-side headers (gnumach-headers, hurd-headers) read the overridable
+      # *-dev-src aliases and build against the shared post-glibc `mig` defined far
+      # below; the bootstrap-side instances further down read the frozen pins.
       # All input-addressed (CA was dropped project-wide - cachix can't serve the
       # realisations endpoint CA substitution needs).
       gnumachHeaders = import ./flakes/gnumach-headers {
@@ -60,17 +61,6 @@ in
         bootstrapGcc = bootstrapGccByName;
         srcInput = gnumach-dev-src;
         includeOnly = true;
-      };
-      mig = import ./flakes/mig {
-        inherit
-          nixpkgs
-          system
-          targets
-          gnumachHeaders
-          ;
-        bootstrapGcc = bootstrapGccByName;
-        srcInput = mig-dev-src;
-        inherit (migInfo) forkUrl;
       };
       hurdHeaders = import ./flakes/hurd-headers {
         inherit
@@ -154,7 +144,7 @@ in
         # the whole stub path against includeOnly headers.
         includeOnly = true;
       };
-      migBootstrap = import ./flakes/mig {
+      bootstrapMig = import ./flakes/mig {
         inherit nixpkgs system targets;
         bootstrapGcc = bootstrapGccByName;
         gnumachHeaders = gnumachHeadersBootstrap;
@@ -163,7 +153,7 @@ in
       };
       hurdHeadersBootstrap = import ./flakes/hurd-headers {
         inherit nixpkgs system targets;
-        mig = migBootstrap;
+        mig = bootstrapMig;
         srcInput = hurd-src;
         inherit (hurdInfo) forkUrl;
       };
@@ -177,7 +167,7 @@ in
       # that `make dist` overlays when in-tree RPC headers change.
       glibc = import ./flakes/cross-toolchain/glibc.nix {
         inherit nixpkgs system targets;
-        mig = migBootstrap;
+        mig = bootstrapMig;
         gnumachHeaders = gnumachHeadersBootstrap;
         hurdHeaders = hurdHeadersBootstrap;
         binutils = ownBinutils;
@@ -252,12 +242,15 @@ in
           sysroot = glibc."glibc-hurd-${n}";
         };
 
-      # CHECKED mig - built with the from-source cross-gcc (its --with-sysroot=glibc-hurd
-      # carries <string.h>) so `make check` can compile the generated stubs.  Byte-
-      # identical to the bootstrap `mig` (migcom is native-host-cc, cpu.h -ffreestanding
-      # in both), so a green check proves the bootstrap mig that built glibc is sound.
-      # Sits downstream of glibc.  crossGccByName is the in-tree (alias-glibc-bound)
-      # cross-gcc - the kernel that consumes the checked mig rides the same cc.
+      # THE mig everything downstream uses - built post-glibc with the from-source
+      # cross-gcc (its --with-sysroot=glibc-hurd carries <string.h>) and doCheck=true,
+      # so `make check` compiles+runs the generated stubs and every consumer is gated
+      # on the mig tests by construction (no separate "checked" artifact, no marker).
+      # Byte-identical to the bootstrap mig (migcom is native-host-cc, cpu.h
+      # -ffreestanding in both), so a green check also proves the bootstrap mig that
+      # built glibc is sound.  Overridable (mig-dev-src) so `make src-mig` reaches the
+      # whole post-glibc surface (dev shell, hurd-stubs, gnumach, hurd).  Per-
+      # crossTarget; re-keyed to every target (incl. xen) just below.
       migChecked = import ./flakes/mig {
         inherit
           nixpkgs
@@ -266,24 +259,30 @@ in
           gnumachHeaders
           ;
         bootstrapGcc = ownGcc.bootstrap; # unused when checkCC is set (CHECKED path)
-        srcInput = mig-src;
+        srcInput = mig-dev-src;
         inherit (migInfo) forkUrl;
         checkCC = crossGccByName;
       };
 
-      # Consumer-facing mig: every target mapped to the CHECKED mig of its
-      # crossTarget sibling, re-keyed to the plain `mig-<name>` the gnumach/hurd
-      # modules look up.  Routes glibc's downstream consumers (kernel + userland)
-      # through the validated mig, so they can't build unless the mig tests
-      # passed.  The unchecked bootstrap `mig` stays on the pre-glibc path
-      # (hurd-headers, glibc), where no libc exists yet to run the tests.
-      checkedMigFor = lib.listToAttrs (
+      # THE consumer-facing `mig`: the per-crossTarget checked mig re-keyed to every
+      # target name (xen reuses its CPU sibling's mig).  This is the `mig-<name>` the
+      # dev shell, alias hurd-headers, hurd-stubs and the gnumach/hurd modules all
+      # look up - one overridable, checked, post-glibc mig.  The bootstrap mig
+      # (bootstrapMig, above) stays on the pre-glibc path: it builds glibc, where no
+      # libc exists yet to run the tests.
+      mig = lib.listToAttrs (
         lib.mapAttrsToList (
           name: target:
-          lib.nameValuePair "mig-${name}"
-            migChecked."mig-checked-${toolchainNameByCrossTarget.${target.crossTarget}}"
+          lib.nameValuePair "mig-${name}" migChecked."mig-${toolchainNameByCrossTarget.${target.crossTarget}}"
         ) targets
       );
+
+      # Public output only: the bootstrap mig under bootstrap-mig-<arch> (parallels
+      # bootstrap-gcc-<arch>).  Its store path is already bootstrap-mig-...; consumers
+      # (glibc, bootstrap hurd-headers) look it up by the uniform mig-<name> key so
+      # glibc.nix stays generic, hence the re-key here purely to expose it without
+      # clashing with the mig-<arch> outputs.
+      bootstrapMigExposed = lib.mapAttrs' (n: v: lib.nameValuePair ("bootstrap-" + n) v) bootstrapMig;
 
       # GNU Mach kernel - built with the wrapped cross-cc (freestanding,
       # -nostdlib).  `toolchainFor` resolves each target onto its `toolchain-<arch>`.
@@ -296,7 +295,7 @@ in
           toolchainFor
           buildRevToken
           ;
-        mig = checkedMigFor; # downstream of glibc -> the validated mig
+        inherit mig; # the one post-glibc, checked mig everything downstream shares
         srcInput = gnumach-src;
         inherit (gnumachInfo) forkUrl;
       };
@@ -312,14 +311,14 @@ in
           buildRevToken
           toolchainFor
           ;
-        mig = checkedMigFor; # downstream of glibc -> the validated mig
+        inherit mig; # the one post-glibc, checked mig everything downstream shares
         srcInput = hurd-src;
         inherit (hurdInfo) forkUrl;
       };
     in
     gnumach
     // gnumachHeaders
-    // mig
+    // mig # mig-<arch>: the one post-glibc, checked, overridable mig
     // hurdHeaders
     // hurd
     // sidekick
@@ -333,7 +332,7 @@ in
       mig-wire-manifest-tidy = tools.lint;
     }
     // crossGccFull # the merged from-source cross-gcc-<arch> (compiler + runtime)
-    // migChecked
+    // bootstrapMigExposed # bootstrap-mig-<arch> (builds glibc only; not a downstream dep)
     # Timezone database for the dist (dist-tzdata copies its share/zoneinfo).
     # arch-independent zic-compiled data, byte-identical cross-host; one package
     # serves every target.
