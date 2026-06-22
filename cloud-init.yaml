@@ -15,6 +15,8 @@
 #   /etc/profile.d/nix-system-tools.sh     PATH + TERM + interactive
 #                                          shell hooks (starship,
 #                                          ble.sh, completion, fzf).
+#   /etc/terminfo/                         ghostty terminfo so orb
+#                                          forwards the host's TERM.
 #
 # Apply: `orb create ubuntu my-vm --user-data cloud-init.yaml`.
 #
@@ -131,6 +133,21 @@ write_files:
           "$NIXPKGS_REF#blesh" \
           "$NIXPKGS_REF#fzf" \
           "$NIXPKGS_REF#bash-completion"
+
+      # ---- 2b. ghostty terminfo so orb forwards the host's TERM ----
+      # OrbStack forwards the host's $TERM into the VM, but DOWNGRADES it to
+      # xterm-256color when the guest's terminfo database has no entry for it
+      # (orb decides this at session spawn, before /etc/profile.d runs - so a
+      # TERMINFO_DIRS export there is too late to influence it).  The host runs
+      # ghostty (TERM=xterm-ghostty), which a stock Ubuntu guest doesn't know,
+      # so every login lands on xterm-256color and loses ghostty's extra
+      # capabilities.  Drop ghostty's compiled terminfo into /etc/terminfo (a
+      # default ncurses search path) so orb sees the entry and forwards the
+      # real TERM.  Copied out of the store, so no GC root is needed.
+      GHOSTTY_TERMINFO=$("$NIX" --extra-experimental-features 'nix-command flakes' \
+        build --no-link --print-out-paths "$NIXPKGS_REF#ghostty.terminfo")
+      mkdir -p /etc/terminfo
+      cp -a "$GHOSTTY_TERMINFO"/share/terminfo/. /etc/terminfo/
 
       # ---- 3. /etc/profile.d entry - PATH + TERM + starship hook ----
       # /etc/profile sources /etc/profile.d/* for every login shell.
