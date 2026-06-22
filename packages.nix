@@ -145,6 +145,14 @@ in
         inherit nixpkgs system targets;
         bootstrapGcc = bootstrapGccByName;
         srcInput = gnumach-src;
+        # Match the alias instance's includeOnly (line ~62): without it the pin
+        # headers keep $out/share and the alias drops it, so the two chains diverge
+        # by input hash and produce two byte-identical-but-distinct migs.  With it
+        # they are genuinely drv-identical unoverridden, so the alias mig and the
+        # bootstrap mig collapse to ONE store path.  Safe: glibc consumes only
+        # gnumach-headers/include (never /share), and the alias chain already builds
+        # the whole stub path against includeOnly headers.
+        includeOnly = true;
       };
       migBootstrap = import ./flakes/mig {
         inherit nixpkgs system targets;
