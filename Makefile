@@ -703,11 +703,13 @@ push-cache:
 	echo "  collecting build closure"; \
 	drvs=$$($(NIX) --accept-flake-config path-info --derivation $$roots) || \
 	  { echo "    could not resolve derivations" >&2; exit 1; }; \
-	echo "  pushing (input-addressed outputs only; sources/patches re-fetch from upstream)"; \
+	echo "  pushing (built input-addressed outputs only; sources/flake-inputs/patches re-fetch from upstream)"; \
 	: "--include-outputs LISTS glibc's buildtree output (the hurd-stubs stub base), but cross-gcc only REALISES glibc's .out (its sysroot), never .buildtree; an unrealised .out-substituted glibc leaves .buildtree absent locally => unpushable, and 'make dist' would then rebuild glibc just to get it.  So realise .buildtree as its own root above (free when glibc builds from source, one build when .out is a cache hit)"; \
 	closure=$$(nix-store --query --requisites --include-outputs $$drvs | grep -v '\.drv$$'); \
+	: "Keep ONLY genuinely-built artifacts: ca==null (input-addressed; drops content-addressed fetches) AND deriver!=null (built; drops flake-input sources such as glibc's unpacked tarball, which is ca==null with NO deriver - it must re-fetch from upstream, not bloat the cache by 250+MiB).  Also drop the dev-shell inputDerivation stub: a pointless ~10 KiB placeholder whose CLOSURE (the shell tools) is already in the list and pushed on its own."; \
 	$(NIX) path-info --json --json-format 1 $$closure \
-	  | $(NIX) run --inputs-from . nixpkgs#jq -- -r 'if type=="array" then .[]|select(.ca==null)|.path else to_entries[]|select(.value.ca==null)|.key end' \
+	  | $(NIX) run --inputs-from . nixpkgs#jq -- -r 'if type=="array" then .[]|select(.ca==null and .deriver!=null)|.path else to_entries[]|select(.value.ca==null and .value.deriver!=null)|.key end' \
+	  | grep -v -- '-inputDerivation-nix-shell$$' \
 	  | cachix push $(_CACHE_NAME)
 	@echo "==> push-cache done"
 
