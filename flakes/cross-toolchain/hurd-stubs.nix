@@ -102,6 +102,16 @@ let
           chmod -R u+w ./g/build
           srcdir=$PWD/g
           bdir=$srcdir/build
+          # glibc.nix renamed each per-subdir stamp.oS sentinel to stamp.oS.nixcase so
+          # the cached buildtree carries NO case-colliding files (deterministic on a
+          # case-sensitive store, restorable on a case-insensitive one).  Rename them
+          # back so glibc's make finds the expected stamp.oS.  mv keeps the mtime (the
+          # stamp stays "up to date", so only the overlaid stub .defs rebuild); on a
+          # case-insensitive fs the target collapses onto stamp.os, which make tolerates
+          # (the single file satisfies both the .os and .oS stamp targets).
+          find $bdir -name 'stamp.oS.nixcase' -print | while IFS= read -r f; do
+            mv -f "$f" "''${f%.nixcase}"
+          done
           # Substitute the @GLIBC_SRCDIR@ sentinel with our checkout (mtime-preserving,
           # so only the stub .defs overlaid below go stale - everything else stays
           # "up to date" and is not recompiled).

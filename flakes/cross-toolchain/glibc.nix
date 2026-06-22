@@ -267,9 +267,12 @@ let
           runHook postConfigure
         '';
 
-        # glibc's htl subdir emits both `stamp.os` and `stamp.oST`, which collide on
-        # a case-insensitive filesystem - so the nix store volume must be case-
-        # sensitive APFS (or any Linux fs).
+        # glibc emits per-subdir `stamp.os` (shared) and `stamp.oS` (static-nonshared)
+        # sentinels that differ only in case, so the BUILD itself needs a case-sensitive
+        # sandbox (the nix store volume must be case-sensitive APFS, or any Linux fs).
+        # The SHIPPED buildtree is canonicalised collision-free in postInstall (the .oS
+        # stamp is renamed), so downstream consumers (hurd-stubs) work even on a case-
+        # insensitive filesystem.
         enableParallelBuilding = true;
 
         # Keep glibc's `-g` DWARF (don't let stdenv strip it): debugging /
@@ -401,6 +404,40 @@ let
           for f in $(grep -rlIF "$NIX_BUILD_TOP" $buildtree/build 2>/dev/null); do
             sed "s|$NIX_BUILD_TOP|/glibc-buildtop|g" "$f" > "$f.tmp" \
               && touch -r "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+          done
+          # Two more buildtree-only non-determinisms, both darwin-specific:
+          #
+          # (a) gcc bakes the WRAP COLUMN of its -MD dependency output from the raw
+          #     compile-time path length; darwin's per-build sandbox dir varies in
+          #     length, so the *.d/*.dt line-wrapping (where the `\`-continuations fall)
+          #     differs build-to-build even after the path TEXT is canonicalised above.
+          #     Unfold the continuations - join every `\`-terminated line with its
+          #     successor - so each make rule is one line.  Joining alone is NOT enough:
+          #     gcc's wrap leaves a position-dependent run of spaces at each fold point
+          #     (`errno.o: errno.c` vs `errno.o:  errno.c`), so ALSO squeeze every
+          #     whitespace run to a single space - then the rule is wrap- and length-
+          #     independent, identical on darwin and linux.  The -MP phony targets
+          #     (`hdr:`) end in `:` not `\`, so they stay separate.  mtime-preserving.
+          find $buildtree/build \( -name '*.d' -o -name '*.dt' \) -print | while IFS= read -r f; do
+            awk '{ while (sub(/\\$/, "")) { if ((getline nl) > 0) $0 = $0 nl; else break } gsub(/[ \t]+/, " "); print }' \
+              "$f" > "$f.tmp" && touch -r "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+          done
+          #
+          # (b) glibc emits a per-subdir `stamp.os` (shared) AND `stamp.oS` (static-
+          #     nonshared) sentinel that differ only in case.  On a case-sensitive store
+          #     both ship plainly, but nix's use-case-hack (darwin default-on) renames
+          #     one with a ~nix~case~hack~N suffix NON-deterministically at store-
+          #     registration (after this postInstall, so unfixable from here).  Rename
+          #     the .oS member to a non-colliding name so the canonical buildtree has
+          #     ZERO case collisions: deterministic on a case-sensitive store (no hack to
+          #     apply) AND restorable on a case-INSENSITIVE store (no collision in the
+          #     NAR) - letting stock macOS consume the buildtree.  These are empty
+          #     existence-sentinels; hurd-stubs renames them back before `make` (mv keeps
+          #     the mtime, so the "only the stubs rebuild" invariant holds; on a case-
+          #     insensitive fs the rename-back just collapses onto stamp.os, which make
+          #     tolerates - both targets are satisfied by the single file).
+          find $buildtree/build -name 'stamp.oS' -print | while IFS= read -r f; do
+            mv "$f" "$f.nixcase"
           done
           # A few glibc TEST-support objects (support/support_paths.oS, test-container,
           # ...) bake $src as a -DSRCDIR STRING macro, not a DWARF path, so the
