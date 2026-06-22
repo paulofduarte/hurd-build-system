@@ -90,28 +90,28 @@
     "mig-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1779829096,
-        "narHash": "sha256-ImEIS3cpXxyItNU/YRqxkxbDu/8K3ZMmkufvODQ9Hrw=",
-        "ref": "master",
-        "rev": "cb48044b30fcfe10529ecc1129dd68e93ed73835",
-        "revCount": 214,
+        "lastModified": 1702848101,
+        "narHash": "sha256-j7yiewPad1ombYPyOCUULyyZjtHGh0rvB5oX/nfhp9c=",
+        "ref": "refs/tags/v1.8+git20231217",
+        "rev": "3b1fcb2b83bb26d43dc912884499345f561d0b6a",
+        "revCount": 200,
         "type": "git",
         "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
       },
       "original": {
-        "ref": "master",
-        "rev": "cb48044b30fcfe10529ecc1129dd68e93ed73835",
+        "ref": "refs/tags/v1.8+git20231217",
+        "rev": "3b1fcb2b83bb26d43dc912884499345f561d0b6a",
         "type": "git",
         "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1781216227,
-        "narHash": "sha256-9mUW6gNwoN2SWc/l0fW4svPNOulXLl8ijqKyeSOGgJE=",
+        "lastModified": 1781808408,
+        "narHash": "sha256-0sOb6OIaD/K1zHxBhpmlKvkADfe0n8+l4Jj2e1Q0r3w=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "a0374025a863d007d98e3297f6aa46cc3141c2f0",
+        "rev": "e8210c649915deed7080033cdbabcc19e40bb899",
         "type": "github"
       },
       "original": {

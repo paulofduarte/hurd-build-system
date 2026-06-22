@@ -1,0 +1,25 @@
+From 116b6096608d3c59f6f4e597ee5c2645a1b8fc4c Mon Sep 17 00:00:00 2001
+From: Samuel Thibault <samuel.thibault@ens-lyon.org>
+Date: Mon, 17 Feb 2025 22:52:42 +0100
+Subject: [PATCH] Fix build in c23 mode
+
+as enabled by default in gcc-15
+---
+ tests/good/types.defs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/good/types.defs b/tests/good/types.defs
+index 5ef041c..8be9c98 100644
+--- a/tests/good/types.defs
++++ b/tests/good/types.defs
+@@ -50,7 +50,7 @@ type trans_int = int
+
+ routine alltypes(port : mach_port_t;
+                  c : char; s1 : int16_t; s2 : short; i : int;
+-                 i32 : int32_t; i64 : int64_t; bool : boolean_t;
++                 i32 : int32_t; i64 : int64_t; b : boolean_t;
+                  ui16 : uint16_t; ui32 : uint32_t; ui64 : uint64_t);
+
+ /* This should fail.  */
+--
+2.54.0

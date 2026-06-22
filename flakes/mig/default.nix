@@ -98,24 +98,30 @@ let
         src = srcInput;
 
         # Cross-build fixes that landed upstream after the v1.8+git20231217 release
-        # tag but before our baseline, needed to build the older reference mig:
+        # tag but before our baseline, needed to build the older reference mig.
+        # Numbered chronologically by upstream commit date:
         #   00  accept a TARGET_CC whose name isn't <target>-gcc (we supply
         #       i686-unknown-none-elf-gcc) - else configure aborts "could not find
-        #       a compiler".
-        #   01  test harness honours external CFLAGS (our gnumach-headers -I).
-        #   02  test harness preprocesses .defs with the target compiler.
-        #   03  GCC-14 compat: declare the mig_*_reply_port prototypes + pull
+        #       a compiler".  [2024-02]
+        #   01  GCC-14 compat: declare the mig_*_reply_port prototypes + pull
         #       <string.h> into the test's mig_support.h (modern compilers reject
-        #       the implicit declarations the 2023 fixtures relied on).
-        # All four are in current pins, so this is a no-op for the working source;
+        #       the implicit declarations the 2023 fixtures relied on).  [2024-07]
+        #   02  C23 compat: types.defs names a routine parameter `bool`, now a
+        #       reserved keyword (gcc15+ defaults to -std=gnu23) - rename it to `b`.
+        #       [2025-02]
+        #   03  test harness honours external CFLAGS (our gnumach-headers -I).
+        #       [2026-05]
+        #   04  test harness preprocesses .defs with the target compiler.  [2026-05]
+        # All five are in current pins, so this is a no-op for the working source;
         # it only fires for an older mig-src rev.  Guarded by the input's commit date.
         patches =
           lib.optionals (builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000") < "20260524")
             [
               ./patches/00-accept-non-canonical-cross-compilers.patch
-              ./patches/01-tests-honour-external-cflags.patch
-              ./patches/02-tests-preprocess-defs-target-compiler.patch
-              ./patches/03-tests-gcc14-compat.patch
+              ./patches/01-tests-gcc14-compat.patch
+              ./patches/02-tests-rename-bool-keyword.patch
+              ./patches/03-tests-honour-external-cflags.patch
+              ./patches/04-tests-preprocess-defs-target-compiler.patch
             ];
 
         # autoreconfHook supplies autoconf/automake/libtool/m4.  bison/flex are

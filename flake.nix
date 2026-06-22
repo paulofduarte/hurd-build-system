@@ -30,10 +30,12 @@
     # *-dev-src alias overrides below, which can never reach the pin-side
     # consumers.  The savannah tags carry their resolved `rev`: it makes the
     # lock resolvable from a local cache when savannah is unreachable (it is
-    # flaky; sourceware is reliable, so glibc stays tag-only).  mig is pinned
-    # to a COMMIT: its latest release tag (2023) predates the x86_64 support
-    # and the test-harness fixes the checked build needs - upstream just
-    # hasn't tagged since.
+    # flaky; sourceware is reliable, so glibc stays tag-only).  mig, like
+    # gnumach/hurd, rides its latest release tag (v1.8+git20231217, 2023):
+    # upstream just hasn't tagged since, and that tag predates the x86_64
+    # support + test-harness fixes the checked build needs - but our patch
+    # set backfills exactly those, so the tagged source + patches give a
+    # reproducible pin without tracking a moving branch.
     gnumach-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
@@ -44,8 +46,8 @@
     mig-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/mig.git";
-      ref = "master";
-      rev = "cb48044b30fcfe10529ecc1129dd68e93ed73835";
+      ref = "refs/tags/v1.8+git20231217";
+      rev = "3b1fcb2b83bb26d43dc912884499345f561d0b6a";
       flake = false;
     };
     hurd-src = {
