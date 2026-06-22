@@ -405,6 +405,21 @@ let
             sed "s|$NIX_BUILD_TOP|/glibc-buildtop|g" "$f" > "$f.tmp" \
               && touch -r "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
           done
+          # The kept make files + dep files also bake the BOOTSTRAP-GCC store path:
+          # config.make's sysincludes (-isystem <bootstrap-gcc>/lib/gcc/.../include) and
+          # -ffile-prefix-map flags, plus ~7.6k *.d/*.dt files citing the cc's internal
+          # headers (stddef.h, limits.h, ...).  bootstrap-gcc is the libc-free SEED that
+          # builds glibc; consumers never rebuild glibc (it is cached), so dragging the
+          # 168 MiB seed into the binary cache via the buildtree's closure is pure waste.
+          # Canonicalise its path to the @GLIBC_CC@ sentinel so the shipped buildtree
+          # does NOT reference it; hurd-stubs - which relinks with the SAME bootstrap-gcc
+          # (buildCC default) - substitutes it back at consumption.  Text files only: the
+          # .o/.os DWARF was already -fdebug-prefix-map'd to /cross-gcc, so no binary
+          # carries the path.  mtime-preserving, as above.
+          for f in $(grep -rlIF "${crossCC}" $buildtree/build 2>/dev/null); do
+            sed "s|${crossCC}|@GLIBC_CC@|g" "$f" > "$f.tmp" \
+              && touch -r "$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+          done
           # Two more buildtree-only non-determinisms, both darwin-specific:
           #
           # (a) gcc bakes the WRAP COLUMN of its -MD dependency output from the raw

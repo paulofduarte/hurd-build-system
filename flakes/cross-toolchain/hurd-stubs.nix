@@ -166,6 +166,18 @@ let
             done
           fi
 
+          # glibc.nix canonicalised the bootstrap-gcc store path to the @GLIBC_CC@
+          # sentinel so the cached buildtree doesn't drag the 168 MiB libc-free seed.
+          # We relink with the SAME bootstrap-gcc (buildCC default = crossCC here), so
+          # substitute it back across every text file that carries it: config.make's
+          # sysincludes + the CPPFLAGS-config gcc -fdebug-prefix-map, and the *.d/*.dt
+          # prereqs citing the cc's internal headers.  mtime-preserving / non-in-place,
+          # like the sysroot remap above.
+          grep -rlI '@GLIBC_CC@' $bdir 2>/dev/null | while IFS= read -r f; do
+            sed "s|@GLIBC_CC@|${crossCC}|g" "$f" > "$f.tmp$$" \
+              && touch -r "$f" "$f.tmp$$" && mv -f "$f.tmp$$" "$f" || rm -f "$f.tmp$$"
+          done
+
           # Determinism: append THIS copy's canon maps to glibc's captured CPPFLAGS so
           # the rebuilt stubs are cross-host identical.  The unwrapped bootstrap-gcc has
           # no cc-wrapper NIX_CFLAGS_COMPILE channel; glibc bakes configure's CPPFLAGS
