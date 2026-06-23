@@ -28,6 +28,13 @@
   system,
   targets,
   bootstrapGcc,
+  # The cc that satisfies configure's AC_PROG_CC link test.  `install-data` compiles
+  # NOTHING, so the choice is output-neutral - it only decides which cc lands in the
+  # build closure.  Default = the libc-free bootstrap-gcc (the PRE-glibc bootstrap
+  # variant, before cross-gcc exists).  The post-glibc alias overrides this to the
+  # cached cross-gcc so these headers don't drag the uncached bootstrap-gcc into every
+  # downstream consumer (mig, gnumach, hurd, hurd-stubs, the dev shell, dist).
+  buildCC ? (name: _target: bootstrapGcc."bootstrap-gcc-${name}"),
   srcInput,
   # Ship include/ only - drop share/ (mach.info docs) from the output.  No
   # consumer reads it (glibc/mig compile against include/; the dist gets its
@@ -43,11 +50,12 @@ let
   mkOne =
     name: target:
     let
-      # The from-source libc-free bootstrap-gcc.  install-data compiles nothing;
+      # The configure-check cc (see buildCC above).  install-data compiles nothing;
       # configure's AC_PROG_CC link test passes because gnumach's configure.ac forces
-      # `-ffreestanding -nostdlib`, so no crt0/libc is needed.  The cc bakes
+      # `-ffreestanding -nostdlib`, so no crt0/libc is needed (true for both the
+      # libc-free bootstrap-gcc and the full cross-gcc).  The cc bakes
       # --with-as/--with-ld -> our cross-binutils, so it needs no binutils on PATH.
-      cc = bootstrapGcc."bootstrap-gcc-${name}";
+      cc = buildCC name target;
       tp = target.crossTarget;
     in
     pkgs.stdenv.mkDerivation (
@@ -59,7 +67,7 @@ let
         src = srcInput;
 
         # autoreconfHook supplies autoconf/automake/libtool/m4.  texinfo: `make
-        # install-data` builds doc/mach.info (makeinfo).  bootstrap-gcc provides
+        # install-data` builds doc/mach.info (makeinfo).  the buildCC provides
         # ${tp}-gcc for configure's checks.  No bison/flex/perl - install-data
         # compiles nothing and stubs MIG.
         nativeBuildInputs = [
@@ -70,7 +78,7 @@ let
 
         CFLAGS = buildFlags.baseCflags;
 
-        # Pin CC to the bootstrap-gcc cross cc (host gcc would fail the --host=<cpu>-gnu
+        # Pin CC to the cross cc (host gcc would fail the --host=<cpu>-gnu
         # configure).  USER_MIG is read via AC_CHECK_PROG but never invoked by
         # install-data, so a stub satisfies the check.
         preConfigure = ''

@@ -59,6 +59,17 @@ in
       gnumachHeaders = import ./flakes/gnumach-headers {
         inherit nixpkgs system targets;
         bootstrapGcc = bootstrapGccByName;
+        # Post-glibc: run configure's cc-check against the CACHED cross-gcc, not the
+        # uncached bootstrap-gcc seed - else these alias headers (a build input to mig,
+        # gnumach, hurd, hurd-stubs, the dev shell and dist) drag bootstrap-gcc's ~1.2 GB
+        # build into every one of those.  install-data compiles nothing, so the headers
+        # are byte-identical either way; this only swaps the build-closure cc.
+        # gnumachHeadersBootstrap (below) keeps the default bootstrap-gcc - it feeds
+        # glibc, built before cross-gcc exists, so glibc's hash stays put.
+        # crossGccByName is keyed by CPU name only (a xen variant shares its CPU
+        # sibling's cross-gcc), so map crossTarget -> sibling name first, exactly as
+        # bootstrapGccByName does for the default path.
+        buildCC = _name: target: crossGccByName.${toolchainNameByCrossTarget.${target.crossTarget}};
         srcInput = gnumach-dev-src;
         includeOnly = true;
       };
