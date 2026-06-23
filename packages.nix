@@ -195,7 +195,9 @@ in
           hurdHeaders
           ;
         binutils = ownBinutils;
-        bootstrapGcc = ownGcc.bootstrap;
+        # The post-glibc cross-gcc - bootstrap-gcc is glibc-only; nothing downstream
+        # (these stubs are overlaid into the dist by dist-glibc) may pull the seed.
+        buildCC = name: _: crossGccByName.${name};
         base = glibc;
         srcInput = glibc-src;
       };
@@ -213,7 +215,7 @@ in
           hurdHeaders
           ;
         binutils = ownBinutils;
-        bootstrapGcc = ownGcc.bootstrap;
+        buildCC = name: _: crossGccByName.${name};
         base = glibc;
         srcInput = glibc-src;
         emitIR = true;

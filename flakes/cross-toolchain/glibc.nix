@@ -412,8 +412,9 @@ let
           # builds glibc; consumers never rebuild glibc (it is cached), so dragging the
           # 168 MiB seed into the binary cache via the buildtree's closure is pure waste.
           # Canonicalise its path to the @GLIBC_CC@ sentinel so the shipped buildtree
-          # does NOT reference it; hurd-stubs - which relinks with the SAME bootstrap-gcc
-          # (buildCC default) - substitutes it back at consumption.  Text files only: the
+          # does NOT reference it; hurd-stubs substitutes the sentinel with the post-glibc
+          # cross-gcc at consumption (it relinks the stubs with that, NOT the seed - the
+          # rewrite is uniform, so the cc-path canon still applies).  Text files only: the
           # .o/.os DWARF was already -fdebug-prefix-map'd to /cross-gcc, so no binary
           # carries the path.  mtime-preserving, as above.
           for f in $(grep -rlIF "${crossCC}" $buildtree/build 2>/dev/null); do

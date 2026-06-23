@@ -28,18 +28,20 @@
   gnumachHeaders,
   hurdHeaders,
   binutils, # cross-binutils-<name> attrset (absolute-path tools)
-  bootstrapGcc, # bootstrap-gcc-<name> attrset (the base's builder)
   base, # the glibc attrset; this reads its `buildtree` output (glibc.nix)
   # The glibc source (re-fetched from upstream).  The buildtree carries only the
   # OBJDIR with the source path canonicalised out (@GLIBC_SRCDIR@), so we supply a
   # fresh source checkout here and substitute it in - this is why the (large,
   # ftp-available) source is NOT in the buildtree's closure / the binary cache.
   srcInput,
-  # The cc that rebuilds the stubs - default bootstrap-gcc, the base's own
-  # builder (matches the base's libc.so the stubs link against; no cross-gcc
-  # dependency, so no cycle).  Unwrapped (bakes --with-as/--with-ld -> binutils),
-  # so determinism rides CPPFLAGS (config.make), not the gone wrapper channel.
-  buildCC ? (name: _target: bootstrapGcc."bootstrap-gcc-${name}"),
+  # The cc that rebuilds the stubs: the post-glibc cross-gcc (a name -> cc accessor).
+  # NOT a bootstrap seed - those exist solely to build glibc, nothing downstream uses
+  # them.  The stubs are glibc's own components, so its deployment compiler is the
+  # right one: cross-gcc's --with-sysroot=glibc-hurd is the SAME glibc the buildtree
+  # carries, and glibc builds -nostdinc (only the explicit, canonicalised includes are
+  # searched), so the baked sysroot path never leaks.  Unwrapped (bakes
+  # --with-as/--with-ld -> binutils), so determinism rides CPPFLAGS (config.make).
+  buildCC,
   # emitIR: additionally emit the stub TUs as a single LLVM-IR text module
   # ($out/share/rpc-stub-ir/all.ll) for the rpc-wire-drift gate's wire-fact manifest.
   # Off by default (the harvest re-compiles every stub with clang, ~minutes) so
@@ -168,11 +170,13 @@ let
 
           # glibc.nix canonicalised the bootstrap-gcc store path to the @GLIBC_CC@
           # sentinel so the cached buildtree doesn't drag the 168 MiB libc-free seed.
-          # We relink with the SAME bootstrap-gcc (buildCC default = crossCC here), so
-          # substitute it back across every text file that carries it: config.make's
-          # sysincludes + the CPPFLAGS-config gcc -fdebug-prefix-map, and the *.d/*.dt
-          # prereqs citing the cc's internal headers.  mtime-preserving / non-in-place,
-          # like the sysroot remap above.
+          # We relink with the post-glibc cross-gcc (crossCC), so substitute IT in
+          # across every text file carrying the sentinel: config.make's sysincludes +
+          # the CPPFLAGS-config gcc -fdebug-prefix-map, and the *.d/*.dt prereqs citing
+          # the cc's internal headers.  The rewrite is uniform (one crossCC value
+          # everywhere), so the -fdebug-prefix-map canonicalises cross-gcc's own path
+          # too - cross-host determinism holds.  mtime-preserving / non-in-place, like
+          # the sysroot remap above.
           grep -rlI '@GLIBC_CC@' $bdir 2>/dev/null | while IFS= read -r f; do
             sed "s|@GLIBC_CC@|${crossCC}|g" "$f" > "$f.tmp$$" \
               && touch -r "$f" "$f.tmp$$" && mv -f "$f.tmp$$" "$f" || rm -f "$f.tmp$$"
