@@ -21,10 +21,13 @@
 #                     `nix develop` shell for the in-tree builds.
 #   target.nix      - `defaultTargetName`: host CPU -> default cross-target.
 
-{ nixpkgs }:
+{
+  nixpkgs, # branch (dev-shell runtime/dev tools)
+  nixpkgs-toolchain, # frozen (dev-shell build tools, matching the cached modules)
+}:
 
 let
-  devShell = import ./dev-shell.nix { inherit nixpkgs; };
+  devShell = import ./dev-shell.nix { inherit nixpkgs nixpkgs-toolchain; };
   target = import ./target.nix { inherit nixpkgs; };
 in
 

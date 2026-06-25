@@ -87,6 +87,23 @@
         "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
       }
     },
+    "mig-dev-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779829096,
+        "narHash": "sha256-ImEIS3cpXxyItNU/YRqxkxbDu/8K3ZMmkufvODQ9Hrw=",
+        "ref": "master",
+        "rev": "cb48044b30fcfe10529ecc1129dd68e93ed73835",
+        "revCount": 214,
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
+      },
+      "original": {
+        "ref": "master",
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/mig.git"
+      }
+    },
     "mig-src": {
       "flake": false,
       "locked": {
@@ -107,6 +124,22 @@
     },
     "nixpkgs": {
       "locked": {
+        "lastModified": 1782116945,
+        "narHash": "sha256-G3tw/IXmaH6IQ2upZvhuN9sG8CkuX+BLuJDpE8hz0Ds=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "34268251cf5547d39063f2c5ea9a196246f7f3a6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-toolchain": {
+      "locked": {
         "lastModified": 1781808408,
         "narHash": "sha256-0sOb6OIaD/K1zHxBhpmlKvkADfe0n8+l4Jj2e1Q0r3w=",
         "owner": "nixos",
@@ -116,8 +149,8 @@
       },
       "original": {
         "owner": "nixos",
-        "ref": "nixos-26.05",
         "repo": "nixpkgs",
+        "rev": "e8210c649915deed7080033cdbabcc19e40bb899",
         "type": "github"
       }
     },
@@ -135,11 +168,10 @@
           "hurd-src"
         ],
         "hurd-src": "hurd-src",
-        "mig-dev-src": [
-          "mig-src"
-        ],
+        "mig-dev-src": "mig-dev-src",
         "mig-src": "mig-src",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "nixpkgs-toolchain": "nixpkgs-toolchain"
       }
     }
   },

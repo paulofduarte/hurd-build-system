@@ -12,7 +12,8 @@
 # sub-flake instantiates its own pkgs/lib and imports its own flakes/lib.
 
 {
-  nixpkgs,
+  nixpkgs, # branch-tracking: runtime/data only (the `nix run` apps' qemu, tzdata).
+  nixpkgs-toolchain, # frozen: the whole toolchain + every cached build (incl. build tools).
   self,
   forAllSystems,
   targets,
@@ -30,7 +31,7 @@
 }:
 
 let
-  inherit (nixpkgs) lib;
+  inherit (nixpkgs-toolchain) lib;
   # Fork-id metadata (owner/repo/ref) from the `*-src` inputs via flake.lock;
   # feeds the version string's fork field.  See flakes/sources.
   sourcesLib = import ./flakes/sources { inherit lib; };
@@ -57,7 +58,8 @@ in
       # All input-addressed (CA was dropped project-wide - cachix can't serve the
       # realisations endpoint CA substitution needs).
       gnumachHeaders = import ./flakes/gnumach-headers {
-        inherit nixpkgs system targets;
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets;
         bootstrapGcc = bootstrapGccByName;
         # Post-glibc: run configure's cc-check against the CACHED cross-gcc, not the
         # uncached bootstrap-gcc seed - else these alias headers (a build input to mig,
@@ -74,8 +76,8 @@ in
         includeOnly = true;
       };
       hurdHeaders = import ./flakes/hurd-headers {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           mig
@@ -84,13 +86,16 @@ in
         inherit (hurdInfo) forkUrl;
         includeOnly = true;
       };
-      sidekick = import ./flakes/sidekick { inherit nixpkgs system; };
+      sidekick = import ./flakes/sidekick {
+        nixpkgs = nixpkgs-toolchain;
+        inherit system;
+      };
 
       # From-source cross binutils (stage 1 of the own toolchain), built from the
       # pinned release tarball.  Exposes `cross-binutils-<arch>`.
       ownBinutils = import ./flakes/cross-toolchain/binutils.nix {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           binutils-src
@@ -102,8 +107,8 @@ in
       # (`bootstrap-gcc-<arch>`); `mkFull` is the full compiler + merged target
       # runtime (`cross-gcc-<arch>`, assembled in crossGccByName below).
       ownGcc = import ./flakes/cross-toolchain/gcc.nix {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           gcc-src
@@ -143,7 +148,8 @@ in
       # Internal bindings - no exposed attrs (a no-override build of the plain
       # attr IS the pin side).
       gnumachHeadersBootstrap = import ./flakes/gnumach-headers {
-        inherit nixpkgs system targets;
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets;
         bootstrapGcc = bootstrapGccByName;
         srcInput = gnumach-src;
         # Match the alias instance's includeOnly (line ~62): without it the pin
@@ -156,14 +162,16 @@ in
         includeOnly = true;
       };
       bootstrapMig = import ./flakes/mig {
-        inherit nixpkgs system targets;
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets;
         bootstrapGcc = bootstrapGccByName;
         gnumachHeaders = gnumachHeadersBootstrap;
         srcInput = mig-src;
         inherit (migInfo) forkUrl;
       };
       hurdHeadersBootstrap = import ./flakes/hurd-headers {
-        inherit nixpkgs system targets;
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets;
         mig = bootstrapMig;
         srcInput = hurd-src;
         inherit (hurdInfo) forkUrl;
@@ -177,7 +185,8 @@ in
       # stub libs (libmachuser/libhurduser); hurd-stubs produces the FLOATING ones
       # that `make dist` overlays when in-tree RPC headers change.
       glibc = import ./flakes/cross-toolchain/glibc.nix {
-        inherit nixpkgs system targets;
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets;
         mig = bootstrapMig;
         gnumachHeaders = gnumachHeadersBootstrap;
         hurdHeaders = hurdHeadersBootstrap;
@@ -186,8 +195,8 @@ in
         srcInput = glibc-src;
       };
       hurdStubs = import ./flakes/cross-toolchain/hurd-stubs.nix {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           mig
@@ -206,8 +215,8 @@ in
       # wire-fact manifest.  Built only by the gate (pin-mig vs alias-mig); off by
       # default so the shipped hurd-stubs pays no harvest cost.
       hurdStubsIR = import ./flakes/cross-toolchain/hurd-stubs.nix {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           mig
@@ -224,7 +233,7 @@ in
       # extractor) AND its clang-tidy lint, from one shared clang/LLVM env so the
       # compile flags live in a single place - see flakes/tools.  The Makefile gate
       # resolves `.tool`; `make lint-cpp` / CI build `.lint`.
-      tools = import ./flakes/tools { pkgs = nixpkgs.legacyPackages.${system}; };
+      tools = import ./flakes/tools { pkgs = nixpkgs-toolchain.legacyPackages.${system}; };
 
       # From-source FINAL cross-gcc (stage 2c): c+c++, bound to glibc-hurd via
       # --with-sysroot, UNWRAPPED (no cc/bintools wrapper), with the full target
@@ -265,8 +274,8 @@ in
       # whole post-glibc surface (dev shell, hurd-stubs, gnumach, hurd).  Per-
       # crossTarget; re-keyed to every target (incl. xen) just below.
       migChecked = import ./flakes/mig {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           gnumachHeaders
@@ -300,8 +309,8 @@ in
       # GNU Mach kernel - built with the wrapped cross-cc (freestanding,
       # -nostdlib).  `toolchainFor` resolves each target onto its `toolchain-<arch>`.
       gnumach = import ./flakes/gnumach {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           self
@@ -316,8 +325,8 @@ in
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
       hurd = import ./flakes/hurd {
+        nixpkgs = nixpkgs-toolchain;
         inherit
-          nixpkgs
           system
           targets
           self
@@ -357,6 +366,8 @@ in
   apps = forAllSystems (
     system:
     import ./flakes/run {
+      # Runtime launchers (qemu) - ride the branch nixpkgs so `nix flake update`
+      # refreshes qemu without touching the cached kernel/toolchain (`packages`).
       inherit
         nixpkgs
         system

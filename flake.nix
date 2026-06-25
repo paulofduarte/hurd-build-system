@@ -16,7 +16,18 @@
   };
 
   inputs = {
+    # Branch-tracking nixpkgs for the dev shell's runtime/dev tools (qemu, git, the
+    # lint bundle, ...) - the stuff a `nix flake update` is allowed to refresh.
     nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
+
+    # Frozen nixpkgs that builds the from-source toolchain AND every tool that feeds a
+    # cached build (the modules' autoreconf/bison/flex/perl/texinfo/python/gettext/...,
+    # the native stdenv).  Pinning it means `nix flake update` advances the branch above
+    # WITHOUT rebuilding binutils/gcc/glibc/cross-gcc or breaking in-tree==nix
+    # determinism - a toolchain-stdenv bump becomes a deliberate edit of this rev (like
+    # the source tags).  Pinned to the rev the working toolchain was last built on; both
+    # inputs currently resolve to it, so introducing the split rebuilds nothing.
+    nixpkgs-toolchain.url = "github:nixos/nixpkgs/e8210c649915deed7080033cdbabcc19e40bb899";
 
     # Source repos for the kernel + MIG.  These pin exactly what nix builds
     # (locked in flake.lock); their `.rev` / `.shortRev` / `.lastModifiedDate`
@@ -103,7 +114,9 @@
       flake = false;
     };
     mig-dev-src = {
-      follows = "mig-src";
+      type = "git";
+      url = "https://git.savannah.gnu.org/git/hurd/mig.git";
+      ref = "master";
       flake = false;
     };
     hurd-dev-src = {
@@ -130,6 +143,7 @@
     inputs@{
       self,
       nixpkgs,
+      nixpkgs-toolchain,
       gnumach-src,
       mig-src,
       hurd-src,
@@ -169,7 +183,7 @@
       # host-system -> default-target map.  The `<cpu>-gnu` Hurd toolchain itself
       # (binutils/gcc/glibc) is built from source in packages.nix.  See
       # flakes/cross-toolchain.
-      crossToolchain = import ./flakes/cross-toolchain { inherit nixpkgs; };
+      crossToolchain = import ./flakes/cross-toolchain { inherit nixpkgs nixpkgs-toolchain; };
 
       # packages.<system> + apps.<system> wiring.  Extracted to ./packages.nix
       # so adding a sub-flake doesn't touch flake.nix / target-archs.nix and
@@ -177,6 +191,7 @@
       pkgOutputs = import ./packages.nix {
         inherit
           nixpkgs
+          nixpkgs-toolchain
           self
           forAllSystems
           targets
@@ -255,9 +270,11 @@
       );
       inherit (pkgOutputs) apps;
 
-      # Source pins (owner/repo/ref/rev/url) from the `*-src` inputs via
-      # flake.lock - consumed by `make src` to populate the src/ clones.  See
-      # flakes/sources.
+      # Source pins (owner/repo/ref/rev/url) from the inputs via flake.lock.  `srcs`
+      # = the frozen `*-src` pins (what `make pin-src` bumps / `make show-src-pins`
+      # reports); `devSrcs` = the `*-dev-src` aliases that in-tree overrides rebind, so
+      # `make src` clones the source the in-tree build actually uses.  See flakes/sources.
       srcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).all self inputs;
+      devSrcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).allDev self inputs;
     };
 }

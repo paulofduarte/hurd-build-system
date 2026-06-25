@@ -31,19 +31,15 @@ let
     "gcc-src"
     "glibc-src"
   ];
-in
 
-{
-  inherit info;
-
-  # { <dir> = info; ... } for every in-tree `*-src` input, keyed by src/<dir>
-  # (input "gnumach-src" -> dir "gnumach").  Auto-discovered from flake.lock's
-  # root node minus `toolchainOnly`, so adding an in-tree `<name>-src` input
-  # makes it appear here (and in `make src`) with no list to maintain.  `inputs`
-  # is the outputs-fn attrset, used only so `info` can read `.lastModifiedDate`.
-  # Backs the `srcs` flake output.
-  all =
-    self: inputs:
+  # { <dir> = info; ... } for every in-tree source, keyed by src/<dir> (input
+  # "gnumach-src" -> dir "gnumach").  Auto-discovered from flake.lock's root node
+  # minus `toolchainOnly`, so adding an in-tree `<name>-src` input makes it appear
+  # with no list to maintain.  `inputs` is the outputs-fn attrset, used only so
+  # `info` can read `.lastModifiedDate`.  `pick lock <name>-src` selects which input
+  # to actually read - the pin, or its *-dev-src alias - so one loop backs both views.
+  mkAll =
+    pick: self: inputs:
     let
       lock = builtins.fromJSON (builtins.readFile (self.outPath + "/flake.lock"));
       rootInputs = lock.nodes.${lock.root}.inputs or { };
@@ -52,9 +48,36 @@ in
       ) (builtins.attrNames rootInputs);
     in
     lib.listToAttrs (
-      map (n: {
-        name = lib.removeSuffix "-src" n;
-        value = info self n inputs.${n};
-      }) srcNames
+      map (
+        n:
+        let
+          chosen = pick lock n;
+        in
+        {
+          name = lib.removeSuffix "-src" n;
+          value = info self chosen inputs.${chosen};
+        }
+      ) srcNames
     );
+in
+
+{
+  inherit info;
+
+  # PIN side: the frozen `*-src` inputs.  Backs `.#srcs` - what `make pin-src` bumps
+  # and `make show-src-pins` reports.
+  all = mkAll (_lock: n: n);
+
+  # IN-TREE side: the `*-dev-src` ALIAS each in-tree override rebinds (e.g. mig-dev-src
+  # may track master while mig-src stays on a release tag).  Backs `.#devSrcs` - what
+  # `make src` clones, so src/<m> matches the source the in-tree build actually uses.
+  # A follows-only alias has no lock node of its own, so fall back to its pin (which
+  # it resolves to anyway - identical rev).
+  allDev = mkAll (
+    lock: n:
+    let
+      dev = "${lib.removeSuffix "-src" n}-dev-src";
+    in
+    if lock.nodes ? ${dev} then dev else n
+  );
 }

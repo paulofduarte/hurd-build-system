@@ -26,7 +26,10 @@
 # it); no -frandom-seed, no host -isystem strip, no NIX_DONT_SET_RPATH dance - all
 # wrapper artifacts the unwrapped toolchain doesn't need.
 
-{ nixpkgs }:
+{
+  nixpkgs, # branch: dev-shell runtime/dev tools (qemu, git, lint, ...)
+  nixpkgs-toolchain, # frozen: dev-shell build tools (must match the cached modules)
+}:
 
 let
   inherit (nixpkgs) lib;
@@ -58,15 +61,19 @@ in
       headers,
     }:
     let
+      # `pkgs` = the branch nixpkgs (runtime/dev tools); `pkgsToolchain` = the frozen
+      # pin (build tools that must match the cached nix modules for in-tree==nix).
       pkgs = nixpkgs.legacyPackages.${system};
+      pkgsToolchain = nixpkgs-toolchain.legacyPackages.${system};
 
       # Patched install-info (deterministic dir), shared with glibc.nix - see
       # texinfo-det.nix.  Replaces EVERY texinfo on PATH below so whichever
-      # install-info glibc/hurd's `make install` picks is deterministic.
-      texinfoDet = import ./texinfo-det.nix { inherit pkgs; };
+      # install-info glibc/hurd's `make install` picks is deterministic.  FROZEN: it
+      # bakes the dist's .info, so it must match the nix modules' texinfo.
+      texinfoDet = import ./texinfo-det.nix { pkgs = pkgsToolchain; };
 
       # Headless qemu (no GUI/audio backends) - `make run` only ever boots
-      # -nographic; see flakes/lib/qemu-headless.nix.
+      # -nographic; see flakes/lib/qemu-headless.nix.  BRANCH: runtime only.
       qemuHeadless = import ../lib/qemu-headless.nix pkgs;
 
       tp = "${target.crossTarget}-"; # raw prefix (the unwrapped cc has no .targetPrefix)
@@ -128,30 +135,36 @@ in
       # the unpatched texinfo wherever it appears, then texinfoDet is added once - so
       # the only install-info on PATH is the deterministic one.
       nativeBuildInputs =
-        lib.remove pkgs.texinfo (
+        lib.remove pkgsToolchain.texinfo (
           [
             cc
             binutils
             mig
           ]
           ++ inferredBuildInputs
-          ++ (with pkgs; [
+          # FROZEN (nixpkgs-toolchain): build tools the nix modules also use, so a
+          # branch bump can't rebuild the toolchain or skew in-tree==nix determinism.
+          ++ (with pkgsToolchain; [
             gcc
-            ccache # in-tree build cache; Makefile wraps CC, store at $(PROJ)/.ccache
             pkg-config
-            git
-            nix
-            qemuHeadless
-            curl
-            which
-            fakeroot
             python3
-            jq
             gettext
             gawk
             bison
             perl
             texinfo
+          ])
+          # BRANCH (nixpkgs): runtime/dev tools - none feed a cached build, so
+          # `nix flake update` refreshes them without touching the toolchain.
+          ++ [ qemuHeadless ]
+          ++ (with pkgs; [
+            ccache # in-tree build cache; Makefile wraps CC, store at $(PROJ)/.ccache
+            git
+            nix
+            curl
+            which
+            fakeroot
+            jq
           ])
           ++ import ../lint/tools.nix pkgs
           # gnumach's x86 `make check` builds a multiboot ISO with grub-mkrescue
@@ -203,7 +216,7 @@ in
         export MIG=${mig}/bin/${tp}mig
         export USER_MIG=${mig}/bin/${tp}mig
 
-        export BUILD_CC=${pkgs.stdenv.cc}/bin/cc
+        export BUILD_CC=${pkgsToolchain.stdenv.cc}/bin/cc
         export BINUTILS_BIN=${binutils}/bin
         export BUILD_TRIPLE=${buildTriple}
 
