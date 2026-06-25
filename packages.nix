@@ -318,7 +318,11 @@ in
           buildRevToken
           ;
         inherit mig; # the one post-glibc, checked mig everything downstream shares
-        srcInput = gnumach-src;
+        # Work side (like migChecked's mig-dev-src): the shipped kernel tracks the
+        # overridable alias, so `make src-gnumach` reaches it and the in-tree==nix
+        # matrix compares like-for-like.  The bootstrap twin (gnumachHeadersBootstrap)
+        # stays on gnumach-src to pin glibc's sysroot headers - no toolchain rebuild.
+        srcInput = gnumach-dev-src;
         inherit (gnumachInfo) forkUrl;
       };
 
@@ -334,7 +338,10 @@ in
           toolchainFor
           ;
         inherit mig; # the one post-glibc, checked mig everything downstream shares
-        srcInput = hurd-src;
+        # Work side (mirrors gnumach + migChecked): shipped userland tracks the alias
+        # so `make src-hurd` reaches it and in-tree==nix compares like-for-like; the
+        # bootstrap twin (hurdHeadersBootstrap) stays on hurd-src for glibc's sysroot.
+        srcInput = hurd-dev-src;
         inherit (hurdInfo) forkUrl;
       };
     in
