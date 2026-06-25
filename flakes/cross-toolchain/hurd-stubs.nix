@@ -272,8 +272,15 @@ let
             [ -n "$rep" ] || { echo "ERROR: no RPC compile line captured (cc.d empty - cc wrapper logging broke)"; ls -la "$TMPDIR/cc.d" 2>/dev/null | head; exit 1; }
             repflags=$(printf '%s' "$rep" | sed -E 's#[^ ]*RPC_[^ ]*\.c##g; s#[^ ]*[^ ]_server\.c##g; s/-Werror//g; s/ -g / /g; s#-o /[^ ]+##g; s/-MD//g; s/-MP//g; s#-MF [^ ]+##g; s#-MT [^ ]+##g')
             cd $bdir
+            # Per-TU progress so the harvest streams under `nix build -L` like the make
+            # phase above (this loop is serial and the bulk of the -ir build; without it
+            # the log goes dark after `make` until the summary).  Stdout only - clang's
+            # own stderr stays captured to clang-errs.log for the failure check; the echo
+            # never touches $out, so all.ll (and the derivation hash) is unaffected.
+            echo "harvesting stub TUs as LLVM IR (per-TU clang replay):"
             find $bdir \( -name 'RPC_*.c' -o -name '*_server.c' \) -type f | while read -r c; do
               nm=$(basename "$c" .c); sub=$(basename "$(dirname "$c")")
+              echo "  emit-ir $sub/$nm.c"
               $clangbin -target ${tp} -Wno-unknown-warning-option -Wno-error $repflags \
                 -emit-llvm -c -o "$genir/$sub-$nm.bc" "$c" 2>>$genir/clang-errs.log \
                 || echo "CLANG-FAIL $sub/$nm" >> $genir/clang-errs.log
