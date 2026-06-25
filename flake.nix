@@ -103,14 +103,17 @@
     };
 
     # Overridable ALIASES of the pins - what the Makefile's in-tree overrides
-    # rebind (--override-input <m>-dev-src src/<m>).  `follows` keeps them OUT
-    # of the lock (no second pin to maintain) and, unoverridden, they resolve
-    # to the very same source - the pin-side and alias-side instantiations
-    # then produce IDENTICAL drvs.  The explicit `flake = false` is required:
-    # follows does not inherit it, and overriding an alias without it makes
-    # nix demand a flake.nix in the override path.
+    # rebind (--override-input <m>-dev-src src/<m>).  Each tracks upstream
+    # master on savannah, so plain in-tree dev work and `make src` follow the
+    # latest source - typically AHEAD of the frozen *-src tag nix builds from,
+    # so the alias-side drv legitimately differs from the pin-side (that's the
+    # point: dev against HEAD, ship from the tag).  The explicit `flake = false`
+    # is required: overriding an alias without it makes nix demand a flake.nix
+    # in the override path.
     gnumach-dev-src = {
-      follows = "gnumach-src";
+      type = "git";
+      url = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
+      ref = "master";
       flake = false;
     };
     mig-dev-src = {
@@ -120,7 +123,9 @@
       flake = false;
     };
     hurd-dev-src = {
-      follows = "hurd-src";
+      type = "git";
+      url = "https://git.savannah.gnu.org/git/hurd/hurd.git";
+      ref = "master";
       flake = false;
     };
 

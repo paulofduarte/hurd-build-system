@@ -51,6 +51,23 @@
         "url": "https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz"
       }
     },
+    "gnumach-dev-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782062996,
+        "narHash": "sha256-v7bF8RtGxsF/q8DHnDK9YFCfA/Bb51qtvLjNgbxSvUE=",
+        "ref": "master",
+        "rev": "e5a1dcd8d0d3dd4ad7fcfc77e550156f474f7c7a",
+        "revCount": 3097,
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
+      },
+      "original": {
+        "ref": "master",
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
+      }
+    },
     "gnumach-src": {
       "flake": false,
       "locked": {
@@ -67,6 +84,23 @@
         "rev": "004116a3a862e872df005e8f6af0d4ea87d506fe",
         "type": "git",
         "url": "https://git.savannah.gnu.org/git/hurd/gnumach.git"
+      }
+    },
+    "hurd-dev-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782257611,
+        "narHash": "sha256-0eQE1REIGC6Ja+SJsQJ++9432Hy5bi/U/aEpiyLXqJ4=",
+        "ref": "master",
+        "rev": "67afa601748f18098c6e04e7093a09d87a2a53ce",
+        "revCount": 13005,
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
+      },
+      "original": {
+        "ref": "master",
+        "type": "git",
+        "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
       }
     },
     "hurd-src": {
@@ -160,13 +194,9 @@
         "build-rev": "build-rev",
         "gcc-src": "gcc-src",
         "glibc-src": "glibc-src",
-        "gnumach-dev-src": [
-          "gnumach-src"
-        ],
+        "gnumach-dev-src": "gnumach-dev-src",
         "gnumach-src": "gnumach-src",
-        "hurd-dev-src": [
-          "hurd-src"
-        ],
+        "hurd-dev-src": "hurd-dev-src",
         "hurd-src": "hurd-src",
         "mig-dev-src": "mig-dev-src",
         "mig-src": "mig-src",
