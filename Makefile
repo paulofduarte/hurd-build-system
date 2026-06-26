@@ -1683,7 +1683,13 @@ $(DIST_TZDATA_STAMP): flake.lock
 # minus what dev/doc claim); each runtime ELF is stripped with its debug split into
 # dbg via --add-gnu-debuglink.  Determinism: the clone preserves staging's finalised
 # mtimes; stripped ELFs + their .debug are touch'd back to the source ELF's mtime;
-# strip/objcopy + the basename debuglink carry no host path.  Uses the cross-binutils
+# strip/objcopy + the basename debuglink carry no host path.  Each ELF is first
+# DE-HARDLINKED (cp+rename when its link count > 1) so its per-path debuglink is a
+# function of CONTENT only, never the store's hardlink topology: `nix store optimise`
+# (and a cache NAR-unpack) merge byte-identical files - e.g. glibc's libexec/getconf/*
+# spec stubs - into one shared inode, and an in-place --add-gnu-debuglink then cannot
+# give the group distinct per-path debuglinks (one inode holds one section), collapsing
+# them onto a single hash IFF optimise had run - a cross-host divergence.  Uses the cross-binutils
 # $(OBJCOPY)/$(STRIP) (run on the build host, operate on the target ELF -> cross-
 # platform).  Gated by the dispatch via _MARK/_SDEPS.dist-split; runs LAST under dist.
 .PHONY: dist-split
@@ -1704,10 +1710,10 @@ $(DIST_SPLIT_STAMP):
 	    mv "$$f" "$$dev/lib"/; done; \
 	fi; \
 	for d in info man doc; do if [ -e "$$rt/share/$$d" ]; then mkdir -p "$$doc/share"; mv "$$rt/share/$$d" "$$doc/share"/; fi; done; \
-	list=$$(mktemp); find "$$rt" -type f | LC_ALL=C sort > "$$list"; seen=" "; \
+	list=$$(mktemp); find "$$rt" -type f | LC_ALL=C sort > "$$list"; \
 	while IFS= read -r f; do \
 	  [ "$$(od -An -tx1 -N4 "$$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] || continue; \
-	  ino=$$(stat -c %i "$$f"); case "$$seen" in *" $$ino "*) continue;; esac; seen="$$seen$$ino "; \
+	  if [ "$$(stat -c %h "$$f")" -gt 1 ]; then cp -p "$$f" "$$f.dh" && mv -f "$$f.dh" "$$f"; fi; \
 	  rel=$${f#$$rt/}; mt=$$(stat -c %Y "$$f"); \
 	  dfile="$$dbg/lib/debug/$$rel.debug"; mkdir -p "$$(dirname "$$dfile")"; \
 	  $(OBJCOPY) --only-keep-debug "$$f" "$$dfile"; \
