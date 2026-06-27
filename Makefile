@@ -103,8 +103,8 @@ export CCACHE_DIR
 # Splice before a compiler in a recipe: $(CC_WRAP)$$CC -> "ccache <cc>" / "<cc>".
 CC_WRAP       := $(if $(CCACHE),ccache ,)
 
-# $(eval $(call _detect_in_tree,FLAG,SRC)): shared opt-in rule for the four
-# in-tree-able modules (mig, glibc, gnumach, hurd).  Auto-enable FLAG when
+# $(eval $(call _detect_in_tree,FLAG,SRC)): shared opt-in rule for the three
+# in-tree-able modules (mig, gnumach, hurd).  Auto-enable FLAG when
 # src/<m>/.git is present unless an explicit value was given ($(origin) guard
 # lets FLAG=0/1 override), then normalize via _bool.  `override` is required to
 # beat a command-line value ("0" is truthy to bare $(if ...)).
@@ -818,8 +818,8 @@ ifneq ($(filter lint lint-% fmt fmt-% fmt-check fmt-check-% install-hooks,$(MAKE
   LINT_YML := $(call _nopatch,$(if $(_F),$(filter %.yml %.yaml,$(_F)),$(shell git ls-files '*.yml' '*.yaml')))
 endif
 
-.PHONY: lint lint-reuse lint-nix lint-shell lint-yaml lint-cpp
-lint: lint-reuse lint-nix lint-shell lint-yaml lint-cpp
+.PHONY: lint lint-reuse lint-nix lint-shell lint-yaml lint-cpp lint-licenses
+lint: lint-reuse lint-nix lint-shell lint-yaml lint-cpp lint-licenses
 lint-reuse:
 	@echo "  LINT   reuse (SPDX/license headers)"; $(_LB)reuse lint
 lint-nix:
@@ -836,6 +836,23 @@ lint-yaml:
 # C++ in scope; a finding fails the derivation (WarningsAsErrors in .clang-tidy).
 lint-cpp:
 	@echo "  LINT   cpp (clang-tidy)"; $(if $(LINT_CPP),$(NIX_BUILD) --no-link $(PROJ)\#mig-wire-manifest-tidy,true)
+# Third-party license drift guard: every component built into the artifact/toolchain
+# (the *-src flake inputs - binutils/gcc/glibc/gnumach/mig/hurd) must be documented in
+# THIRD-PARTY-LICENSES.md, so a newly pinned source can't ship undocumented.  Match is
+# a case-insensitive substring of the input's project name (the *-src basename): the
+# hand file SUMMARISES the Debian/sidekick closure rather than enumerating it, so
+# per-package + upstream-SPDX-id drift detection stays parked (more machinery than the
+# ~15 stable deps warrant - see .claude/docs/build/THIRD-PARTY-LICENSES-AUTOGEN.md).
+# Inputs come from flake.nix's `<name>-src = {` declarations via sed - pure text, no
+# nix eval / jq (an --inputs-from eval re-resolves the whole flake: far too slow here).
+lint-licenses:
+	@echo "  LINT   licenses (third-party *-src documented)"
+	@set -e; miss=; \
+	for n in $$(sed -nE 's/^[[:space:]]+([a-z0-9-]+-src) = \{.*/\1/p' flake.nix | grep -v -- '-dev-src'); do \
+	  grep -qi -- "$${n%-src}" THIRD-PARTY-LICENSES.md || miss="$$miss $$n"; \
+	done; \
+	[ -z "$$miss" ] || { echo "    FAIL: *-src component(s) missing from THIRD-PARTY-LICENSES.md:$$miss" >&2; \
+	  echo "    -> add a row documenting each upstream + its license" >&2; exit 1; }
 
 .PHONY: fmt fmt-nix fmt-cpp fmt-shell fmt-md fmt-yaml
 fmt: fmt-nix fmt-cpp fmt-shell fmt-md fmt-yaml
