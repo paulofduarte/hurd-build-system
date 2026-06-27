@@ -1692,10 +1692,17 @@ $(DIST_TZDATA_STAMP): flake.lock
 # them onto a single hash IFF optimise had run - a cross-host divergence.  Uses the cross-binutils
 # $(OBJCOPY)/$(STRIP) (run on the build host, operate on the target ELF -> cross-
 # platform).  Gated by the dispatch via _MARK/_SDEPS.dist-split; runs LAST under dist.
+# Prereqs = the RESOLVED component stamps (mirrors _SDEPS.dist-split): each component
+# touches its stamp on EVERY run (_dist_done), so whenever a component re-copies into
+# staging this re-fires the split.  Without them the prereq-less stamp read up-to-date
+# once present, so an incremental (no clean-dist) rebuild refreshed staging but SKIPPED
+# the re-split - the deployable trees kept the stale split even though the outer _stale
+# gate flagged dist-split and dispatched (the inner make then had nothing to re-run it).
+# clean-dist still drops the stamp for a forced redo.
 .PHONY: dist-split
 dist-split: $(DIST_SPLIT_STAMP)
 
-$(DIST_SPLIT_STAMP):
+$(DIST_SPLIT_STAMP): $(DIST_GLIBC_STAMP) $(DIST_GCC_STAMP) $(DIST_TZDATA_STAMP) $(if $(GNUMACH_IN_TREE),$(DIST_GNUMACH_TREE_STAMP),$(DIST_GNUMACH_NIX_STAMP)) $(if $(HURD_IN_TREE),$(DIST_HURD_TREE_STAMP),$(DIST_HURD_NIX_STAMP))
 	@$(call _req_env,OBJCOPY STRIP)
 	@echo "  DIST-SPLIT   $(DIST_STAGE) -> runtime/dev/doc/dbg"
 	@set -e; \
