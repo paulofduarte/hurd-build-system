@@ -2,11 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SCENARIO=hurd-debian - boot Debian Hurd userland on our gnumach.
-# Approach: overlay our kernel onto the distro's bundled kernel path
-# inside the per-run qcow2 overlay, then let the disk's own GRUB
-# config handle the multiboot + module + cmdline work.  Reuses
-# Debian's verified boot recipe verbatim - no per-arch module-chain
-# reverse-engineering on our side.
+# Approach (option 1): build an external GRUB ISO that loads our gnumach and
+# reuses Debian's own multiboot/module recipe + root (read from the disk's
+# grub.cfg, pulled at boot via search --fs-uuid). The distro image is never
+# modified; we just boot it (as a COW overlay) alongside the ISO. See
+# lib/sidekick.sh.
 set -euo pipefail
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
@@ -39,32 +39,25 @@ img_name=$(tar -tzf "$cache/debian-hurd.img.tar.gz" | grep -E '\.img$' | head -1
 overlay="$(hurd_overlay_path "$cache")" || exit 1
 hurd_make_overlay "$cache/$img_name" "$overlay" raw
 
-# Vanilla path: disk's GRUB boots the distro's bundled kernel as-is.
-# Still need the sidekick grub.cfg pass so GRUB renders on serial
-# under -nographic (no kernel swap; we just clean up the cfg).
+# Build an external GRUB ISO that boots either the distro's own kernel (vanilla)
+# or OUR gnumach, pulling the Hurd modules + root from the disk via search
+# --fs-uuid.  The distro image is read but NEVER modified (option 1); the
+# writable per-run overlay is just qemu's COW scratch so the base stays pristine.
+iso="$cache/boot.iso"
 if [ "${RUN_VANILLA:-}" = "1" ]; then
-  sidekick_prepare_grub "$overlay"
+  sidekick_distro_iso "$iso" "$cache/$img_name" raw
+else
+  sidekick_distro_iso "$iso" "$cache/$img_name" raw "$GNUMACH_KERNEL"
 fi
-# $QEMU_MACHINE is an array so RUN_ACCEL=1's -accel flags propagate as
-# separate argv words (empty array vanishes).
-hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
-  -drive file="$overlay",format=qcow2,if=ide \
-  -no-reboot \
-  "${extra_qemu_args[@]}"
-
-# Our-kernel path: replace the distro's kernel inside the overlay
-# with ours, then boot the disk normally - Debian's GRUB picks up
-# our binary at its known path and feeds it to multiboot.  Sidekick
-# auto-discovers the target path from the disk's grub.cfg (works
-# uniformly across i686 / x86_64 / Guix store-hash paths).
-sidekick_overlay_kernel "$overlay" "$GNUMACH_KERNEL"
 
 print_qemu_hint
-# -no-reboot halts qemu on guest reboot instead of cycling - lets us
-# see what actually happened (panic? init reboot?) instead of GRUB
-# popping back up with stale state.  If you genuinely want reboot
-# loops (e.g., a kernel-stability test), pass RUN_ARGS="-no-shutdown".
+# Boot the ISO (-boot d), with the overlay attached as the Hurd disk.
+# $QEMU_MACHINE is an array so RUN_ACCEL=1's -accel flags propagate as separate
+# argv words.  -no-reboot halts qemu on guest reboot instead of cycling - lets us
+# see what actually happened (panic? init reboot?) instead of GRUB re-popping.
 exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
+  -cdrom "$iso" \
   -drive file="$overlay",format=qcow2,if=ide \
+  -boot d \
   -no-reboot \
   "${extra_qemu_args[@]}"

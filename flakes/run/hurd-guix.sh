@@ -67,22 +67,21 @@ hurd_fetch_via_resolve "$url" "$qcow2" "$cache/last-target" "$hint"
 overlay="$(hurd_overlay_path "$cache")" || exit 1
 hurd_make_overlay "$qcow2" "$overlay" qcow2
 
-# Vanilla path: regenerate grub.cfg via sidekick so the qcow2's
-# internal GRUB renders on serial, then boot Guix's bundled kernel.
+# Build an external GRUB ISO (distro's own kernel for vanilla, else our gnumach)
+# that pulls Guix's modules + root (store-hash paths) from the disk via search
+# --fs-uuid. The qcow2 is read but never modified (option 1); the overlay is just
+# COW boot scratch.
+iso="$cache/boot.iso"
 if [ "${RUN_VANILLA:-}" = "1" ]; then
-  sidekick_prepare_grub "$overlay"
+  sidekick_distro_iso "$iso" "$qcow2" qcow2
+else
+  sidekick_distro_iso "$iso" "$qcow2" qcow2 "$GNUMACH_KERNEL"
 fi
-hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
-  -drive file="$overlay",format=qcow2 \
-  -no-reboot \
-  "${extra_qemu_args[@]}"
-
-# Our-kernel path: overlay our gnumach at Guix's store-hash kernel
-# path (auto-discovered by sidekick from the disk's grub.cfg).
-sidekick_overlay_kernel "$overlay" "$GNUMACH_KERNEL"
 
 print_qemu_hint
 exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
+  -cdrom "$iso" \
   -drive file="$overlay",format=qcow2 \
+  -boot d \
   -no-reboot \
   "${extra_qemu_args[@]}"

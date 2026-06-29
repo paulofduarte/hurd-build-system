@@ -46,23 +46,20 @@ hurd_fetch_once_verified "$url" "$qcow2" "$url.sha512"
 overlay="$(hurd_overlay_path "$cache")" || exit 1
 hurd_make_overlay "$qcow2" "$overlay" qcow2
 
-# Vanilla path: qcow2's internal GRUB boots Gentoo's bundled kernel.
-# Regenerate grub.cfg via sidekick first so GRUB renders on serial.
+# Build an external GRUB ISO (distro's own kernel for vanilla, else our gnumach)
+# that pulls Gentoo's modules + root from the disk via search --fs-uuid. The qcow2
+# is read but never modified (option 1); the overlay is just COW boot scratch.
+iso="$cache/boot.iso"
 if [ "${RUN_VANILLA:-}" = "1" ]; then
-  sidekick_prepare_grub "$overlay"
+  sidekick_distro_iso "$iso" "$qcow2" qcow2
+else
+  sidekick_distro_iso "$iso" "$qcow2" qcow2 "$GNUMACH_KERNEL"
 fi
-hurd_maybe_vanilla_exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
-  -drive file="$overlay",format=qcow2 \
-  -no-reboot \
-  "${extra_qemu_args[@]}"
-
-# Our-kernel path: overlay our gnumach at Gentoo's kernel path,
-# auto-discovered by sidekick from the disk's grub.cfg multiboot
-# line.
-sidekick_overlay_kernel "$overlay" "$GNUMACH_KERNEL"
 
 print_qemu_hint
 exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
+  -cdrom "$iso" \
   -drive file="$overlay",format=qcow2 \
+  -boot d \
   -no-reboot \
   "${extra_qemu_args[@]}"
