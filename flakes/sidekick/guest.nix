@@ -20,6 +20,14 @@
   ...
 }:
 
+let
+  # x86 boot-media tools (sidekick-mkrescue / sidekick-distro-iso) + their runtime
+  # deps — shared verbatim with the Linux dev shell (flakes/sidekick/tools.nix).
+  sidekickTools = import ./tools.nix {
+    inherit pkgs;
+    i386Grub = sidekickI386Grub;
+  };
+in
 {
   # microvm.nix is the GUEST BUILDER only; we build kernel/initrd/storeDisk/
   # kernelParams from this config and drive vfkit ourselves.
@@ -43,32 +51,31 @@
   };
 
   # The audited sidekick tool set — exactly the tools with no darwin-native build.
-  # (pahole was 'dwarves' in older nixpkgs.)
-  environment.systemPackages = with pkgs; [
-    glibc.bin # localedef
-    libabigail # abidiff / abidw
-    pahole # pahole
-    util-linux # mount
-    kmod # modprobe
-    e2fsprogs # mke2fs
-    grub2 # grub-mkrescue (the tool)
-    xorriso # grub-mkrescue ISO backend (from PATH, not grub's closure)
-    mtools # grub-mkrescue EFI image helper
-    # x86 BIOS GRUB rescue ISOs regardless of the guest's arch: grub's tools are
-    # cross-capable, fed the i386-pc modules from x86_64 grub. Used by `make run`
-    # boot/mkiso + the hurd-distro external-ISO boot (see flakes/run/lib/sidekick.sh).
-    (writeShellScriptBin "sidekick-mkrescue" ''
-      exec ${grub2}/bin/grub-mkrescue -d ${sidekickI386Grub}/lib/grub/i386-pc "$@"
-    '')
-  ];
+  # (pahole was 'dwarves' in older nixpkgs.) The x86 boot-media tools + their deps
+  # (grub2/xorriso/mtools/e2fsprogs/qemu-storage-daemon/util-linux/...) come from
+  # the shared sidekickTools so the guest and the Linux dev shell stay identical.
+  environment.systemPackages =
+    (with pkgs; [
+      glibc.bin # localedef
+      libabigail # abidiff / abidw
+      pahole # pahole
+      kmod # modprobe
+      fuse3 # fusermount3 (made setuid below for non-root FUSE)
+    ])
+    ++ sidekickTools.deps
+    ++ [
+      sidekickTools.sidekick-mkrescue
+      sidekickTools.sidekick-imgcp
+    ];
 
   # Hardening: commands run as an UNPRIVILEGED account with no password and no
   # sudo/wheel, so a compromised tool can't escalate inside the (already
   # network-less, project-only) sandbox. AVF virtiofs performs writes as the host
   # user regardless of the guest uid, so this account still has full project
-  # access without any uid mapping. NOTE: mount/modprobe (the make-run ext overlay)
-  # need root — when P3 wires that, use a userspace ext editor (e2tools/fuse-ext2)
-  # so the VM never needs a privileged account.
+  # access without any uid mapping. The `make run` distro boot needs NO root: it
+  # reads the distro grub.cfg with debugfs (+ a FUSE qcow2 view) and boots our
+  # gnumach via an external GRUB ISO over the UNMODIFIED disk (option 1) — never
+  # mounting or editing the image.
   users.users = {
     sidekick = {
       isNormalUser = true; # no password set -> login locked except by SSH key
@@ -77,11 +84,20 @@
     root.hashedPassword = "!"; # explicitly no root password
   };
 
-  # No privilege-escalation path at all: drop sudo entirely (nobody is in wheel,
-  # root login is off, the sidekick user has no password). There is simply no
-  # `sudo` in the guest to abuse.
-  security.sudo.enable = false;
-  security.sudo-rs.enable = false;
+  security = {
+    # No privilege-escalation path: drop sudo entirely (nobody is in wheel, root
+    # login is off, the sidekick user has no password) — no `sudo` to abuse.
+    sudo.enable = false;
+    sudo-rs.enable = false;
+    # Non-root FUSE: qemu-storage-daemon's FUSE export mounts via fusermount3,
+    # which must be setuid for the unprivileged sidekick user to mount.
+    wrappers.fusermount3 = {
+      source = "${pkgs.fuse3}/bin/fusermount3";
+      owner = "root";
+      group = "root";
+      setuid = true;
+    };
+  };
 
   # --- exec channel: sshd over AF_VSOCK, no network device ---
   services.openssh = {
