@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Body of the `nix run .#<arch>` app - wrapped by writeShellApplication in
 # flakes/run/default.nix.  That file prepends a tiny nix-interpolated
-# prelude (ARCH, GNUMACH_KERNEL, SIDEKICK_*, DISTRO_URLS_FILE,
-# DISPATCH_SCRIPT) so this file stays pure shell, editable + diffable on
-# its own.
+# prelude (ARCH, GNUMACH_KERNEL, DISTRO_URLS_FILE, DISPATCH_SCRIPT) so this
+# file stays pure shell, editable + diffable on its own.
 
 show_help() {
   cat <<EOF
@@ -105,9 +104,10 @@ done
 
 SCENARIO="${SCENARIO:-boot}"
 
-# ARCH / GNUMACH_KERNEL / SIDEKICK_* exported by the prelude - make sure
-# they reach dispatch.sh's environment.
-export ARCH GNUMACH_KERNEL SIDEKICK_KERNEL SIDEKICK_INITRD
+# ARCH / GNUMACH_KERNEL exported by the prelude - make sure they reach
+# dispatch.sh's environment.  The sidekick ISO tools (sidekick-imgcp /
+# sidekick-mkrescue) come in via runtimeInputs on PATH, not the env.
+export ARCH GNUMACH_KERNEL
 
 # Cache for distro images - XDG-friendly default, overridable via $WORK
 # (matches the Makefile knob).

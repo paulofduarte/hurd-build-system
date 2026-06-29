@@ -45,6 +45,44 @@ let
   # Headless qemu (no GUI/audio) - the apps always boot -nographic; see
   # flakes/lib/qemu-headless.nix.
   qemuHeadless = import ../lib/qemu-headless.nix pkgs;
+
+  # The sidekick ISO tools (sidekick-imgcp / sidekick-mkrescue) on the app's PATH:
+  # native on Linux (+ the fuse qemu-storage-daemon, sfdisk, debugfs/grub/xorriso/
+  # mtools they need), sidekick-run shims on darwin.  Same logic as the dev shell.
+  sidekickIsoTools =
+    if lib.hasSuffix "-darwin" system then
+      [ packages.sidekick-run ]
+      ++
+        map (t: pkgs.writeShellScriptBin t ''exec ${packages.sidekick-run}/bin/sidekick-run ${t} "$@"'')
+          [
+            "sidekick-imgcp"
+            "sidekick-mkrescue"
+          ]
+    else
+      (
+        let
+          st = import ../sidekick/tools.nix {
+            inherit pkgs;
+            i386Grub = nixpkgs.legacyPackages.x86_64-linux.grub2;
+          };
+        in
+        [
+          st.sidekick-imgcp
+          st.sidekick-mkrescue
+          (import ../lib/qemu-storage-daemon.nix pkgs)
+        ]
+        ++ (with pkgs; [
+          grub2
+          xorriso
+          mtools
+          e2fsprogs
+          # sfdisk only (avoid util-linux's non-setuid mount shadowing the host's)
+          (runCommand "sidekick-sfdisk" { } ''
+            mkdir -p $out/bin
+            ln -s ${util-linux}/bin/sfdisk $out/bin/sfdisk
+          '')
+        ])
+      );
   # Which arches we expose as `nix run` targets - the non-xen userland targets
   # that have a bootable `gnumach-<arch>`.  Xen variants don't boot under qemu
   # (gnumach disables tests + the boot harness on them); aarch64-gnu isn't a
@@ -59,28 +97,26 @@ let
     arch:
     let
       gnumach = packages."gnumach-${arch}";
-      inherit (packages) sidekick;
 
       runScript = pkgs.writeShellApplication {
         name = "hurd-run-${arch}";
-        runtimeInputs = with pkgs; [
-          qemuHeadless # qemu-system-* + qemu-img (GUI/audio stripped)
-          curl # distro image fetch
-          coreutils # mkdir / mv / cp / sha512sum
-          gnused
-          gnugrep
-          gawk
-          gnutar
-          gzip
-        ];
+        runtimeInputs =
+          (with pkgs; [
+            qemuHeadless # qemu-system-* + qemu-img (GUI/audio stripped)
+            curl # distro image fetch
+            coreutils # mkdir / mv / cp / sha512sum
+            gnused
+            gnugrep
+            gawk
+            gnutar
+            gzip
+          ])
+          ++ sidekickIsoTools; # sidekick-imgcp / sidekick-mkrescue (native | shim)
         # Tiny nix-interpolated prelude - sets the env vars + paths
         # ./app.sh references; the body itself stays pure shell.
         text = ''
           export ARCH=${arch}
           export GNUMACH_KERNEL=${gnumach}/boot/gnumach
-          export SIDEKICK_KERNEL=${sidekick}/vmlinuz
-          export SIDEKICK_INITRD=${sidekick}/initramfs.cpio.gz
-          export SIDEKICK_DISPATCH=${../sidekick/sidekick-dispatch.sh}
           DISTRO_URLS_FILE=${./lib/distro-urls.sh}
           DISPATCH_SCRIPT=${./.}/dispatch.sh
         ''

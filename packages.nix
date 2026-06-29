@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # `packages.<system>` and `apps.<system>` outputs (kernel, headers, mig,
-# glibc-hurd, the cross-toolchain, sidekick + the `nix run` apps).
+# glibc-hurd, the cross-toolchain + the `nix run` apps).  The sidekick guest +
+# run-script live in flake.nix (sidekick-guest / sidekick-run).
 #
 # Kept out of flake.nix so adding a sub-flake doesn't touch flake.nix /
 # target-archs.nix and thus doesn't retrigger the toolchain-cache CI (which
@@ -86,11 +87,6 @@ in
         inherit (hurdInfo) forkUrl;
         includeOnly = true;
       };
-      sidekick = import ./flakes/sidekick {
-        nixpkgs = nixpkgs-toolchain;
-        inherit system;
-      };
-
       # From-source cross binutils (stage 1 of the own toolchain), built from the
       # pinned release tarball.  Exposes `cross-binutils-<arch>`.
       ownBinutils = import ./flakes/cross-toolchain/binutils.nix {
@@ -350,7 +346,6 @@ in
     // mig # mig-<arch>: the one post-glibc, checked, overridable mig
     // hurdHeaders
     // hurd
-    // sidekick
     // ownBinutils # cross-binutils-<arch>
     // ownGcc.bootstrap # bootstrap-gcc-<arch> (libc-free stage-1 cc)
     // glibc

@@ -153,7 +153,8 @@ hurd_maybe_vanilla_exec() {
 
 # hurd_exec_with_our_kernel and _hurd_exec_via_iso were removed
 # 2026-05-25 along with the module-injection-via-host approach.  All
-# three Hurd scenarios now overlay our kernel into the distro's
-# qcow2 via the sidekick (sidekick_overlay_kernel in lib/sidekick.sh)
-# and let the disk's own GRUB drive multiboot - no need for the
-# host-side -kernel/-initrd plumbing or GRUB-on-ISO assembly.
+# three Hurd scenarios now boot via an external GRUB ISO built from
+# the distro's own grub.cfg (sidekick_distro_iso in lib/sidekick.sh):
+# our gnumach (or the distro's, for vanilla) loads from the ISO while
+# the Hurd modules + root are pulled from the UNMODIFIED distro disk
+# via `search --fs-uuid`.  No in-place disk edit, no host -kernel.

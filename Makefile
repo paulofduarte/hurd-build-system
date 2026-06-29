@@ -62,20 +62,18 @@ MIG_NAME := $(MIG_TARGET)-mig
 
 # Default SCENARIO so `make run` works without an override.  _RUN_PREREQS below
 # needs the value at PARSE time - else `make ARCH=x86_64 run` misses the
-# x86_64+boot -> sidekick prereq.
+# non-vanilla -> gnumach prereq.
 SCENARIO ?= boot
 
 # Layout.  Two parallel tracks per component:
 #   work/<comp>/<arch>/   in-tree iterative builds (fast incremental).
 #   dist/<arch>/          clean reproducible install tree (tarball-able release,
 #                         no /nix/store runtime deps).
-# FLAKES is source-only (the nix sub-flakes); SIDEKICK holds the x86_64
-# helper-VM artefacts, gitignored.
+# FLAKES is source-only (the nix sub-flakes).
 PROJ          := $(CURDIR)
 SRC           := $(PROJ)/src
 WORK          := $(PROJ)/work
 FLAKES        := $(PROJ)/flakes
-SIDEKICK      := $(PROJ)/.sidekick
 DIST_ROOT     := $(PROJ)/dist
 
 # Boolean-knob normalizer: $(call _bool,VALUE) -> "1" if truthy, "" if falsey
@@ -548,13 +546,6 @@ endef
 # kernel + headers makes no sense for a release.  Use `nix build .#mig-<arch>` or
 # `make mig` for the wrapper.
 
-# Sidekick helper VM artefacts (x86_64 Alpine, built via the root flake's `sidekick`
-# output).  Used for ext2 module extraction (Gentoo/Guix) and grub-mkrescue ISO
-# assembly (x86_64 inject mode).
-SIDEKICK_KERNEL := $(SIDEKICK)/vmlinuz
-SIDEKICK_INITRD := $(SIDEKICK)/initramfs.cpio.gz
-SIDEKICK_STAMP  := $(SIDEKICK)/.stamp
-
 # Hurd distro image URLs live in flakes/run/lib/distro-urls.sh (shared with the
 # `nix run` apps).  The `run:` recipe sources it inline so dispatch.sh sees them via
 # the environment - not read into make variables.
@@ -590,8 +581,6 @@ help:
 	@echo "  check-sysroot    link a hello-world against the dist's dev+runtime sysroot"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
 	@echo "  run-help         show all 'make run' options (ARCH/SCENARIO/RUN_*)"
-	@echo "  sidekick         build the helper VM (x86_64 Debian-tool dispatcher;"
-	@echo "                   ABI gate + Hurd run scenarios)"
 	@echo "  push-cache       push the $(ARCH) build environment to the shared binary cache"
 	@echo "  src              populate/reconcile src/ working clones from the pinned source revisions"
 	@echo "  src-<name>       same, for ONE source only (e.g. 'make src-gnumach')"
@@ -602,7 +591,7 @@ help:
 	@echo "                   (new gcc ABI baseline; ~25min)"
 	@echo "  clean            per-subdir 'make clean' - preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
-	@echo "  mrproper         rm -rf work/ + .sidekick/ + all dist/ + cached build links (src/ left intact)"
+	@echo "  mrproper         rm -rf work/ + all dist/ + cached build links (src/ left intact)"
 	@if [ -z "$(NIX)" ]; then \
 	  echo ""; \
 	  echo "Warning: nix is not installed. Targets require it."; \
@@ -646,11 +635,9 @@ clean-dist:
 	rm -f $(DIST_SPLIT_STAMP)
 
 # mrproper nukes work/ wholesale - a deeper reset including configure state.
-# flakes/ holds tracked sources, so scrub only its gitignored result-* gc-roots,
-# and drop $(SIDEKICK) wholesale.
+# flakes/ holds tracked sources, so scrub only its gitignored result-* gc-roots.
 mrproper:
 	rm -rf $(WORK)
-	rm -rf $(SIDEKICK)
 	rm -f  $(FLAKES)/gnumach-headers/result-* $(FLAKES)/mig/result-* $(FLAKES)/gnumach/result-* $(FLAKES)/hurd/result-*
 	@# dist/ may hold read-only /nix/store copies (dist-glibc); chmod so rm can
 	@# unlink inside them (a read-only dir blocks removal of its entries).
@@ -666,31 +653,6 @@ mrproper:
 	@# version.m4 $(notdir $(VERSION_FP_STAMP))` only refires when those truly change.
 	@# For a true upstream-pristine source reset, do it explicitly per clone:
 	@#   git -C src/<m> clean -fdX
-
-# ---- sidekick (always-on, arch-independent) ----
-# Builds the x86_64 Alpine helper VM for operations darwin can't do natively - ext2
-# module extraction (Gentoo/Guix) and grub-mkrescue ISO assembly (x86_64 inject mode).
-# Output is identical on every build host (prebuilt Alpine APKs, no cross-compile),
-# so the initramfs is byte-identical.
-#
-# One recipe produces both SIDEKICK_KERNEL and SIDEKICK_INITRD.  Make 3.81 lacks
-# grouped targets (`&:`, Make 4.3+), so listing both would race under `-j`; a single
-# stamp target avoids that.
-.PHONY: sidekick
-sidekick: $(SIDEKICK_STAMP)
-
-$(SIDEKICK_STAMP): flakes/sidekick/default.nix flakes/sidekick/packages.nix flakes/sidekick/debian-packages.nix flakes/sidekick/dispatcher.sh
-	@mkdir -p $(dir $(SIDEKICK_KERNEL))
-	@echo "  SIDEKICK  building helper VM (Debian userland + Alpine linux-virt kernel, generic dispatcher)..."
-	$(NIX_BUILD) .#sidekick \
-	  -o $(SIDEKICK)/result
-	cp -f $(SIDEKICK)/result/vmlinuz             $(SIDEKICK_KERNEL)
-	cp -f $(SIDEKICK)/result/initramfs.cpio.gz   $(SIDEKICK_INITRD)
-	@touch $@
-
-# Empty rule: the artefacts exist because the stamp recipe produced them - lets a
-# dependency on the artefact paths be satisfied without re-running the build.
-$(SIDEKICK_KERNEL) $(SIDEKICK_INITRD): $(SIDEKICK_STAMP) ;
 
 # ---- push-cache (always-on, arch-independent) ----
 # Push the current ARCH's toolchain + dev-shell build closure to cachix, restricted
@@ -842,7 +804,7 @@ lint-cpp:
 # (the *-src flake inputs - binutils/gcc/glibc/gnumach/mig/hurd) must be documented in
 # THIRD-PARTY-LICENSES.md, so a newly pinned source can't ship undocumented.  Match is
 # a case-insensitive substring of the input's project name (the *-src basename): the
-# hand file SUMMARISES the Debian/sidekick closure rather than enumerating it, so
+# hand file SUMMARISES the nixpkgs closure rather than enumerating it, so
 # per-package + upstream-SPDX-id drift detection stays parked (more machinery than the
 # ~15 stable deps warrant - see .claude/docs/build/THIRD-PARTY-LICENSES-AUTOGEN.md).
 # Inputs come from flake.nix's `<name>-src = {` declarations via sed - pure text, no
@@ -983,12 +945,10 @@ ifdef HURD_IN_TREE
 $(eval $(call _need_src,HURD_IN_TREE,$(HURD_SRC),$(_NEEDS_HURD_SRC),hurd,nix hurd))
 endif
 
-# Goals that need the cross-toolchain (NOT served by always-on rules).  `sidekick` is
-# filtered so standalone `make sidekick` doesn't enter the dev shell (arch-independent
-# build); pulled in as a `run` prereq it still runs inside.  `mig` is a build goal
-# ONLY when src/mig opts in; otherwise filtered out (top-level no-op recipe, no
-# dispatch) - like src/clean.
-_BUILD_GOALS := $(filter-out clean clean-dist mrproper help sidekick push-cache src pin-src show-src-pins lint lint-% fmt fmt-% fmt-check fmt-check-% install-hooks src-% pin-src-% glibc $(if $(MIG_IN_TREE),,mig) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree),$(_GOALS))
+# Goals that need the cross-toolchain (NOT served by always-on rules).  `mig` is a
+# build goal ONLY when src/mig opts in; otherwise filtered out (top-level no-op
+# recipe, no dispatch) - like src/clean.
+_BUILD_GOALS := $(filter-out clean clean-dist mrproper help push-cache src pin-src show-src-pins lint lint-% fmt fmt-% fmt-check fmt-check-% install-hooks src-% pin-src-% glibc $(if $(MIG_IN_TREE),,mig) $(if $(GNUMACH_IN_TREE),,gnumach dist-gnumach-tree) $(if $(HURD_IN_TREE),,hurd dist-hurd-tree),$(_GOALS))
 
 # Per-goal staleness inputs for the dispatch gate (_stale recurses over them):
 #   _MARK.<goal>   the completion marker - its stamp/output.  Existence is the
@@ -2058,22 +2018,12 @@ check: check-gnumach
 #   RUN_ARGS="..."      extra flags appended to qemu (e.g. "-s -S")
 #
 # Prereqs depend on (SCENARIO, RUN_VANILLA).  dispatch.sh rejects RUN_VANILLA=1 + boot
-# upfront, so the only kernel-less case is RUN_VANILLA=1 + hurd-*.
+# upfront, so the only kernel-less case is RUN_VANILLA=1 + hurd-* (uses the distro's
+# own kernel).  The GRUB-ISO build (boot + every hurd-*) calls sidekick-imgcp /
+# sidekick-mkrescue, resolved on the dev-shell PATH (native on Linux, sidekick-run
+# shim on darwin) - no make prereq.
 #   gnumach    - all non-vanilla scenarios.
-#   sidekick   - ANY hurd-* (regenerates the qcow2's grub.cfg for serial boot under
-#                -nographic; non-vanilla also overlays our kernel).  Also boot +
-#                ARCH=x86_64 (qemu's -kernel rejects 64-bit ELFs, D18; routes through
-#                GRUB-on-ISO via mkiso).
-# Cells (evaluated at parse time):
-#   RUN_VANILLA=1 + hurd-*    -> sidekick      boot + i686/aarch64  -> gnumach
-#   RUN_VANILLA=1 + boot      -> (rejected)    boot + x86_64        -> gnumach sidekick
-#   non-vanilla hurd-*        -> gnumach sidekick
-_RUN_PREREQS := \
-  $(if $(filter 1,$(RUN_VANILLA)), \
-    $(if $(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO)),sidekick), \
-    gnumach \
-    $(if $(filter hurd-debian hurd-gentoo hurd-guix,$(SCENARIO)),sidekick, \
-      $(if $(and $(filter x86_64,$(ARCH)),$(filter boot,$(SCENARIO))),sidekick)))
+_RUN_PREREQS := $(if $(filter 1,$(RUN_VANILLA)),,gnumach)
 
 # Each run is NOT idempotent, so no _MARK entry - every invocation re-enters dispatch
 # and re-checks `gnumach` (skipped if fresh).
@@ -2086,8 +2036,6 @@ run: $(_RUN_PREREQS)
 	 RUN_ACCEL="$(RUN_ACCEL)" \
 	 RUN_KEEP_OVERLAY="$(RUN_KEEP_OVERLAY)" \
 	 RUN_REFRESH="$(RUN_REFRESH)" \
-	 SIDEKICK_KERNEL="$(SIDEKICK_KERNEL)" \
-	 SIDEKICK_INITRD="$(SIDEKICK_INITRD)" \
 	 ./flakes/run/dispatch.sh "$(SCENARIO)" $(RUN_ARGS)
 
 # `run-help` has no prereqs - dispatch.sh handles --help before env validation, so

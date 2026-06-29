@@ -20,29 +20,29 @@ you touch any of it.
 flakes/run/
 |-- default.nix             # nix-app wrapper (per-arch writeShellApplication)
 |-- dispatch.sh             # entry point - validates env, exec's scenario
-|-- boot.sh                 # SCENARIO=boot: bare kernel (direct -kernel,
-|                           #   or GRUB-on-ISO via sidekick for x86_64)
-|-- hurd-debian.sh          # SCENARIO=hurd-debian: kernel-overlay inject
-|-- hurd-gentoo.sh          # SCENARIO=hurd-gentoo: kernel-overlay inject
-|-- hurd-guix.sh            # SCENARIO=hurd-guix: kernel-overlay inject
+|-- boot.sh                 # SCENARIO=boot: bare kernel wrapped in a GRUB ISO
+|-- hurd-debian.sh          # SCENARIO=hurd-debian: external-ISO boot (option 1)
+|-- hurd-gentoo.sh          # SCENARIO=hurd-gentoo: external-ISO boot (option 1)
+|-- hurd-guix.sh            # SCENARIO=hurd-guix: external-ISO boot (option 1)
 |-- README.md               # this file
 `-- lib/
     |-- common.sh           # die(), scenario_check_target(), print_qemu_hint()
     |-- arch-flags.sh       # arch_qemu_for_target(), arch_apply_accel_if_requested()
     |-- distro-urls.sh      # HURD_*_URL definitions (sourced by Makefile + nix-app)
     |-- hurd-common.sh      # fetch/overlay/vanilla helpers (no exec - see below)
-    `-- sidekick.sh         # host-side sidekick-VM orchestrator
-                            #   (overlay_kernel + prepare_grub + make_iso)
+    `-- sidekick.sh         # host-side boot-ISO orchestrator
+                            #   (make_iso + distro_iso, via the atomic tools)
 ```
 
 All three Hurd scenarios share the same shape: fetch the distro qcow2,
-overlay our kernel into it via the sidekick (which also regenerates a
-serial-clean grub.cfg from the disk's existing recipe), then boot it
-with plain `qemu -drive`. No more host-side `-kernel`/`-initrd`
-construction or per-distro module-chain reverse engineering.
+build an external GRUB ISO from the disk's own grub.cfg (our gnumach, or
+the distro's own for `--vanilla`; modules + root pulled from the
+UNMODIFIED disk via `search --fs-uuid`), then boot it with the ISO as
+`-cdrom` + a COW overlay as the disk. No in-place disk edit, no host-side
+`-kernel`/`-initrd` construction.
 
-The sidekick helper VM itself lives in `flakes/sidekick/` - see the
-[Sidekick helper VM](#sidekick-helper-vm) section below.
+The boot-ISO orchestration + the sidekick helper VM are described in the
+[boot ISO (option 1)](#the-boot-iso-option-1-and-the-sidekick) section below.
 
 ## How a scenario script is shaped
 
@@ -84,10 +84,10 @@ exec "$QEMU" ... "${extra_qemu_args[@]}"
    works immediately. `--help` and "unknown scenario" listings update
    automatically.
 
-If the scenario needs the sidekick helper VM (i.e., it reads modules
-from a qcow2, or builds a GRUB ISO for x86_64 inject), also add its
-name to the `sidekick` prereq filter in the parent Makefile's
-`_RUN_PREREQS` expression.
+The boot-ISO tools (`sidekick-imgcp` / `sidekick-mkrescue`) resolve on the
+dev-shell PATH (native on Linux, `sidekick-run` shim on darwin), so a new
+scenario needs no Makefile prereq for them; `_RUN_PREREQS` only carries the
+`gnumach` build (skipped for `--vanilla`).
 
 ### Adding a new distro + ARCH combo to an existing scenario
 
@@ -165,106 +165,50 @@ KVM/HVF on an x86_64 host accelerates both x86_64 and i686 guests
 (32-bit is a subset of 64-bit, same `/dev/kvm`). All other cross-ISA
 combos fall back to TCG with a one-line warning.
 
-## Sidekick helper VM
+## The boot ISO (option 1) and the sidekick
 
-The sidekick is a small x86_64 Linux VM the harness uses for
-operations darwin can't do natively (mounting/writing ext2 in a
-qcow2, running `grub-mkrescue`). Two operations today:
+Every Hurd boot under `-nographic` needs an x86 BIOS GRUB ISO: `boot.sh`
+wraps our gnumach in one (qemu's `-kernel` rejects 64-bit ELFs, D18), and
+the three distro scenarios build one that boots our gnumach (or the
+distro's own, for `--vanilla`) while pulling the Hurd modules + root from
+the **unmodified** distro disk via GRUB's `search --fs-uuid`. The disk is
+never mounted or written - only read.
 
-- **`overlay-kernel`**: mount the attached qcow2 read-write,
-  regenerate `/boot/grub/grub.cfg` from the distro's existing
-  recipe (serial-clean, minimal, with our `console=com0`), and -
-  if `/shared/kernel.bin` is present - overwrite the kernel file
-  at the path discovered from grub.cfg's first multiboot line.
-  Used by every Hurd scenario, in two modes:
-  - **inject** (`sidekick_overlay_kernel`): kernel.bin is our
-    gnumach; the overlay swaps it for the distro's bundled kernel.
-  - **vanilla** (`sidekick_prepare_grub`): no kernel.bin; only
-    the grub.cfg regen runs, so the distro's bundled kernel boots
-    cleanly on serial.
-- **`mkiso`**: assemble a GRUB-bootable ISO from a host-prepared
-  staging dir + grub.cfg. Used by `boot.sh` on x86_64, where
-  qemu's `-kernel` rejects 64-bit ELFs (D18) and we wrap gnumach
-  in a tiny ISO instead.
+The host-side orchestration lives in `lib/sidekick.sh` and is identical on
+Linux and darwin:
 
-The `overlay-kernel` op also handles per-distro grub.cfg quirks:
-flattens `configfile` indirection (Gentoo splits modules into
-`entry_hurd.cfg`), preserves uppercase variable assignments in the
-menuentry body (Gentoo's `DISK=wd0 PART=1 DISKOPT=noide`), and
-joins backslash-continued module lines (Debian).
+- **`sidekick_make_iso`** (the `boot` scenario): wrap a staging dir +
+  grub.cfg into an ISO.
+- **`sidekick_distro_iso`** (hurd-{debian,gentoo,guix}): read the distro's
+  `/boot/grub/grub.cfg` straight out of the disk image, flatten one-level
+  `configfile` includes (Gentoo splits modules into `entry_hurd.cfg`), parse
+  its fs UUID + the `multiboot`/`module` recipe (joining backslash-continued
+  lines, forcing `console=com0`), and emit an ISO grub.cfg that boots our
+  gnumach from the ISO + `search --fs-uuid` for the modules/root on disk.
 
-### How it's built
+Both call just **two atomic tools** that have no darwin-native build:
 
-`flakes/sidekick/default.nix` is a nix derivation (exposed as
-`packages.<system>.sidekick` in the root flake) that:
+- **`sidekick-imgcp <image> <raw|qcow2> <src> <dest>`** - copy one file out
+  of a (partitioned) disk image. Read-only `qemu-storage-daemon` FUSE view
+  - `debugfs` dump; the image is never modified.
+- **`sidekick-mkrescue -o <iso> <dir>`** - `grub-mkrescue` forced to build
+  an i386-pc (x86 BIOS) ISO via `-d <x86_64-grub2>/lib/grub/i386-pc`, so it
+  works even on an aarch64 host (the grub tools only manipulate the i386-pc
+  modules as data; x86 runs only at boot, in host `qemu-system-x86_64`).
 
-1. `fetchurl`s pinned Alpine 3.21 x86_64 APKs (listed with sha256s
-   in `flakes/sidekick/packages.nix`) - kernel + busybox + kmod +
-   e2fsprogs + grub + grub-bios + xorriso + mtools + their deps.
-1. `tar` + `cpio` + `gzip` (POSIX-only tools, work on darwin) to
-   unpack APKs into a rootfs, lay in our `/init` dispatcher, and
-   pack the result as `initramfs.cpio.gz`.
-1. Extract the kernel `bzImage` from `linux-virt-*.apk` to `vmlinuz`.
+### Where the tools run
 
-**No compilation happens during the build.** Every byte of the
-output is either a pre-built Alpine binary or our `/init` script.
-That's why the sidekick builds identically on darwin, linux,
-aarch64, x86_64 - same Alpine APKs, same POSIX tools, same output.
+On **Linux** they run natively (resolved on the dev-shell PATH). On
+**darwin** neither tool has a nixpkgs build, so each is a thin
+`sidekick-run <tool> "$@"` shim that forwards the call - argv + stdin/out/err
 
-Output paths after `make sidekick`:
-
-- `.sidekick/vmlinuz` (~12 MB)
-- `.sidekick/initramfs.cpio.gz` (~40 MB)
-
-### `/init` dispatcher
-
-`flakes/sidekick/init.sh` is PID 1 inside the VM. It reads
-`SIDEKICK_OP=` from the kernel cmdline and dispatches:
-
-- `SIDEKICK_OP=overlay-kernel`: mount the first writable ext
-  partition on `/dev/vd*`, run the grub.cfg regen (flatten
-  `configfile` references, awk-extract `multiboot`/`module`/var
-  lines from the first non-recovery menuentry, emit a minimal
-  serial-clean cfg with our `console=com0` appended), and if
-  `/shared/kernel.bin` exists, copy it (gzipped iff the discovered
-  path ends in `.gz`) over the file at the disk's kernel path.
-- `SIDEKICK_OP=mkiso`: read `/shared/iso-staging/` + `/shared/iso-grub.cfg`,
-  run `grub-mkrescue`, write `/shared/out.iso`.
-
-After the op completes, `/init` runs `poweroff -f`. The host's qemu
-process exits, control returns to the scenario script, output files
-(grub.cfg in place inside the overlay; ISO on the 9p share) are
-ready to use.
-
-### Why x86_64 even on aarch64 hosts
-
-The sidekick is always x86_64 Linux regardless of host arch (per
-design D13). The `qemu-system-x86_64` invocation hard-codes that.
-Rationale:
-
-- For `overlay-kernel`: busybox/awk/gzip + ext2/4 read+write -
-  pure file ops, arch-agnostic.
-- For `mkiso`: `grub-mkrescue` manipulates files - also arch-agnostic.
-  The ISO it produces boots an x86/x86_64 gnumach (the only arches
-  Hurd userland exists for today), so an x86 grub-bios is what we need.
-
-Running qemu-system-x86_64 under TCG on aarch64 is ~5x slower than
-native, but each op runs once per overlay and the result is cached
-via per-overlay stamps. Acceptable.
-
-### Refresh after Alpine version bumps
-
-Bump versions + sha256s in `flakes/sidekick/packages.nix`. Easiest
-way: download the new APKs, run `shasum -a 256`, paste. Or write a
-small `refresh-packages.sh` that walks the Alpine APKINDEX (we did
-this once to seed the file; the resulting hashes are in git).
-
-After any bump:
-
-```sh
-rm -rf .sidekick
-make sidekick          # rebuilds + caches
-```
+- exit code - into the **sidekick guest**: a minimal, hardened nix-only NixOS
+  microVM (vfkit + Apple Virtualization.framework, SSH-over-vsock, project
+  virtiofs-mounted at its real path so host↔guest paths are identical). The
+  guest is built on Linux/CI and substituted from cachix (darwin can't build a
+  Linux closure); see `flakes/sidekick/{guest,host,tools}.nix` and the
+  `sidekick-guest` / `sidekick-run` flake outputs. The guest is kept out of the
+  dist + toolchain closures so it can never affect determinism.
 
 ## Gotchas
 

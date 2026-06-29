@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # SCENARIO=boot - bare kernel smoke test.  Universal across all
 # supported ARCHs; for x86_64 we route through a tiny GRUB ISO
-# (built by sidekick) because qemu's -kernel rejects 64-bit ELFs.
+# (built via sidekick-mkrescue) because qemu's -kernel rejects 64-bit ELFs.
 set -euo pipefail
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
