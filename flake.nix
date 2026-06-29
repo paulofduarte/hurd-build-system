@@ -301,6 +301,13 @@
               # checked mig), so the xen-keyed raw mig would only add a pointless build.
               mig = pkgsFor."mig-${tcName}";
               headers = pkgsFor."gnumach-headers-${name}";
+              # Sidekick dispatcher (darwin only) — the shell shims the Linux-only
+              # tools to it; null on Linux (those tools run natively there).
+              sidekickRun =
+                if sidekickGuestFor ? ${system} then
+                  (mkSidekickHost system sidekickGuestFor.${system}).sidekick-run
+                else
+                  null;
             }
           ) targets;
         in

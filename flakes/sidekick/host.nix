@@ -36,10 +36,20 @@ let
     }
   ];
 
+  # Launch vfkit under a recognizable name: `ps`/`pgrep` then show `sidekick-vm`
+  # instead of a generic `vfkit` (the symlink preserves the binary's codesigned
+  # virtualization entitlement). Activity Monitor still resolves it to `vfkit`,
+  # and Apple's per-VM `com.apple.Virtualization.VirtualMachine` XPC helper is
+  # system-owned and unrenameable — the singleton guard keeps it to exactly one.
+  sidekick-vm = hostPkgs.runCommand "sidekick-vm" { } ''
+    mkdir -p $out/bin
+    ln -s ${lib.getExe hostPkgs.vfkit} $out/bin/sidekick-vm
+  '';
+
   sidekick-run = hostPkgs.runCommand "sidekick-run" { } ''
     mkdir -p $out/bin
     substitute ${./sidekick-run.sh} $out/bin/sidekick-run \
-      --replace-fail '@vfkit@'     '${lib.getExe hostPkgs.vfkit}' \
+      --replace-fail '@vfkit@'     '${sidekick-vm}/bin/sidekick-vm' \
       --replace-fail '@socat@'     '${lib.getExe hostPkgs.socat}' \
       --replace-fail '@ssh@'       '${hostPkgs.openssh}/bin/ssh' \
       --replace-fail '@sshkeygen@' '${hostPkgs.openssh}/bin/ssh-keygen' \

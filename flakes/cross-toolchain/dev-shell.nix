@@ -59,6 +59,7 @@ in
       gnumach,
       mig,
       headers,
+      sidekickRun ? null, # darwin: the sidekick-run dispatcher; null on Linux
     }:
     let
       # `pkgs` = the branch nixpkgs (runtime/dev tools); `pkgsToolchain` = the frozen
@@ -167,20 +168,54 @@ in
             jq
           ])
           ++ import ../lint/tools.nix pkgs
-          # gnumach's x86 `make check` builds a multiboot ISO with grub-mkrescue
-          # (needs xorriso + mtools); nixpkgs' grub2 is linux-only, so gate on
-          # x86 + linux hosts.
-          ++
-            lib.optionals
-              (
-                (lib.hasPrefix "x86_64-" target.crossTarget || lib.hasPrefix "i686-" target.crossTarget)
-                && lib.hasSuffix "-linux" system
-              )
-              [
-                pkgs.grub2
-                pkgs.xorriso
-                pkgs.mtools
-              ]
+          # Sidekick-required Linux-only tools (localedef/abidiff/abidw/pahole/
+          # grub-mkrescue + the directly-used xorriso/mtools/mke2fs).  On LINUX they
+          # run natively; on DARWIN, where libabigail/pahole/grub2/glibc have no
+          # build, a tiny shim execs them inside the sidekick microVM (flakes/sidekick),
+          # while xorriso/mtools/e2fsprogs (which DO build on darwin) stay native.
+          # grub-mkrescue pulls xorriso+mtools itself inside the guest, so darwin only
+          # needs the shim for it.  mount/modprobe are NOT shimmed here (they'd shadow
+          # the host tools); their few callers invoke `sidekick-run mount` explicitly.
+          ++ lib.optionals (lib.hasSuffix "-linux" system) (
+            with pkgs;
+            [
+              grub2
+              xorriso
+              mtools
+              e2fsprogs
+              libabigail
+              pahole
+              # localedef only (not all of glibc.bin, which would shadow
+              # getconf/ldd/iconv on PATH and could skew the build).
+              (runCommand "sidekick-localedef" { } ''
+                mkdir -p $out/bin
+                ln -s ${glibc.bin}/bin/localedef $out/bin/localedef
+              '')
+            ]
+          )
+          ++ lib.optionals (lib.hasSuffix "-darwin" system && sidekickRun != null) (
+            [ sidekickRun ]
+            ++
+              map
+                (
+                  t:
+                  pkgs.writeShellScriptBin t ''
+                    exec ${sidekickRun}/bin/sidekick-run ${t} "$@"
+                  ''
+                )
+                [
+                  "localedef"
+                  "abidiff"
+                  "abidw"
+                  "pahole"
+                  "grub-mkrescue"
+                ]
+            ++ (with pkgs; [
+              xorriso
+              mtools
+              e2fsprogs
+            ])
+          )
         )
         ++ [ texinfoDet ];
 
