@@ -725,6 +725,8 @@ push-cache:
 	  { echo "push-cache: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
 	roots=".#cross-gcc-$(_TC_ARCH) .#glibc-hurd-$(_TC_ARCH).buildtree .#devShells.$$system.$(ARCH).inputDerivation"; \
+	: "sidekick guest (darwin's Linux-tool VM) is built on Linux CI so darwin can substitute it"; \
+	case "$$system" in *-linux) roots="$$roots .#packages.$$system.sidekick-guest";; esac; \
 	echo "==> Pushing build closure of toolchain + dev shell for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
 	echo "  realising $$roots"; \
 	$(NIX) --accept-flake-config build --no-link $$roots 2>/dev/null || \

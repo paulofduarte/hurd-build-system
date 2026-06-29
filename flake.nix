@@ -142,6 +142,16 @@
       flake = false;
     };
 
+    # Sidekick microVM builder (darwin-only Linux-tool runner).  microvm.nix is
+    # used only to BUILD the guest (erofs store image + kernel + initrd +
+    # kernelParams); we drive vfkit ourselves (flakes/sidekick).  Follows the
+    # branch nixpkgs so the guest's tools track the same set as the dev shell.
+    # The guest is kept OUT of the dist/toolchain closures (determinism firewall).
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
   };
 
   outputs =
@@ -159,6 +169,7 @@
       mig-dev-src,
       hurd-dev-src,
       build-rev,
+      microvm,
       ...
     }:
     let
@@ -213,8 +224,46 @@
           hurd-dev-src
           ;
       };
+
+      # --- Sidekick: a darwin-only microVM that transparently runs the Linux-only
+      # build tools (localedef/abidiff/pahole/grub-mkrescue/...).  microvm.nix
+      # builds the guest for the host's NATIVE Linux arch; our launcher drives
+      # vfkit.  Entirely outside the dist/toolchain closures.  See flakes/sidekick.
+      sidekickGuests = {
+        "aarch64-linux" = "Image"; # host's linuxTarget (kernel image name)
+        "x86_64-linux" = "bzImage";
+      };
+      sidekickConfigs = nixpkgs.lib.mapAttrs (
+        guestSystem: _:
+        nixpkgs.lib.nixosSystem {
+          system = guestSystem;
+          modules = [
+            microvm.nixosModules.microvm
+            ./flakes/sidekick/guest.nix
+          ];
+        }
+      ) sidekickGuests;
+      # host darwin system -> guest linux system
+      sidekickGuestFor = {
+        "aarch64-darwin" = "aarch64-linux";
+        "x86_64-darwin" = "x86_64-linux";
+      };
+      mkSidekickHost =
+        system: guestSystem:
+        import ./flakes/sidekick/host.nix {
+          inherit (nixpkgs) lib;
+          hostPkgs = nixpkgs.legacyPackages.${system};
+          guestPkgs = nixpkgs.legacyPackages.${guestSystem};
+          guestConfig = sidekickConfigs.${guestSystem}.config;
+          linuxTarget = sidekickGuests.${guestSystem};
+        };
     in
     {
+      # NixOS guests (built on Linux/CI, substituted on darwin from cachix).
+      nixosConfigurations = nixpkgs.lib.mapAttrs' (
+        guestSystem: cfg: nixpkgs.lib.nameValuePair "sidekick-${guestSystem}" cfg
+      ) sidekickConfigs;
+
       # `default` picks the target whose CPU matches the host, so `nix develop`
       # without an explicit `.#<name>` works out of the box. Override with
       # `nix develop .#x86_64` (or whichever) for a deliberate cross-target.
@@ -272,6 +321,30 @@
             paths = import ./flakes/lint/tools.nix nixpkgs.legacyPackages.${system};
           };
         }
+        # Sidekick: every system exposes `sidekick-guest` (linux hosts build their
+        # own arch's guest for CI/cache; darwin substitutes the matching arch).
+        # `sidekick-run` (the dispatcher) is darwin-only — Linux runs tools natively.
+        // (
+          let
+            isDarwin = sidekickGuestFor ? ${system};
+            guestSystem =
+              if isDarwin then
+                sidekickGuestFor.${system}
+              else if sidekickGuests ? ${system} then
+                system
+              else
+                null;
+          in
+          nixpkgs.lib.optionalAttrs (guestSystem != null) (
+            let
+              sk = mkSidekickHost system guestSystem;
+            in
+            {
+              inherit (sk) sidekick-guest;
+            }
+            // nixpkgs.lib.optionalAttrs isDarwin { inherit (sk) sidekick-run; }
+          )
+        )
       );
       inherit (pkgOutputs) apps;
 
