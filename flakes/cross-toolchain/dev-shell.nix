@@ -73,10 +73,6 @@ in
       # bakes the dist's .info, so it must match the nix modules' texinfo.
       texinfoDet = import ./texinfo-det.nix { pkgs = pkgsToolchain; };
 
-      # Headless qemu (no GUI/audio backends) - `make run` only ever boots
-      # -nographic; see flakes/lib/qemu-headless.nix.  BRANCH: runtime only.
-      qemuHeadless = import ../lib/qemu-headless.nix pkgs;
-
       # The sidekick's atomic ISO tools (sidekick-mkrescue / sidekick-imgcp),
       # shared verbatim with the guest (flakes/sidekick/tools.nix).  On a LINUX
       # host these run NATIVELY (no VM); on darwin they're sidekick-run shims
@@ -130,7 +126,7 @@ in
       #   gcc        native compiler for in-tree `make mig` (a host tool)
       #   pkg-config hurd's optional PKG_CHECK probes
       #   git/nix    source ops + Makefile re-dispatch into a target shell
-      #   qemuHeadless  qemu-system-* (+ qemu-img) for `make run`, GUI/audio stripped
+      #   qemu       qemu-system-* (+ qemu-img) for `make run` (stock; cache.nixos.org)
       #   curl/which run scenarios + gnumach's run-qemu.sh test gate
       #   fakeroot   `make dist-hurd`: hurd installs some programs -o root -m 4755
       #              (setuid); fakeroot fakes the chown/setuid for a non-root install.
@@ -166,8 +162,8 @@ in
           ])
           # BRANCH (nixpkgs): runtime/dev tools - none feed a cached build, so
           # `nix flake update` refreshes them without touching the toolchain.
-          ++ [ qemuHeadless ]
           ++ (with pkgs; [
+            qemu # qemu-system-* + qemu-img for `make run`; stock, from cache.nixos.org
             ccache # in-tree build cache; Makefile wraps CC, store at $(PROJ)/.ccache
             git
             nix

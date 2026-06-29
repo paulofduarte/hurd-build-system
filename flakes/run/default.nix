@@ -42,9 +42,6 @@
 let
   pkgs = nixpkgs.legacyPackages.${system};
   inherit (nixpkgs) lib;
-  # Headless qemu (no GUI/audio) - the apps always boot -nographic; see
-  # flakes/lib/qemu-headless.nix.
-  qemuHeadless = import ../lib/qemu-headless.nix pkgs;
 
   # The sidekick ISO tools (sidekick-imgcp / sidekick-mkrescue) on the app's PATH:
   # native on Linux (+ the fuse qemu-storage-daemon, sfdisk, debugfs/grub/xorriso/
@@ -102,7 +99,7 @@ let
         name = "hurd-run-${arch}";
         runtimeInputs =
           (with pkgs; [
-            qemuHeadless # qemu-system-* + qemu-img (GUI/audio stripped)
+            qemu # qemu-system-* + qemu-img (stock; from cache.nixos.org)
             curl # distro image fetch
             coreutils # mkdir / mv / cp / sha512sum
             gnused
