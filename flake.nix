@@ -237,6 +237,9 @@
         guestSystem: _:
         nixpkgs.lib.nixosSystem {
           system = guestSystem;
+          # x86_64 grub2 supplies the i386-pc (x86 BIOS) modules for grub-mkrescue;
+          # the guest's own grub tools are cross-capable. Same package on x86_64.
+          specialArgs.sidekickI386Grub = nixpkgs.legacyPackages.x86_64-linux.grub2;
           modules = [
             microvm.nixosModules.microvm
             ./flakes/sidekick/guest.nix

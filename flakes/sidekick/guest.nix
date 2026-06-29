@@ -13,6 +13,10 @@
 {
   pkgs,
   config,
+  # x86_64 grub2 (passed from the flake) — its i386-pc module blobs let us build
+  # x86 BIOS boot media even on an aarch64 guest (grub's tools are cross-capable).
+  # On an x86_64 guest this IS the native grub2.
+  sidekickI386Grub,
   ...
 }:
 
@@ -44,10 +48,18 @@
     glibc.bin # localedef
     libabigail # abidiff / abidw
     pahole # pahole
-    grub2 # grub-mkrescue (pulls xorriso/mtools itself)
     util-linux # mount
     kmod # modprobe
     e2fsprogs # mke2fs
+    grub2 # grub-mkrescue (the tool)
+    xorriso # grub-mkrescue ISO backend (from PATH, not grub's closure)
+    mtools # grub-mkrescue EFI image helper
+    # x86 BIOS GRUB rescue ISOs regardless of the guest's arch: grub's tools are
+    # cross-capable, fed the i386-pc modules from x86_64 grub. Used by `make run`
+    # boot/mkiso + the hurd-distro external-ISO boot (see flakes/run/lib/sidekick.sh).
+    (writeShellScriptBin "sidekick-mkrescue" ''
+      exec ${grub2}/bin/grub-mkrescue -d ${sidekickI386Grub}/lib/grub/i386-pc "$@"
+    '')
   ];
 
   # Hardening: commands run as an UNPRIVILEGED account with no password and no
