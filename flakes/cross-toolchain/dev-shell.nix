@@ -77,6 +77,15 @@ in
       # -nographic; see flakes/lib/qemu-headless.nix.  BRANCH: runtime only.
       qemuHeadless = import ../lib/qemu-headless.nix pkgs;
 
+      # The sidekick's atomic ISO tools (sidekick-mkrescue / sidekick-imgcp),
+      # shared verbatim with the guest (flakes/sidekick/tools.nix).  On a LINUX
+      # host these run NATIVELY (no VM); on darwin they're sidekick-run shims
+      # below.  Lazily evaluated - only forced inside the Linux branch.
+      sidekickTools = import ../sidekick/tools.nix {
+        inherit pkgs;
+        i386Grub = nixpkgs.legacyPackages.x86_64-linux.grub2;
+      };
+
       tp = "${target.crossTarget}-"; # raw prefix (the unwrapped cc has no .targetPrefix)
       buildTriple = pkgs.stdenv.hostPlatform.config;
       coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
@@ -177,8 +186,7 @@ in
           # needs the shim for it.  mount/modprobe are NOT shimmed here (they'd shadow
           # the host tools); their few callers invoke `sidekick-run mount` explicitly.
           ++ lib.optionals (lib.hasSuffix "-linux" system) (
-            with pkgs;
-            [
+            (with pkgs; [
               grub2
               xorriso
               mtools
@@ -191,6 +199,21 @@ in
                 mkdir -p $out/bin
                 ln -s ${glibc.bin}/bin/localedef $out/bin/localedef
               '')
+              # sfdisk only (not all of util-linux, whose non-setuid `mount`
+              # would shadow the host's) - sidekick-imgcp needs it to find the
+              # ext partition.
+              (runCommand "sidekick-sfdisk" { } ''
+                mkdir -p $out/bin
+                ln -s ${util-linux}/bin/sfdisk $out/bin/sfdisk
+              '')
+            ])
+            # The option-1 ISO tools, native; + the fuse qemu-storage-daemon they
+            # need (debugfs/grub2/xorriso/mtools are already above).  fusermount3
+            # is the HOST's setuid one (not bundled).
+            ++ [
+              sidekickTools.sidekick-mkrescue
+              sidekickTools.sidekick-imgcp
+              (import ../lib/qemu-storage-daemon.nix pkgs)
             ]
           )
           ++ lib.optionals (lib.hasSuffix "-darwin" system && sidekickRun != null) (
@@ -209,6 +232,8 @@ in
                   "abidw"
                   "pahole"
                   "grub-mkrescue"
+                  "sidekick-mkrescue"
+                  "sidekick-imgcp"
                 ]
             ++ (with pkgs; [
               xorriso
