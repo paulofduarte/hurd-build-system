@@ -29,7 +29,24 @@
 # Why write_files + runcmd: cloud-init runs `runcmd` items under
 # /bin/sh (dash on Ubuntu), which rejects `set -o pipefail`.  We write
 # the script with a bash shebang and exec it from runcmd.
+# fuse3: provides the setuid /usr/bin/fusermount3 that nix's libfuse (in
+# qemu-storage-daemon) execs to mount the read-only image view for `make run`'s
+# sidekick-imgcp.  nix can't ship a working setuid binary on a non-NixOS host, so
+# the distro's is the one that actually mounts non-root - see the tmpfiles entry
+# below + flakes/sidekick/sidekick-imgcp.sh.
+packages:
+  - fuse3
 write_files:
+  # Expose the distro's setuid fusermount3 at the NixOS-standard /run/wrappers/bin,
+  # which sidekick-imgcp scopes onto PATH for qemu-storage-daemon.  /run is tmpfs,
+  # so systemd-tmpfiles recreates the symlink on every boot (and on first boot via
+  # the runcmd below).
+  - path: /etc/tmpfiles.d/sidekick-fusermount.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      d /run/wrappers/bin 0755 root root -
+      L+ /run/wrappers/bin/fusermount3 - - - - /usr/bin/fusermount3
   - path: /usr/local/sbin/bootstrap-nix-dev.sh
     permissions: '0755'
     owner: root:root
@@ -211,4 +228,7 @@ write_files:
       PROFILED
       chmod 0644 /etc/profile.d/nix-system-tools.sh
 runcmd:
+  # Apply the fusermount3 wrapper symlink now (first boot); /etc/tmpfiles.d is
+  # reprocessed automatically on every subsequent boot.
+  - systemd-tmpfiles --create /etc/tmpfiles.d/sidekick-fusermount.conf
   - /usr/local/sbin/bootstrap-nix-dev.sh

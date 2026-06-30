@@ -39,9 +39,15 @@ case "$fmt" in
     ;;
 esac
 
-# read-only raw FUSE view of the image (no copy; image untouched)
+# read-only raw FUSE view of the image (no copy; image untouched).
+# libfuse mounts by exec'ing a setuid fusermount3. `nix develop`'s isolated PATH
+# drops the host's bin dirs, so scope the NixOS-standard wrapper dir (where a
+# setuid fusermount3 lives) onto PATH for just this exec - native on NixOS,
+# provisioned there on other distros (see cloud-init.yaml). The build PATH is
+# untouched, and in the sidekick guest /run/wrappers/bin is already on PATH so
+# this is a no-op.
 : >"$view"
-qemu-storage-daemon \
+PATH="/run/wrappers/bin:$PATH" qemu-storage-daemon \
   --blockdev "driver=$fmt,node-name=d,file.driver=file,file.filename=$img" \
   --export "type=fuse,id=e,node-name=d,mountpoint=$view,writable=off,allow-other=off" 2>"$sd_log" &
 sd=$!
