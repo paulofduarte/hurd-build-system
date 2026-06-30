@@ -72,6 +72,19 @@ rest_stop() {
     "${#body}" "$body" | "$SOCAT" - "UNIX-CONNECT:$CTL_SOCK" >/dev/null 2>&1 || true
 }
 
+# Surface the boot log on failure, with vfkit's cobra flag-usage dump (which it
+# prints on ANY startup error) stripped out so the real cause - e.g. an
+# `Error Domain=VZErrorDomain ... failed to start` line - stands out instead of
+# being buried under a wall of `--flag` help. Goes to stderr.
+boot_diag() {
+  local n="${1:-20}"
+  if [ -s "$BOOTLOG" ]; then
+    { grep -vE '^[[:space:]]*--?[A-Za-z]' "$BOOTLOG" || true; } | tail -n "$n" | sed 's/^/  | /' >&2
+  else
+    echo "  | (boot log empty: $BOOTLOG)" >&2
+  fi
+}
+
 boot_vm() {
   # Critical section: only one booter at a time. macOS has no flock(1), so use an
   # atomic mkdir lock with stale-holder steal (boots are quick + rare).
@@ -114,8 +127,12 @@ boot_vm() {
   for _ in $(seq 1 120); do
     [ -S "$SSH_SOCK" ] && break
     kill -0 "$(cat "$PIDFILE")" 2>/dev/null || {
-      tail -20 "$BOOTLOG" >&2
-      die "vfkit exited during boot"
+      echo "sidekick-run: the Linux micro-VM failed to start (vfkit exited before the guest came up):" >&2
+      boot_diag 20
+      echo "sidekick-run: hint - the host could not create a VM. On a virtualized macOS host," >&2
+      echo "  enable nested virtualization (Intel VT-x / AMD-V) for the guest; AVF cannot start a" >&2
+      echo "  VM at all under Rosetta / x86 emulation. Full boot log: $BOOTLOG" >&2
+      exit 1
     }
     sleep 0.5
   done
@@ -124,8 +141,11 @@ boot_vm() {
     sleep 0.5
   done
   "$SSH" "${ssh_opts[@]}" sidekick@sidekick true 2>/dev/null || {
-    tail -30 "$BOOTLOG" >&2
-    die "sshd-over-vsock never came up"
+    echo "sidekick-run: the micro-VM booted but sshd-over-vsock never answered:" >&2
+    boot_diag 30
+    echo "sidekick-run: hint - the guest is up but its sidekick-ssh vsock socket isn't accepting;" >&2
+    echo "  inspect the guest console in the boot log above. Full boot log: $BOOTLOG" >&2
+    exit 1
   }
 }
 
