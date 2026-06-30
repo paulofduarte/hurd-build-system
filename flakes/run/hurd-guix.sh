@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-# SCENARIO=hurd-guix - Guix childhurd, kernel-overlay approach.
-# Needs -M q35 to boot (Guix qcow2 won't come up on i440fx).
+# SCENARIO=hurd-guix - Guix childhurd, booted from an external GRUB ISO
+# (option 1) on the default i440fx machine, same as hurd-gentoo.  The old
+# q35 requirement was for the in-place overlay approach (booting the disk's
+# own gfxterm grub); our external serial-clean ISO + search --fs-uuid boots
+# Guix to userland on i440fx, where the disk is IDE (rumpdisk's wd0) - and
+# crucially avoids q35's slow ICH9-AHCI probe, where rumpdisk HANGS doing a
+# disk IDENTIFY on the boot CD-ROM's ATAPI port.
 #
 # Kernel path inside the disk is a Guix store path like
 # /gnu/store/<hash>-gnumach-<ver>/boot/gnumach - different on every
@@ -27,13 +32,12 @@ set -euo pipefail
 
 scenario_check_target "hurd-guix" "x86_64 i686"
 arch_qemu_for_target "$ARCH"
-QEMU_MACHINE=(-M q35) # Guix qcow2 hangs on i440fx - even with our
-# minimal regenerated grub.cfg (verified
-# 2026-05-25 on Linux).  q35 is required;
-# the cost is gnumach's in-kernel SATA driver
-# slowly probing q35's 6 ICH9-AHCI ports on
-# every boot.  Accept the slow probe as the
-# price of a bootable Guix.
+# Default machine (i440fx), like hurd-gentoo: the disk is then IDE (rumpdisk's
+# wd0), and the boot CD-ROM is IDE/ATAPI (cd0) - both handled cleanly. The old
+# q35 requirement was for the in-place overlay approach (booting the disk's own
+# gfxterm grub); with our external serial-clean ISO + search --fs-uuid, i440fx
+# boots Guix to userland AND avoids q35's slow ICH9-AHCI probe, where rumpdisk
+# hangs doing a disk IDENTIFY on the ATAPI CD-ROM port.
 arch_apply_accel_if_requested # appends -accel to QEMU_MACHINE if RUN_ACCEL=1 + arch match
 
 extra_qemu_args=("$@") # capture RUN_ARGS pass-through

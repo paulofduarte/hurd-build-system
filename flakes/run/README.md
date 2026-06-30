@@ -293,8 +293,12 @@ kernel image" error from the alternative interpretation.
   e1000 NIC (`wm0`) - Gentoo's own wiki flags amd64 as "less stable
   so far than x86". i686 boots cleanly. Image bug, not a harness
   bug. Comment in `hurd-gentoo.sh` for the full diagnosis.
-- **`hurd-guix` + `-M q35`** boots correctly but the visible serial
-  output stalls for ~3 minutes during gnumach's in-kernel SATA
-  probe across q35's 6 empty ICH9-AHCI ports. q35 is mandatory
-  (Guix qcow2 won't boot on i440fx, tested), so the slow probe is
-  the accepted cost. Boot does eventually complete.
+- **`hurd-guix` boots on the default i440fx machine** (like
+  `hurd-gentoo`), reaching userland (rumpdisk attaches the IDE disk,
+  ext2fs mounts, Guix's shepherd starts services). The old `-M q35`
+  override has been dropped: it was needed only for the retired
+  in-place overlay approach (which booted the disk's own gfxterm
+  GRUB); our external serial-clean ISO + `search --fs-uuid` boots
+  fine on i440fx. q35 actively HUNG with the ISO approach - rumpdisk's
+  NetBSD AHCI driver loops doing a disk IDENTIFY on the boot CD-ROM's
+  ATAPI port (`sd1: timeout waiting for identify`).
