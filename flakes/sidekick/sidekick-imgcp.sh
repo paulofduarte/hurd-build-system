@@ -21,6 +21,7 @@ dest=$4
 
 work=$(mktemp -d)
 sd=
+sd_log=$work/sd.log
 view=$work/rawview
 # shellcheck disable=SC2329  # invoked via the EXIT trap below
 cleanup() {
@@ -42,14 +43,21 @@ esac
 : >"$view"
 qemu-storage-daemon \
   --blockdev "driver=$fmt,node-name=d,file.driver=file,file.filename=$img" \
-  --export "type=fuse,id=e,node-name=d,mountpoint=$view,writable=off,allow-other=off" &
+  --export "type=fuse,id=e,node-name=d,mountpoint=$view,writable=off,allow-other=off" 2>"$sd_log" &
 sd=$!
 for _ in $(seq 1 50); do
   [ -s "$view" ] && break
+  kill -0 "$sd" 2>/dev/null || break # daemon already gave up
   sleep 0.2
 done
 [ -s "$view" ] || {
-  echo "sidekick-imgcp: FUSE raw view never appeared" >&2
+  echo "sidekick-imgcp: could not expose $(basename "$img") as a raw FUSE view." >&2
+  [ -s "$sd_log" ] && sed 's/^/  | /' "$sd_log" >&2
+  echo "sidekick-imgcp: this needs non-root FUSE — qemu-storage-daemon mounts a FUSE" >&2
+  echo "  export, which on Linux requires a setuid fusermount3 that libfuse can reach." >&2
+  echo "  NixOS provides /run/wrappers/bin/fusermount3; on other distros install fuse3" >&2
+  echo "  and ensure fusermount3 is setuid-root and on PATH. /dev/fuse must also be" >&2
+  echo "  accessible. (The sidekick guest sets this up; a native Linux host must too.)" >&2
   exit 1
 }
 
