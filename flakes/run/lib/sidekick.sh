@@ -111,6 +111,11 @@ set timeout=0
 serial --unit=0 --speed=115200
 terminal_input serial
 terminal_output serial
+# Pin GRUB's palette: its default color_highlight is black-on-WHITE, which on a
+# serial terminal emits a white-background ANSI sequence that bleeds past GRUB
+# into the kernel's console output. Force dark backgrounds on both.
+set color_normal=light-gray/black
+set color_highlight=white/black
 menuentry "hurd" {
   insmod part_msdos
   insmod ext2
