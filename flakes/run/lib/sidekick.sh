@@ -98,11 +98,16 @@ sidekick_distro_iso() {
     esac
   done <"$work/distro.cfg"
 
-  # 2. fs UUID (for search --fs-uuid) + the boot recipe (multiboot + module lines,
-  #    `\`-joined, with a serial console forced onto the multiboot line)
-  local uuid boot_lines
-  uuid=$(grep -m1 -- '--fs-uuid' "$work/flat.cfg" | awk '{ print $NF }')
-  [ -n "$uuid" ] || die "sidekick: no 'search --fs-uuid' line in the distro grub.cfg"
+  # 2. the distro's own `search ... --set=root` line (reused verbatim) + the boot
+  #    recipe (multiboot + module lines, `\`-joined, serial forced onto multiboot).
+  #    Reusing the search line handles every dialect: Debian's `--fs-uuid <uuid>`
+  #    and Gentoo's `--file /boot/gnumach.gz`. `--hint-*` device hints are stripped
+  #    (the BIOS/EFI device numbering differs in our ISO boot context; GRUB falls
+  #    back to a full scan, which is what we want).
+  local search_line boot_lines
+  search_line=$(grep -m1 -E '^[[:space:]]*search[[:space:]].*--set=root' "$work/flat.cfg" |
+    sed -E 's/^[[:space:]]*//; s/[[:space:]]+--hint-[^[:space:]]*//g; s/[[:space:]]+/ /g')
+  [ -n "$search_line" ] || die "sidekick: no 'search ... --set=root' line in the distro grub.cfg"
   boot_lines=$(awk '
     /^menuentry / && !/recovery mode/ && !found { found=1; in_body=1; prev=""; next }
     in_body && /^}/ { if (prev != "") emit(prev); exit }
@@ -141,10 +146,10 @@ EOF
       margs=$(printf '%s\n' "$boot_lines" |
         awk '/^[[:space:]]*multiboot[[:space:]]/{ $1=""; $2=""; sub(/^[[:space:]]+/, ""); print; exit }')
       printf '  multiboot /boot/gnumach %s\n' "$margs"
-      printf '  search --no-floppy --fs-uuid --set=root %s\n' "$uuid"
+      printf '  %s\n' "$search_line"
       printf '%s\n' "$boot_lines" | awk '/^[[:space:]]*module[[:space:]]/'
     else
-      printf '  search --no-floppy --fs-uuid --set=root %s\n' "$uuid"
+      printf '  %s\n' "$search_line"
       printf '%s\n' "$boot_lines"
     fi
     printf '}\n'
