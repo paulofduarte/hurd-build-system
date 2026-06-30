@@ -98,16 +98,17 @@ sidekick_distro_iso() {
     esac
   done <"$work/distro.cfg"
 
-  # 2. the distro's own `search ... --set=root` line (reused verbatim) + the boot
+  # 2. the distro's own root-setting `search` line (reused verbatim) + the boot
   #    recipe (multiboot + module lines, `\`-joined, serial forced onto multiboot).
-  #    Reusing the search line handles every dialect: Debian's `--fs-uuid <uuid>`
-  #    and Gentoo's `--file /boot/gnumach.gz`. `--hint-*` device hints are stripped
-  #    (the BIOS/EFI device numbering differs in our ISO boot context; GRUB falls
-  #    back to a full scan, which is what we want).
+  #    Reusing the search line handles every dialect + every `--set` form:
+  #    Debian `--fs-uuid --set=root <uuid>`, Gentoo `--set=root --file <path>`,
+  #    Guix `--fs-uuid --set <uuid>` (bare --set defaults the var to root).
+  #    `--hint-*` device hints are stripped (BIOS/EFI device numbering differs in
+  #    our ISO boot context; GRUB then full-scans, which is what we want).
   local search_line boot_lines
-  search_line=$(grep -m1 -E '^[[:space:]]*search[[:space:]].*--set=root' "$work/flat.cfg" |
+  search_line=$(grep -m1 -E '^[[:space:]]*search[[:space:]].*--set' "$work/flat.cfg" |
     sed -E 's/^[[:space:]]*//; s/[[:space:]]+--hint-[^[:space:]]*//g; s/[[:space:]]+/ /g')
-  [ -n "$search_line" ] || die "sidekick: no 'search ... --set=root' line in the distro grub.cfg"
+  [ -n "$search_line" ] || die "sidekick: no root-setting 'search' line in the distro grub.cfg"
   boot_lines=$(awk '
     /^menuentry / && !/recovery mode/ && !found { found=1; in_body=1; prev=""; next }
     in_body && /^}/ { if (prev != "") emit(prev); exit }
