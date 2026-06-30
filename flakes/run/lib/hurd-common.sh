@@ -6,10 +6,16 @@
 # Reads $WORK, $ARCH, $GNUMACH_KERNEL, $QEMU*, $RUN_* from env.
 
 # hurd_cache_dir <distro> <target>
-#   Echoes $WORK/test-images/<distro>/<target>/, creating it as a side
-#   effect.  Idempotent.  Callers use $(hurd_cache_dir ...) - be aware
+#   Echoes $WORK/test-images/${RUN_VARIANT}<distro>/<target>/, creating it as a
+#   side effect.  Idempotent.  Callers use $(hurd_cache_dir ...) - be aware
 #   that the mkdir runs as part of the call even when the dir already
 #   exists.
+#
+#   RUN_VARIANT (a "<host-system>/<alt>/" infix, may be empty) mirrors the
+#   Makefile's _VARIANT (MULTI_HOST_BUILDS / ALT_BUILD): it keeps the run cache
+#   isolated per build-host and/or variant so a matrix sharing ONE checkout (e.g.
+#   darwin + rosetta-x86_64 over the same mount) doesn't clobber each other's
+#   images / ISOs / overlays.
 #
 #   RUN_REFRESH=1 wipes the dir before recreating it - forces every
 #   downstream fetch_once / fetch_via_resolve to re-download.  Scoped
@@ -19,7 +25,7 @@
 #   `[ -s "$dest" ] && return 0` short-circuit in fetch_once would
 #   otherwise reuse a stale copy forever).
 hurd_cache_dir() {
-  local dir="$WORK/test-images/$1/$2"
+  local dir="$WORK/test-images/${RUN_VARIANT:-}$1/$2"
   if [ "${RUN_REFRESH:-}" = "1" ] && [ -d "$dir" ]; then
     echo "RUN_REFRESH=1 - wiping cached $1/$2 images" >&2
     rm -rf "$dir"

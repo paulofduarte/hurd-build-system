@@ -16,9 +16,11 @@
 # - just the kernel comes from the nix-built `gnumach-<arch>` package
 # instead of the in-tree work/ build.
 #
-# Cache for distro images lives at
-# `$XDG_CACHE_HOME/hurd-build-system/test-images/` (defaulting to
-# `~/.cache/...`), independent from the Makefile's `work/test-images/`.
+# Cache for distro images: on Linux `$XDG_CACHE_HOME/hurd-build-system/`
+# (defaulting to `~/.cache/...`); on darwin `<project>/work/` (the sidekick guest
+# only sees the project virtiofs share, so the cache must live under it).  Both
+# split per build-host/variant via RUN_VARIANT when MULTI_HOST_BUILDS / ALT_BUILD
+# are set (mirrors the Makefile's _VARIANT), overridable via $WORK.
 #
 # Args passed by the user (everything after `nix run .#<arch>`) are
 # interpreted by ./app.sh:

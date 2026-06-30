@@ -25,7 +25,9 @@ if [ "$ARCH" = "x86_64" ]; then
   # the x86_64 ISO path needs it, so require it here rather than at top
   # of file (i686 / aarch64 boot fine without it).
   : "${WORK:?WORK required (set by the Makefile / nix-run app)}"
-  cache="$WORK/test-images/boot/x86_64"
+  # ${RUN_VARIANT} (host-system/alt infix; mirrors the Makefile _VARIANT) isolates
+  # the cache per build-host/variant so a matrix on one checkout doesn't collide.
+  cache="$WORK/test-images/${RUN_VARIANT:-}boot/x86_64"
   staging="$cache/iso-staging"
   iso="$cache/boot.iso"
   rm -rf "$staging"

@@ -128,6 +128,22 @@ fi
 export WORK
 mkdir -p "$WORK"
 
+# Build-isolation infix, mirroring the Makefile's _VARIANT (see its
+# MULTI_HOST_BUILDS / ALT_BUILD docs): keep the run cache split per build-host
+# and/or variant tag so a matrix sharing ONE checkout doesn't collide.  Honoured
+# by hurd_cache_dir + boot.sh as test-images/${RUN_VARIANT}<distro>/<arch>.
+if [ -z "${RUN_VARIANT:-}" ]; then
+  _rv=""
+  case "$(printf '%s' "${MULTI_HOST_BUILDS:-}" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes | on)
+      _rv="$(uname -m | sed s/arm64/aarch64/)-$(uname -s | tr '[:upper:]' '[:lower:]')/"
+      ;;
+  esac
+  [ -n "${ALT_BUILD:-}" ] && _rv="${_rv}${ALT_BUILD}/"
+  RUN_VARIANT="$_rv"
+fi
+export RUN_VARIANT
+
 # Distro URLs from the shared source-of-truth - same file the Makefile's
 # `run:` recipe sources.
 # shellcheck source=/dev/null
