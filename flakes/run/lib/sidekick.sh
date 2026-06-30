@@ -20,6 +20,22 @@
 #       vanilla) while pulling the Hurd modules + root from the UNMODIFIED disk via
 #       `search --fs-uuid`.
 
+# Build the ISO via sidekick-mkrescue, surfacing its stderr on failure.  On
+# darwin the tool runs in the guest over ssh; a swallowed error there is opaque
+# (e.g. a staging path the guest can't see, or missing xorriso/mtools), so on
+# failure we replay the captured log before dying.
+_mkrescue() {
+  local out_iso="$1" iso_root="$2" log
+  log="$(dirname "$out_iso")/mkrescue.log"
+  if ! sidekick-mkrescue -o "$out_iso" "$iso_root" >"$log" 2>&1; then
+    echo "sidekick: grub-mkrescue failed building $out_iso" >&2
+    sed 's/^/  | /' "$log" >&2
+    rm -f "$log"
+    return 1
+  fi
+  rm -f "$log"
+}
+
 # sidekick_make_iso <out_iso> <staging_dir> <grub_cfg_text> [cache_key]
 #   Content-addressed on (cache_key, grub_cfg).
 sidekick_make_iso() {
@@ -34,8 +50,7 @@ sidekick_make_iso() {
   mkdir -p "$work/iso-root/boot/grub"
   cp -a "$staging/." "$work/iso-root/"
   printf '%s\n' "$grub_cfg" >"$work/iso-root/boot/grub/grub.cfg"
-  sidekick-mkrescue -o "$out_iso" "$work/iso-root" >/dev/null 2>&1 ||
-    die "sidekick: grub-mkrescue failed building $out_iso"
+  _mkrescue "$out_iso" "$work/iso-root" || die "sidekick: ISO build failed ($out_iso)"
   rm -rf "$work"
   [ -s "$out_iso" ] || die "sidekick: ISO build produced nothing ($out_iso)"
   printf '%s' "$hash" >"$stamp"
@@ -136,8 +151,7 @@ EOF
   } >"$work/iso-root/boot/grub/grub.cfg"
 
   # 4. assemble the BIOS ISO
-  sidekick-mkrescue -o "$out_iso" "$work/iso-root" >/dev/null 2>&1 ||
-    die "sidekick: grub-mkrescue failed building $out_iso"
+  _mkrescue "$out_iso" "$work/iso-root" || die "sidekick: ISO build failed ($out_iso)"
   rm -rf "$work"
   [ -s "$out_iso" ] || die "sidekick: ISO build produced nothing ($out_iso)"
   printf '%s' "$gnumach" >"$stamp"
