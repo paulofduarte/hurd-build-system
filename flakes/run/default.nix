@@ -18,9 +18,10 @@
 #
 # Cache for distro images: `<project>/work/` - the same location `make run` uses,
 # on both OSes (falls back to `$XDG_CACHE_HOME/hurd-build-system/` only for a
-# remote-flake run outside any repo).  Split per build-host/variant via RUN_VARIANT
-# when MULTI_HOST_BUILDS / ALT_BUILD are set (mirrors the Makefile's _VARIANT),
-# overridable via $WORK.
+# remote-flake run outside any repo).  On darwin the sidekick guest mounts BOTH the
+# project and that XDG cache dir, so either works there.  Split per build-host/
+# variant via RUN_VARIANT when MULTI_HOST_BUILDS / ALT_BUILD are set (mirrors the
+# Makefile's _VARIANT), overridable via $WORK.
 #
 # Args passed by the user (everything after `nix run .#<arch>`) are
 # interpreted by ./app.sh:

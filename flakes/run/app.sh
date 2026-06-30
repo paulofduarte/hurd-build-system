@@ -110,19 +110,15 @@ SCENARIO="${SCENARIO:-boot}"
 export ARCH GNUMACH_KERNEL
 
 # Cache for distro images + ISO staging, overridable via $WORK.  Default to
-# <project>/work - the SAME location as `make run` (Makefile: WORK := $(PROJ)/work)
-# - on both OSes, so the two entry points share one cache.  This is also required
-# on darwin: the sidekick guest only sees the project virtiofs share, so the cache
-# must live under the project for sidekick-mkrescue/imgcp to reach it.  Only when
-# there's no repo at all (a remote-flake `nix run` - no project, no sidekick) do we
-# fall back to the XDG cache; on darwin that case is an error (sidekick needs it).
+# <project>/work - the SAME location `make run` uses (Makefile: WORK := $(PROJ)/work)
+# - on both OSes, so the two entry points share one cache.  Outside any repo (a
+# remote-flake `nix run`, no checkout) fall back to the XDG cache.  Both work on
+# darwin: the sidekick guest mounts BOTH the project and that XDG cache dir as
+# virtiofs shares (see flakes/sidekick/{sidekick-run.sh,guest.nix}).
 if [ -z "${WORK:-}" ]; then
   _proj="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -n "$_proj" ]; then
     WORK="$_proj/work"
-  elif [ "$(uname)" = Darwin ]; then
-    echo "nix run on darwin must run inside the repo - the sidekick mounts the project" >&2
-    exit 1
   else
     WORK="${XDG_CACHE_HOME:-$HOME/.cache}/hurd-build-system"
   fi

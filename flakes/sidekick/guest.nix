@@ -134,10 +134,15 @@ in
         '';
       };
 
-      # Mount the project virtiofs share at the host-identical path from the cmdline
-      # (sidekick.project=<abs path>) — transparency without baking the path. Also a
-      # prerequisite of the per-connection sshd (so commands see the project).
-      sidekick-mount-project = {
+      # Mount the virtiofs shares at their host-identical paths from the cmdline —
+      # transparency without baking host paths into the closure. Two shares:
+      #   sidekick.project=<abs path>  the repo (where build artefacts live)
+      #   sidekick.cache=<abs path>    the host's XDG cache dir, where `nix run`
+      #                                keeps distro images / ISO staging (outside
+      #                                the repo tree). Always mounted so the
+      #                                singleton VM serves every caller.
+      # A prerequisite of the per-connection sshd, so commands see the shares.
+      sidekick-mount-shares = {
         wantedBy = [ "multi-user.target" ];
         after = [
           "local-fs.target"
@@ -148,10 +153,14 @@ in
           RemainAfterExit = true;
         };
         script = ''
-          p=$(${pkgs.gnused}/bin/sed -n 's/.*sidekick\.project=\([^ ]*\).*/\1/p' /proc/cmdline)
-          [ -n "$p" ] || { echo "sidekick: no project path on cmdline" >&2; exit 0; }
-          ${pkgs.coreutils}/bin/mkdir -p "$p"
-          ${pkgs.util-linux}/bin/mount -t virtiofs project "$p"
+          mount_one() { # <cmdline-key> <virtiofs-tag>
+            p=$(${pkgs.gnused}/bin/sed -n "s/.*sidekick\.$1=\([^ ]*\).*/\1/p" /proc/cmdline)
+            [ -n "$p" ] || return 0
+            ${pkgs.coreutils}/bin/mkdir -p "$p"
+            ${pkgs.util-linux}/bin/mount -t virtiofs "$2" "$p"
+          }
+          mount_one project project
+          mount_one cache cache
         '';
       };
 
@@ -162,11 +171,11 @@ in
         description = "sidekick SSH per-connection over vsock";
         requires = [
           "sidekick-authkey.service"
-          "sidekick-mount-project.service"
+          "sidekick-mount-shares.service"
         ];
         after = [
           "sidekick-authkey.service"
-          "sidekick-mount-project.service"
+          "sidekick-mount-shares.service"
         ];
         serviceConfig = {
           ExecStart = "-${config.services.openssh.package}/bin/sshd -i -f /etc/ssh/sshd_config";

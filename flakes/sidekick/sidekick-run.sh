@@ -30,10 +30,25 @@ die() {
 [ "$#" -ge 1 ] || die "usage: sidekick-run <tool> [args...]  |  --status  |  --stop"
 
 # Project root = the virtiofs share root, mounted host-identically in the guest.
+# The project repo (where build artefacts live), if we're in one.  OPTIONAL: a
+# remote-flake `nix run` has no checkout - then only the cache share below is
+# mounted and the caller works entirely under it.
 PROJECT="${SIDEKICK_PROJECT:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
-[ -n "$PROJECT" ] || die "cannot determine project root (set SIDEKICK_PROJECT or run inside the repo)"
 
-CTL="$PROJECT/work/sidekick"
+# Second virtiofs share: the XDG cache dir, where `nix run` keeps distro images +
+# ISO staging when run outside the repo (the no-checkout fallback - same default
+# app.sh uses).  Always mounted, so the singleton VM serves every caller no matter
+# which share its file args live under.  Overridable via SIDEKICK_CACHE.
+CACHE="${SIDEKICK_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/hurd-build-system}"
+mkdir -p "$CACHE"
+
+# Control/runtime dir (vfkit socket, ssh key, boot log): under the project when we
+# have one, else under the cache so a no-checkout run still has a home for it.
+if [ -n "$PROJECT" ]; then
+  CTL="$PROJECT/work/sidekick"
+else
+  CTL="$CACHE/sidekick"
+fi
 mkdir -p "$CTL"
 SSH_SOCK="$CTL/ssh-vsock.sock"
 CTL_SOCK="$CTL/vfkit.sock"
@@ -110,14 +125,21 @@ boot_vm() {
   [ -f "$KEY" ] || "$SSHKEYGEN" -t ed25519 -N '' -C sidekick -f "$KEY" >/dev/null 2>&1
   local authkey cmdline
   authkey=$(base64 <"$KEY.pub" | tr -d '\n')
-  cmdline="$(cat "$ART/cmdline") sidekick.project=$PROJECT sidekick.authkey=$authkey"
+  cmdline="$(cat "$ART/cmdline") sidekick.cache=$CACHE sidekick.authkey=$authkey"
+  # Cache share is unconditional; the project share + its cmdline mount only when
+  # we have a checkout.
+  local share_args=(--device "virtio-fs,sharedDir=$CACHE,mountTag=cache")
+  if [ -n "$PROJECT" ]; then
+    cmdline="$cmdline sidekick.project=$PROJECT"
+    share_args+=(--device "virtio-fs,sharedDir=$PROJECT,mountTag=project")
+  fi
 
   "$VFKIT" \
     --cpus 2 --memory 2048 \
     --bootloader "linux,kernel=$ART/kernel,initrd=$ART/initrd,cmdline=\"$cmdline\"" \
     --device virtio-rng \
     --device "virtio-blk,path=$ART/store.img,readonly" \
-    --device "virtio-fs,sharedDir=$PROJECT,mountTag=project" \
+    "${share_args[@]}" \
     --device "virtio-serial,logFilePath=$BOOTLOG" \
     --device "virtio-vsock,port=2222,socketURL=$SSH_SOCK,connect" \
     --restful-uri "unix://$CTL_SOCK" >>"$BOOTLOG" 2>&1 &
@@ -176,7 +198,10 @@ vm_alive || boot_vm
 
 # Build the remote command: cd to the caller's cwd (identical path via virtiofs),
 # forward a determinism-relevant env whitelist, exec the tool with exact argv.
+# If the cwd isn't inside a mounted share (a no-checkout run launched elsewhere),
+# fall back to a dir that always is - the project, else the cache.
 remote_cwd=$(printf '%q' "$PWD")
+fallback_cwd=$(printf '%q' "${PROJECT:-$CACHE}")
 env_prefix=""
 for v in SOURCE_DATE_EPOCH TZ LANG LC_ALL LC_COLLATE LC_CTYPE LANGUAGE; do
   if [ -n "${!v:-}" ]; then
@@ -187,4 +212,4 @@ argv=""
 for a in "$@"; do argv+="$(printf '%q ' "$a")"; done
 
 exec "$SSH" "${ssh_opts[@]}" sidekick@sidekick \
-  "cd $remote_cwd && exec env $env_prefix$argv"
+  "cd $remote_cwd 2>/dev/null || cd $fallback_cwd; exec env $env_prefix$argv"
