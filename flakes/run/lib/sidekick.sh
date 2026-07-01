@@ -41,7 +41,9 @@ _mkrescue() {
 sidekick_make_iso() {
   local out_iso="$1" staging="$2" grub_cfg="$3" cache_key="${4:-}"
   local stamp="$out_iso.stamp" hash
-  hash=$(printf '%s\n%s' "$cache_key" "$grub_cfg" | sha256_stdin)
+  # Content-addressed on (cache_key, grub_cfg) + a hash of THIS script, so a change
+  # to the ISO-assembly logic also invalidates the cached ISO.
+  hash=$(printf '%s\n%s\n%s' "$cache_key" "$grub_cfg" "$(sha256_stdin <"${BASH_SOURCE[0]}")" | sha256_stdin)
   if [ -f "$out_iso" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$hash" ]; then return 0; fi
   echo "sidekick: assembling GRUB ISO from $(basename "$staging") ..." >&2
   local work
@@ -60,10 +62,15 @@ sidekick_make_iso() {
 sidekick_distro_iso() {
   local out_iso="$1" disk="$2" fmt="$3" gnumach="${4:-}"
   local stamp="$out_iso.stamp"
-  # Reuse iff the ISO exists, the gnumach selection is unchanged, and neither the
-  # disk nor our gnumach is newer than the stamp.
+  # Cache key = gnumach selection + a hash of THIS script, so editing the
+  # grub.cfg-generation logic invalidates the cached ISO (the stamp otherwise
+  # tracked only gnumach + disk mtime, so a logic change silently reused a stale
+  # ISO). Reuse iff the ISO exists, that key is unchanged, and neither the disk
+  # nor our gnumach is newer than the stamp.
+  local want
+  want="$gnumach|$(sha256_stdin <"${BASH_SOURCE[0]}")"
   if [ -f "$out_iso" ] && [ -f "$stamp" ] &&
-    [ "$(cat "$stamp")" = "$gnumach" ] &&
+    [ "$(cat "$stamp")" = "$want" ] &&
     [ ! "$disk" -nt "$stamp" ] &&
     { [ -z "$gnumach" ] || [ ! "$gnumach" -nt "$stamp" ]; }; then
     return 0
@@ -169,5 +176,5 @@ EOF
   _mkrescue "$out_iso" "$work/iso-root" || die "sidekick: ISO build failed ($out_iso)"
   rm -rf "$work"
   [ -s "$out_iso" ] || die "sidekick: ISO build produced nothing ($out_iso)"
-  printf '%s' "$gnumach" >"$stamp"
+  printf '%s' "$want" >"$stamp"
 }
