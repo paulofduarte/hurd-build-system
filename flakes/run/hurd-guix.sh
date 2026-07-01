@@ -82,10 +82,16 @@ else
   sidekick_distro_iso "$iso" "$qcow2" qcow2 "$GNUMACH_KERNEL"
 fi
 
+# NIC: rtl8139, per Guix upstream (their childhurd/qemu docs use exactly
+# `--device rtl8139,netdev=net0 --netdev user,id=net0`) - a card Guix's netdde
+# has a driver for. QEMU's default e1000 makes netdde hang at attach. `user`
+# networking keeps outbound (SLIRP) connectivity. NOTE: Hurd networking wants KVM
+# (RUN_ACCEL=1); under TCG netdde stalls regardless of NIC.
 print_qemu_hint
 exec "$QEMU" -nographic -m "$QEMU_MEM" "${QEMU_MACHINE[@]}" -cpu "$QEMU_CPU" \
   -cdrom "$iso" \
   -drive file="$overlay",format=qcow2 \
+  -nic user,model=rtl8139 \
   -boot d \
   -no-reboot \
   "${extra_qemu_args[@]}"
