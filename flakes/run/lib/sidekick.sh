@@ -109,6 +109,10 @@ sidekick_distro_iso() {
   search_line=$(grep -m1 -E '^[[:space:]]*search[[:space:]].*--set' "$work/flat.cfg" |
     sed -E 's/^[[:space:]]*//; s/[[:space:]]+--hint-[^[:space:]]*//g; s/[[:space:]]+/ /g')
   [ -n "$search_line" ] || die "sidekick: no root-setting 'search' line in the distro grub.cfg"
+  #    Also keep grub VARIABLE ASSIGNMENTS (set VAR= / VAR=value) from the menuentry
+  #    body: Gentoo x86_64's `DISK=wd0 PART=1 DISKOPT=noide` feed the multiboot's
+  #    root=part:${PART}:device:${DISK} ${DISKOPT} - drop them and root goes empty
+  #    (`part::device:` -> ext2fs: Invalid argument). (i686's image inlined literals.)
   boot_lines=$(awk '
     /^menuentry / && !/recovery mode/ && !found { found=1; in_body=1; prev=""; next }
     in_body && /^}/ { if (prev != "") emit(prev); exit }
@@ -120,6 +124,7 @@ sidekick_distro_iso() {
     function emit(l) {
       if (l ~ /^multiboot[[:space:]]/) { if (l !~ /console=com0/) l = l " console=com0"; print "  " l }
       else if (l ~ /^module[[:space:]]/) { print "  " l }
+      else if (l ~ /^set[[:space:]]/ || l ~ /^[A-Za-z_][A-Za-z0-9_]*=/) { print "  " l }
     }
   ' "$work/flat.cfg")
   [ -n "$boot_lines" ] || die "sidekick: no multiboot/module lines in the distro grub.cfg"
@@ -143,6 +148,10 @@ menuentry "hurd" {
 EOF
     if [ -n "$gnumach" ]; then
       cp -L "$gnumach" "$work/iso-root/boot/gnumach"
+      # grub var assignments (Gentoo's DISK=/PART=/DISKOPT=) first, so the ${vars}
+      # in our multiboot args below resolve.
+      printf '%s\n' "$boot_lines" |
+        awk '/^[[:space:]]*(set[[:space:]]|[A-Za-z_][A-Za-z0-9_]*=)/'
       local margs
       margs=$(printf '%s\n' "$boot_lines" |
         awk '/^[[:space:]]*multiboot[[:space:]]/{ $1=""; $2=""; sub(/^[[:space:]]+/, ""); print; exit }')
