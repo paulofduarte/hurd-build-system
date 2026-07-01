@@ -228,6 +228,7 @@ in
                   "abidw"
                   "pahole"
                   "grub-mkrescue"
+                  "grub-file" # gnumach's test-multiboot: grub-file --is-x86-multiboot
                   "sidekick-mkrescue"
                   "sidekick-imgcp"
                 ]
