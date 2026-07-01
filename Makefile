@@ -1971,36 +1971,17 @@ $(DIST_HURD_NIX_STAMP): $(if $(call _fp_stale,dist-hurd-nix),_FORCE)
 # No _MARK/_SDEPS entries - a test suite isn't idempotent, always dispatch.
 
 # Xen variants self-skip via gnumach's tests/Makefrag.am (`if !PLATFORM_xen`).
-# Darwin can't host check-gnumach: the harness needs a real bootloader nixpkgs can't
-# build on darwin.
-#   - x86_64 / i686: grub-mkrescue / xorriso / mtools - grub2's meta.platforms is
-#     linux-only; upstream GRUB doesn't compile cleanly on darwin.
-#   - aarch64:       u-boot.bin + mkimage - ubootQemuAarch64 / ubootTools are
-#     linux-only, and upstream u-boot's envtools/scripts_dtc collide with darwin's
-#     <sys/types.h> (ino_t conflict).
-# Fail early rather than dying mid-pipeline at `<tool>: command not found`.
-ifeq ($(shell uname -s),Darwin)
-check-gnumach:
-	@echo "==> check-gnumach ($(ARCH)): ERROR - darwin host is not supported." >&2
-ifeq ($(ARCH),aarch64)
-	@echo "    aarch64 tests boot through u-boot, which nixpkgs only" >&2
-	@echo "    builds on linux (ubootQemuAarch64 / ubootTools are" >&2
-	@echo "    linux-only; upstream u-boot doesn't compile cleanly" >&2
-	@echo "    on darwin)." >&2
-else
-	@echo "    x86 tests build a GRUB-bootable ISO via grub-mkrescue," >&2
-	@echo "    which nixpkgs only builds on linux (grub2's" >&2
-	@echo "    meta.platforms is linux-only; upstream GRUB doesn't" >&2
-	@echo "    compile cleanly on darwin)." >&2
-endif
-	@echo "    Run the tests from a Linux host (orbstack, docker," >&2
-	@echo "    native, CI)." >&2
-	@exit 1
-else
+# check-gnumach boots test kernels under qemu (on the host) from a GRUB i386-pc ISO
+# the harness builds.  Plain grub-mkrescue only ships i386-pc modules on an x86 host,
+# so on a non-x86 host it can't build the ISO - which used to block darwin entirely.
+# The sidekick fixes it: GRUB_MKRESCUE=sidekick-mkrescue is the one i386-pc-cross-
+# capable builder everywhere (native on x86_64-linux, where its -d points at the same
+# modules; forwarded to the guest on darwin / an aarch64-linux host).  The gnumach
+# build dir is under work/ (the project virtiofs share), so the guest can stage the
+# ISO; qemu runs on the host.
 check-gnumach: gnumach
 	@echo "==> check-gnumach ($(ARCH)): running gnumach 'make check' in $(GNUMACH_BUILD)"
-	cd $(GNUMACH_BUILD) && $(MAKE) check
-endif
+	cd $(GNUMACH_BUILD) && $(MAKE) check GRUB_MKRESCUE=sidekick-mkrescue
 
 check: check-gnumach
 

@@ -39,7 +39,10 @@ PROJECT="${SIDEKICK_PROJECT:-$(git rev-parse --show-toplevel 2>/dev/null || true
 # ISO staging when run outside the repo (the no-checkout fallback - same default
 # app.sh uses).  Always mounted, so the singleton VM serves every caller no matter
 # which share its file args live under.  Overridable via SIDEKICK_CACHE.
-CACHE="${SIDEKICK_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/hurd-build-system}"
+# ${HOME:-/tmp}: callers like gnumach's `make check` run with a stripped env (no
+# HOME), which would trip `set -u`; the cache share is unused by those callers, so
+# any writable mount point is fine.
+CACHE="${SIDEKICK_CACHE:-${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/hurd-build-system}"
 mkdir -p "$CACHE"
 
 # Control/runtime dir (vfkit socket, ssh key, boot log): under the project when we
