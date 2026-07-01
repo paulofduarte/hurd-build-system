@@ -576,8 +576,9 @@ help:
 	@echo "                   libssp, libgomp).  'make dist' ships only libgcc; opt the"
 	@echo "                   (libgcc by default; more via DIST_GCC_LIBS=\"libstdc++ ...\")"
 	@echo "  dist-tzdata      install the IANA timezone db (zoneinfo) into ./dist/$(ARCH)/share"
-	@echo "  check            run the kernel test suite (== check-gnumach)"
+	@echo "  check            run the in-tree test suites (check-gnumach + check-mig)"
 	@echo "  check-gnumach    run gnumach's 'make check' (kernel tests under QEMU)"
+	@echo "  check-mig        run MIG's 'make check' (pure-C tests, native everywhere)"
 	@echo "  check-sysroot    link a hello-world against the dist's dev+runtime sysroot"
 	@echo "  run              boot the built kernel in qemu (SCENARIO=boot by default)"
 	@echo "  run-help         show all 'make run' options (ARCH/SCENARIO/RUN_*)"
@@ -1205,7 +1206,7 @@ $(foreach v,$(REQUIRED_VARS), \
   $(if $($(v)),,$(error $(v) is not set. Enter a dev shell first: 'nix develop .#x86_64' (or .#x86_64-xen / .#i686 / .#i686-xen))))
 
 .PHONY: all dist gnumach-headers hurd-headers mig glibc gnumach dist-gnumach dist-glibc \
-        check check-gnumach run run-help
+        check check-gnumach check-mig run run-help
 
 # Explicit default - `help` (above) would otherwise win the "first non-dot target" race.
 .DEFAULT_GOAL := all
@@ -1965,9 +1966,11 @@ $(DIST_HURD_NIX_STAMP): $(if $(call _fp_stale,dist-hurd-nix),_FORCE)
 # ---- check ----
 #   check-gnumach : gnumach's 'make check' - kernel tests run inside QEMU.  Upstream
 #                wiring is i386/x86_64-multiboot; aarch64 may need plumbing in tests/.
-#   check      : alias for check-gnumach.
-# MIG's own test-suite has no make target - it runs inline via doCheck=true on every
-# `nix build .#mig-<arch>`, transitively triggered by `make dist-gnumach`/`dist`.
+#   check-mig  : MIG's own 'make check' (good/, bad/, generate-only/) - pure C, runs
+#                natively on every host (no qemu/ISO/sidekick).  The same suite also
+#                runs inline via doCheck=true on every `nix build .#mig-<arch>`; this
+#                target just makes the in-tree build's copy invokable directly.
+#   check      : run both in-tree suites (check-gnumach + check-mig).
 # No _MARK/_SDEPS entries - a test suite isn't idempotent, always dispatch.
 
 # Xen variants self-skip via gnumach's tests/Makefrag.am (`if !PLATFORM_xen`).
@@ -1983,7 +1986,15 @@ check-gnumach: gnumach
 	@echo "==> check-gnumach ($(ARCH)): running gnumach 'make check' in $(GNUMACH_BUILD)"
 	cd $(GNUMACH_BUILD) && $(MAKE) check GRUB_MKRESCUE=sidekick-mkrescue
 
-check: check-gnumach
+# MIG's suite is pure C: `make check` recurses good/ (must compile), bad/ (must
+# fail to compile), generate-only/ (mig -n only).  No qemu, no ISO, no sidekick -
+# it runs natively on darwin and Linux alike.  Same native gcc override as the
+# mig build+install recipe (the wrapped cross cc can't link host executables).
+check-mig: mig
+	@echo "==> check-mig ($(ARCH)): running MIG 'make check' in $(MIG_BUILD)"
+	cd $(MIG_BUILD) && $(MAKE) check CC="$(CC_WRAP)gcc"
+
+check: check-gnumach check-mig
 
 # ---- run ----
 # `make run ARCH=<arch> SCENARIO=<name>` - ad-hoc qemu launch against the built
