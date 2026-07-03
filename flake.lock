@@ -121,6 +121,19 @@
         "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
       }
     },
+    "libpciaccess-dep-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1666057574,
+        "narHash": "sha256-aLax6xHCUlkF9l/I5Atx/W3e9tjg5T2MqMYf06TryEI=",
+        "type": "tarball",
+        "url": "https://www.x.org/releases/individual/lib/libpciaccess-0.17.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.x.org/releases/individual/lib/libpciaccess-0.17.tar.xz"
+      }
+    },
     "microvm": {
       "inputs": {
         "nixpkgs": [
@@ -219,11 +232,13 @@
         "gnumach-toolchain-src": "gnumach-toolchain-src",
         "hurd-src": "hurd-src",
         "hurd-toolchain-src": "hurd-toolchain-src",
+        "libpciaccess-dep-src": "libpciaccess-dep-src",
         "microvm": "microvm",
         "mig-src": "mig-src",
         "mig-toolchain-src": "mig-toolchain-src",
         "nixpkgs": "nixpkgs",
-        "nixpkgs-toolchain": "nixpkgs-toolchain"
+        "nixpkgs-toolchain": "nixpkgs-toolchain",
+        "zlib-dep-src": "zlib-dep-src"
       }
     },
     "spectrum": {
@@ -240,6 +255,19 @@
       "original": {
         "type": "git",
         "url": "https://spectrum-os.org/git/spectrum"
+      }
+    },
+    "zlib-dep-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1771332426,
+        "narHash": "sha256-tKLefmGqB2HVUMILJ7Gqa0v9GH7fqv64d5S5kK1tcYU=",
+        "type": "tarball",
+        "url": "https://zlib.net/fossils/zlib-1.3.2.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://zlib.net/fossils/zlib-1.3.2.tar.gz"
       }
     }
   },

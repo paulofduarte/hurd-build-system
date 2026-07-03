@@ -22,7 +22,9 @@
     path:
     let
       content = builtins.readFile path;
-      match = builtins.match ".*AC_INIT[(][[][^]]*[]], [[]([0-9.]+)[]], .*" content;
+      # Whitespace after the commas is optional: hurd/mig write `AC_INIT([N], [V], ...)`,
+      # libpciaccess writes `AC_INIT([libpciaccess],[0.17],...)`.
+      match = builtins.match ".*AC_INIT[(][[][^]]*[]],[[:space:]]*[[]([0-9.]+)[]],.*" content;
     in
     if match == null then "unknown" else builtins.head match;
 }

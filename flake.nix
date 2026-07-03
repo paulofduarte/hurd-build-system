@@ -102,6 +102,25 @@
       flake = false;
     };
 
+    # Rump-stack userland deps (RUMP-STACK-FEASIBILITY round-2, 2026-07-03):
+    # cross-built target libraries the rumpdisk/rumpnet chain needs - rumpdisk
+    # links -lz unconditionally, pci-arbiter needs pciaccess.pc, and rumpkernel/
+    # libacpica build against libpciaccess.  Frozen tarball pins like the
+    # toolchain trio above (nix-only, never cloned into src/); version = edit
+    # the url.  zlib.net/fossils keeps every release; x.org keeps every
+    # libpciaccess (0.17 = last autotools release with the upstreamed Hurd
+    # backend; 0.18+ is meson-only).
+    zlib-dep-src = {
+      type = "tarball";
+      url = "https://zlib.net/fossils/zlib-1.3.2.tar.gz";
+      flake = false;
+    };
+    libpciaccess-dep-src = {
+      type = "tarball";
+      url = "https://www.x.org/releases/individual/lib/libpciaccess-0.17.tar.xz";
+      flake = false;
+    };
+
     # Overridable ALIASES of the pins - what the Makefile's in-tree overrides
     # rebind (--override-input <m>-dev-src src/<m>).  Each tracks upstream
     # master on savannah, so plain in-tree dev work and `make src` follow the
@@ -165,6 +184,8 @@
       binutils-toolchain-src,
       gcc-toolchain-src,
       glibc-toolchain-src,
+      zlib-dep-src,
+      libpciaccess-dep-src,
       gnumach-src,
       mig-src,
       hurd-src,
@@ -219,6 +240,8 @@
           binutils-toolchain-src
           gcc-toolchain-src
           glibc-toolchain-src
+          zlib-dep-src
+          libpciaccess-dep-src
           gnumach-src
           mig-src
           hurd-src

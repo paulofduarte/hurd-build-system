@@ -26,6 +26,8 @@
   binutils-toolchain-src,
   gcc-toolchain-src,
   glibc-toolchain-src,
+  zlib-dep-src,
+  libpciaccess-dep-src,
   gnumach-src,
   mig-src,
   hurd-src,
@@ -324,6 +326,26 @@ in
         inherit (gnumachInfo) forkUrl;
       };
 
+      # Rump-stack target libraries (RUMP-STACK-FEASIBILITY round-2): cross
+      # zlib (rumpdisk links -lz; libpciaccess reads gzip'd pci.ids) and
+      # libpciaccess (pci-arbiter/acpi/rumpkernel dep, static too for the
+      # .static boot servers).  Frozen tarball pins; per-userland-target.
+      zlib = import ./flakes/zlib {
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets toolchainFor;
+        srcInput = zlib-dep-src;
+      };
+      libpciaccess = import ./flakes/libpciaccess {
+        nixpkgs = nixpkgs-toolchain;
+        inherit
+          system
+          targets
+          toolchainFor
+          zlib
+          ;
+        srcInput = libpciaccess-dep-src;
+      };
+
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
       hurd = import ./flakes/hurd {
@@ -348,6 +370,8 @@ in
     // mig # mig-<arch>: the one post-glibc, checked, overridable mig
     // hurdHeaders
     // hurd
+    // zlib # zlib-<arch>: cross target zlib (rump-stack dep)
+    // libpciaccess # libpciaccess-<arch>: pci-arbiter/acpi/rumpkernel dep
     // ownBinutils # cross-binutils-<arch>
     // ownGcc.bootstrap # bootstrap-gcc-<arch> (libc-free stage-1 cc)
     // glibc

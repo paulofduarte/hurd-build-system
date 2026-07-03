@@ -881,7 +881,7 @@ lint-cpp:
 lint-licenses:
 	@echo "  LINT   licenses (third-party *-src documented)"
 	@set -e; miss=; \
-	for b in $$(sed -nE 's/^[[:space:]]+([a-z0-9-]+-src) = \{.*/\1/p' flake.nix | sed -E 's/-(toolchain-)?src$$//' | sort -u); do \
+	for b in $$(sed -nE 's/^[[:space:]]+([a-z0-9-]+-src) = \{.*/\1/p' flake.nix | sed -E 's/-(toolchain-|dep-)?src$$//' | sort -u); do \
 	  grep -qi -- "$$b" THIRD-PARTY-LICENSES.md || miss="$$miss $$b"; \
 	done; \
 	[ -z "$$miss" ] || { echo "    FAIL: *-src component(s) missing from THIRD-PARTY-LICENSES.md:$$miss" >&2; \

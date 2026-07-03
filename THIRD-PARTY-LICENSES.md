@@ -27,6 +27,8 @@ Pinned in `flake.nix` (the `*-src` inputs) and built by the flakes under
 | GNU Mach | git.savannah.gnu.org/hurd/gnumach | CMU-permissive (Mach heritage) + GPL-2.0 / GPL-2.0-or-later |
 | GNU MIG | git.savannah.gnu.org/hurd/mig | CMU-permissive core + GPL-2.0-or-later build/test files |
 | GNU C Library (glibc) | sourceware.org/git/glibc | LGPL-2.1-or-later, with BSD/permissive portions (see glibc `LICENSES`) |
+| zlib | zlib.net (madler/zlib) | Zlib |
+| libpciaccess | gitlab.freedesktop.org/xorg/lib/libpciaccess | MIT/X11 |
 
 GNU Mach contains files marked "version 2" with no "or later" clause, so the
 kernel as a whole is effectively GPL-2.0-only and cannot be relicensed to

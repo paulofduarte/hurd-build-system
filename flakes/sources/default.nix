@@ -3,7 +3,7 @@
 # Source-repo helpers - shared by the version composer (the fork-id) and the
 # Makefile `src` targets (clone url + pinned rev).
 #
-# Two kinds of `*-src` root flake input:
+# Three kinds of `*-src` root flake input:
 #  - `<name>-src`            the master-tracking WORK source: cloned by `make src`,
 #                            used by the shipped nix builds AND the in-tree builds,
 #                            bumped by `make pin-src`.  This is the normal shape.
@@ -11,6 +11,12 @@
 #                            cross-gcc chain (binutils/gcc/glibc are toolchain-only
 #                            and have ONLY this).  Bumped ONLY by a deliberate manual
 #                            `nix flake update <name>-toolchain-src`, never `pin-src`.
+#  - `<name>-dep-src`        a frozen userland-dep pin (zlib, libpciaccess - the
+#                            rump-stack target libs): nix-only release tarballs,
+#                            never cloned into src/, no in-tree story, and NOT part
+#                            of the toolchain (bumping one rebuilds only its own
+#                            consumers).  Excluded from both views below; bumped by
+#                            editing the url like the toolchain trio.
 #
 # Nix doesn't expose owner/repo/ref on a fetched input (only rev / shortRev /
 # dates), so we read them back out of flake.lock (itself generated from those
@@ -54,7 +60,9 @@ in
   # `*-toolchain-src` pins.  Backs `.#srcs` - what `make src` clones, `make pin-src`
   # bumps, and `make show-src-pins` reports; also the source the shipped nix builds
   # + the in-tree builds actually use.
-  all = mkView (n: lib.hasSuffix "-src" n && !(lib.hasSuffix "-toolchain-src" n));
+  all = mkView (
+    n: lib.hasSuffix "-src" n && !(lib.hasSuffix "-toolchain-src" n) && !(lib.hasSuffix "-dep-src" n)
+  );
 
   # TOOLCHAIN pins (frozen): the `*-toolchain-src` inputs feeding the glibc ->
   # cross-gcc bootstrap.  Backs `.#toolchainSrcs`; bumped only by a deliberate
