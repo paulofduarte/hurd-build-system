@@ -410,6 +410,11 @@ in
           self
           buildRevToken
           toolchainFor
+          # step-5 flip: the rump chain (zlib/libpciaccess/libacpica/rumpkernel)
+          zlib
+          libpciaccess
+          libacpica
+          rumpkernel
           ;
         inherit mig; # the one post-glibc, checked mig everything downstream shares
         # Work side (mirrors gnumach + migChecked): shipped userland tracks the alias

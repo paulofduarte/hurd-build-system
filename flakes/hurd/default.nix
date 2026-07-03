@@ -11,10 +11,13 @@
 #   $out/include/hurd/...
 #   $out/bin, $out/sbin  userland utilities
 #
-# Optional components with external deps (parted, rump, nfs, lwip, pci-arbiter/
-# acpi, console xkbcommon, libgcrypt, libdaemon) are disabled - the goal is the
-# core ext2fs-bootable userland.  They configure off cleanly (empty
-# PKG_CONFIG_PATH + --without-* flags); driver/filesystem extras are a follow-up.
+# The rump chain is ON (step-5 flip): rumpdisk/rumpnet/pci-arbiter/acpi build
+# against the cross zlib/libpciaccess/libacpica/rumpkernel packages (plus
+# hurd's own libirqhelp), giving the full 5-module storage boot chain +
+# the rumpnet network driver.  The remaining optional components (parted,
+# nfs/libtirpc, lwip, xkbcommon, libgcrypt, libdaemon) stay off via
+# hurd-config.nix coreFlags.  The IN-TREE `make hurd` keeps the rump chain
+# off (noRumpFlags) until the rumpkernel scaffolding task.
 #
 # Source comes from the pinned `hurd-toolchain-src` flake input.  Filtered to the non-xen
 # userland targets (i686, x86_64).
@@ -28,6 +31,13 @@
   self,
   srcInput,
   forkUrl,
+  # Rump-chain deps (step-5 flip): zlib (rumpdisk links -lz), libpciaccess
+  # (pci-arbiter's pkg-config gate + rump PCI), libacpica (acpi translator),
+  # rumpkernel (the librump* set).  libirqhelp comes from hurd's own tree.
+  zlib,
+  libpciaccess,
+  libacpica,
+  rumpkernel,
   buildRevToken ? null,
 }:
 
@@ -65,6 +75,10 @@ let
       inherit (tc) cc; # cross-gcc-<arch>      (${tp}-gcc/-g++, glibc sysroot)
       binu = tc.binutils; # cross-binutils-<arch> (${tp}-ar/-ranlib/-nm)
       crossMig = mig."mig-${name}";
+      zlibPkg = zlib."zlib-${name}";
+      pciPkg = libpciaccess."libpciaccess-${name}";
+      acpicaPkg = libacpica."libacpica-${name}";
+      rumpPkg = rumpkernel."rumpkernel-${name}";
       pname = "hurd-${tp}";
     in
     pkgs.stdenv.mkDerivation {
@@ -115,7 +129,24 @@ let
       # nothing and their components stay off.  CC/MIG pinned to the cross tools
       # so autoreconfHook's host-gcc setup-hook doesn't shadow them.
       preConfigure = ''
-        export PKG_CONFIG_PATH=
+        # Rump-chain deps (step-5 flip).  pciaccess.pc is deployable
+        # (prefix=/usr), so pkg-config needs --define-prefix to derive the
+        # real store prefix from the .pc location; everything else rides
+        # explicit -I/-L (appended to CPPFLAGS AFTER the determinism maps
+        # below, and to LDFLAGS - hurd's Makeconf carries LDFLAGS into every
+        # link, so rumpdisk/rumpnet/acpi resolve -lrump*/-lacpica/-lz there).
+        export PKG_CONFIG_PATH=${pciPkg}/usr/lib/pkgconfig
+        export PKG_CONFIG="pkg-config --define-prefix"
+        # Both -L (direct link resolution) AND -rpath-link (GNU ld does NOT
+        # consult -L when resolving a shared lib's transitive DT_NEEDED - e.g.
+        # swapon links libstore.so which NEEDs libz.so.1).  --as-needed makes
+        # configure's HAVE_LIBRUMP probe pass (Guix-proven): librump.so has NO
+        # DT_NEEDED on librumpuser (the hypercall layer is consumer-linked),
+        # so a bare `-lrump` link trips ld's shlib-undefined check - but the
+        # probe program references no rump symbol, so --as-needed drops the
+        # lib from the test link entirely; real consumers (rumpdisk) link the
+        # full explicit -lrump* set.
+        export LDFLAGS="-Wl,--as-needed -L${rumpPkg}/usr/lib -Wl,-rpath-link=${rumpPkg}/usr/lib -L${pciPkg}/usr/lib -Wl,-rpath-link=${pciPkg}/usr/lib -L${acpicaPkg}/usr/lib -Wl,-rpath-link=${acpicaPkg}/usr/lib -L${zlibPkg}/usr/lib -Wl,-rpath-link=${zlibPkg}/usr/lib ''${LDFLAGS:-}"
         export CC=${tp}-gcc
         export MIG=${tp}-mig
         export USER_MIG=${tp}-mig
@@ -131,6 +162,7 @@ let
           canonBuild = buildFlags.hurdCanonBuild;
           inherit (tc) sysroot;
         }}
+        export CPPFLAGS="$CPPFLAGS -I${rumpPkg}/usr/include -I${pciPkg}/usr/include -I${acpicaPkg}/usr/include -I${zlibPkg}/usr/include"
       '';
 
       # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive rule uses

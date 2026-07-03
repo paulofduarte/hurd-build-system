@@ -84,7 +84,10 @@ in
 
       tp = "${target.crossTarget}-"; # raw prefix (the unwrapped cc has no .targetPrefix)
       buildTriple = pkgs.stdenv.hostPlatform.config;
-      coreFlags = lib.concatStringsSep " " hurdConfig.coreFlags;
+      # In-tree `make hurd` keeps the rump chain OFF (noRumpFlags) until the
+      # rumpkernel scaffolding task provides its libs in this shell env; the
+      # nix hurd build (flakes/hurd) drops them and ships the rump servers.
+      coreFlags = lib.concatStringsSep " " (hurdConfig.coreFlags ++ hurdConfig.noRumpFlags);
       hurdDeployFlags = lib.concatStringsSep " " hurdConfig.deployFlags;
 
       # Fixed toolchain DWARF maps for the in-tree builds (the SAME maps the nix
