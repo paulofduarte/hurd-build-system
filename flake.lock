@@ -257,7 +257,25 @@
         "mig-toolchain-src": "mig-toolchain-src",
         "nixpkgs": "nixpkgs",
         "nixpkgs-toolchain": "nixpkgs-toolchain",
+        "rumpkernel-src": "rumpkernel-src",
         "zlib-dep-src": "zlib-dep-src"
+      }
+    },
+    "rumpkernel-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782430543,
+        "narHash": "sha256-LWbbpnqy7EVNEfM58bdvvNprcSVXS9iCcBaBeD2i1i4=",
+        "ref": "master",
+        "rev": "3d7e794ad979187848257ace8e739b9939d3bc55",
+        "revCount": 204,
+        "type": "git",
+        "url": "https://salsa.debian.org/hurd-team/rumpkernel.git"
+      },
+      "original": {
+        "ref": "master",
+        "type": "git",
+        "url": "https://salsa.debian.org/hurd-team/rumpkernel.git"
       }
     },
     "spectrum": {

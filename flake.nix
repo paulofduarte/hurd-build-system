@@ -133,6 +133,20 @@
       rev = "d4c8339690a8dd8fa850387910a8e574c4f66d5e";
       flake = false;
     };
+    # NetBSD-as-rumpkernel for the Hurd (rumpdisk/rumpnet's librump* set) - a
+    # WORK pin like gnumach/mig/hurd: rev lives in flake.lock only, bumped by
+    # `make pin-src`; the in-tree build override arrives with the rumpkernel
+    # scaffolding task.  rumpkernel has NO formal upstream: the Debian Hurd
+    # team's salsa package git IS where development happens (Guix uses it as
+    # upstream too) - a vendored NetBSD-current src snapshot in buildrump.sh/
+    # layout plus the pci-userspace Mach glue and a quilt series (Hurd/Mach
+    # patches + the crossbuild TARGET_* support).  ~100MB fetch, once.
+    rumpkernel-src = {
+      type = "git";
+      url = "https://salsa.debian.org/hurd-team/rumpkernel.git";
+      ref = "master";
+      flake = false;
+    };
 
     # Overridable ALIASES of the pins - what the Makefile's in-tree overrides
     # rebind (--override-input <m>-dev-src src/<m>).  Each tracks upstream
@@ -199,6 +213,7 @@
       glibc-toolchain-src,
       zlib-dep-src,
       libacpica-dep-src,
+      rumpkernel-src,
       libpciaccess-dep-src,
       gnumach-src,
       mig-src,
@@ -256,6 +271,7 @@
           glibc-toolchain-src
           zlib-dep-src
           libacpica-dep-src
+          rumpkernel-src
           libpciaccess-dep-src
           gnumach-src
           mig-src

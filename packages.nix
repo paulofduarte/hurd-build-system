@@ -29,6 +29,7 @@
   zlib-dep-src,
   libpciaccess-dep-src,
   libacpica-dep-src,
+  rumpkernel-src,
   gnumach-src,
   mig-src,
   hurd-src,
@@ -42,6 +43,7 @@ let
   gnumachInfo = sourcesLib.info self "gnumach-toolchain-src" gnumach-toolchain-src;
   migInfo = sourcesLib.info self "mig-toolchain-src" mig-toolchain-src;
   hurdInfo = sourcesLib.info self "hurd-toolchain-src" hurd-toolchain-src;
+  rumpkernelInfo = sourcesLib.info self "rumpkernel-src" rumpkernel-src;
 
   # Userland targets (those that get a full toolchain): the non-xen ones.
   # The xen variants are kernel-only.
@@ -378,6 +380,25 @@ in
           ;
         srcInput = libacpica-dep-src;
       };
+      # NetBSD rumpkernel (WORK pin) - the librump* set hurd's rumpdisk/
+      # rumpnet link.  Debian rules driven through NetBSD build.sh with the
+      # Guix-proven cross deltas; consumes our cross mig + libpciaccess +
+      # the libirqhelp pre-pass.  See flakes/rumpkernel.
+      rumpkernel = import ./flakes/rumpkernel {
+        nixpkgs = nixpkgs-toolchain;
+        inherit
+          system
+          targets
+          toolchainFor
+          mig
+          libpciaccess
+          libirqhelp
+          self
+          buildRevToken
+          ;
+        srcInput = rumpkernel-src;
+        inherit (rumpkernelInfo) forkUrl;
+      };
 
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
@@ -407,6 +428,7 @@ in
     // libpciaccess # libpciaccess-<arch>: pci-arbiter/acpi/rumpkernel dep
     // libirqhelp # libirqhelp-<arch>: hurd lib pre-pass (rumpkernel/libacpica dep)
     // libacpica # libacpica-<arch>: ACPICA library (acpi translator/rumpdisk chain dep)
+    // rumpkernel # rumpkernel-<arch>: NetBSD librump* set (rumpdisk/rumpnet dep)
     // ownBinutils # cross-binutils-<arch>
     // ownGcc.bootstrap # bootstrap-gcc-<arch> (libc-free stage-1 cc)
     // glibc
