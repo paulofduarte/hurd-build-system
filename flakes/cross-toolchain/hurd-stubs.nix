@@ -128,9 +128,9 @@ let
           # THIS derivation's alias header inputs and repoint config.make at it; canon-
           # mapped below so the result is cross-host stable.
           sysroot=$PWD/sysroot
-          mkdir -p $sysroot/include
-          cp -rs ${gnumach-hdrs}/include/. $sysroot/include/ ; chmod -R u+w $sysroot/include
-          cp -rs ${hurd-hdrs}/include/.    $sysroot/include/ ; chmod -R u+w $sysroot/include
+          mkdir -p $sysroot/usr/include
+          cp -rs ${gnumach-hdrs}/usr/include/. $sysroot/usr/include/ ; chmod -R u+w $sysroot/usr/include
+          cp -rs ${hurd-hdrs}/usr/include/.    $sysroot/usr/include/ ; chmod -R u+w $sysroot/usr/include
           # The symlink farm above resolves to OLD store mtimes (make follows symlinks),
           # so the stubs read "up to date" and nothing rebuilds.  Overlay the RPC
           # interface .defs as REAL files with a fresh mtime: just those trigger the
@@ -138,9 +138,9 @@ let
           # OTHER header stays an old-mtime symlink, so nothing else recompiles.
           # mach/machine is a symlink to mach/<arch>; resolve real dirs and tolerate
           # any unwritable spot (the critical mach/*.defs + hurd/*.defs are plain dirs).
-          for d in $sysroot/include/mach $sysroot/include/mach/i386 \
-                   $sysroot/include/mach/x86_64 $sysroot/include/device \
-                   $sysroot/include/hurd; do
+          for d in $sysroot/usr/include/mach $sysroot/usr/include/mach/i386 \
+                   $sysroot/usr/include/mach/x86_64 $sysroot/usr/include/device \
+                   $sysroot/usr/include/hurd; do
             [ -d "$d" ] || continue
             for f in "$d"/*.defs; do
               [ -e "$f" ] || continue
@@ -159,8 +159,8 @@ let
           # spurious regens (errnos' `mkdir bits`, config.make-from-config.status)
           # that fail.  Preserving mtimes keeps the design's invariant: only the
           # overlaid stub .defs are fresh, so only the stubs rebuild.
-          oldsys=$(sed -n 's/.*-isystem \([^ ]*\/sysroot\/include\).*/\1/p' $bdir/config.make | head -1)
-          oldroot=''${oldsys%/include}
+          oldsys=$(sed -n 's/.*-isystem \([^ ]*\/sysroot\/usr\/include\).*/\1/p' $bdir/config.make | head -1)
+          oldroot=''${oldsys%/usr/include}
           if [ -n "$oldsys" ] && [ "$oldroot" != "$sysroot" ]; then
             grep -rlI "$oldroot" $bdir 2>/dev/null | while IFS= read -r f; do
               sed "s@$oldroot@$sysroot@g" "$f" > "$f.tmp$$" \

@@ -47,21 +47,21 @@
     # support + test-harness fixes the checked build needs - but our patch
     # set backfills exactly those, so the tagged source + patches give a
     # reproducible pin without tracking a moving branch.
-    gnumach-src = {
+    gnumach-toolchain-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
       ref = "refs/tags/v1.8+git20260224";
       rev = "004116a3a862e872df005e8f6af0d4ea87d506fe";
       flake = false;
     };
-    mig-src = {
+    mig-toolchain-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/mig.git";
       ref = "refs/tags/v1.8+git20231217";
       rev = "3b1fcb2b83bb26d43dc912884499345f561d0b6a";
       flake = false;
     };
-    hurd-src = {
+    hurd-toolchain-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/hurd.git";
       ref = "refs/tags/v0.9.git20260527";
@@ -78,12 +78,12 @@
     # `toolchainOnly` in flakes/sources (nix-only, never cloned into src/); version
     # = edit the url.  gcc/binutils track latest stable; glibc stays 2.43 (the
     # Hurd x86_64 support).
-    binutils-src = {
+    binutils-toolchain-src = {
       type = "tarball";
       url = "https://ftp.gnu.org/gnu/binutils/binutils-2.46.1.tar.xz";
       flake = false;
     };
-    gcc-src = {
+    gcc-toolchain-src = {
       type = "tarball";
       url = "https://ftp.gnu.org/gnu/gcc/gcc-16.1.0/gcc-16.1.0.tar.xz";
       flake = false;
@@ -96,7 +96,7 @@
     # keep your store case-sensitive when updating.  (Only BUILDING glibc needs
     # this; the shipped buildtree is canonicalised collision-free, so consuming the
     # toolchain - incl. hurd-stubs RPC regen - works on a case-insensitive store.)
-    glibc-src = {
+    glibc-toolchain-src = {
       type = "tarball";
       url = "https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz";
       flake = false;
@@ -110,19 +110,19 @@
     # point: dev against HEAD, ship from the tag).  The explicit `flake = false`
     # is required: overriding an alias without it makes nix demand a flake.nix
     # in the override path.
-    gnumach-dev-src = {
+    gnumach-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/gnumach.git";
       ref = "master";
       flake = false;
     };
-    mig-dev-src = {
+    mig-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/mig.git";
       ref = "master";
       flake = false;
     };
-    hurd-dev-src = {
+    hurd-src = {
       type = "git";
       url = "https://git.savannah.gnu.org/git/hurd/hurd.git";
       ref = "master";
@@ -159,15 +159,15 @@
       self,
       nixpkgs,
       nixpkgs-toolchain,
+      gnumach-toolchain-src,
+      mig-toolchain-src,
+      hurd-toolchain-src,
+      binutils-toolchain-src,
+      gcc-toolchain-src,
+      glibc-toolchain-src,
       gnumach-src,
       mig-src,
       hurd-src,
-      binutils-src,
-      gcc-src,
-      glibc-src,
-      gnumach-dev-src,
-      mig-dev-src,
-      hurd-dev-src,
       build-rev,
       microvm,
       ...
@@ -213,15 +213,15 @@
           targets
           crossToolchain
           buildRevToken
+          gnumach-toolchain-src
+          mig-toolchain-src
+          hurd-toolchain-src
+          binutils-toolchain-src
+          gcc-toolchain-src
+          glibc-toolchain-src
           gnumach-src
           mig-src
           hurd-src
-          binutils-src
-          gcc-src
-          glibc-src
-          gnumach-dev-src
-          mig-dev-src
-          hurd-dev-src
           ;
       };
 
@@ -358,11 +358,12 @@
       );
       inherit (pkgOutputs) apps;
 
-      # Source pins (owner/repo/ref/rev/url) from the inputs via flake.lock.  `srcs`
-      # = the frozen `*-src` pins (what `make pin-src` bumps / `make show-src-pins`
-      # reports); `devSrcs` = the `*-dev-src` aliases that in-tree overrides rebind, so
-      # `make src` clones the source the in-tree build actually uses.  See flakes/sources.
+      # Source info (owner/repo/ref/rev/url) from the inputs via flake.lock.  `srcs`
+      # = the master-tracking `*-src` WORK sources (what `make src` clones, `make
+      # pin-src` bumps, `make show-src-pins` reports - and what the shipped nix +
+      # in-tree builds use).  `toolchainSrcs` = the frozen `*-toolchain-src` bootstrap
+      # pins, bumped only by a manual `nix flake update`.  See flakes/sources.
       srcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).all self inputs;
-      devSrcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).allDev self inputs;
+      toolchainSrcs = (import ./flakes/sources { inherit (nixpkgs) lib; }).toolchain self inputs;
     };
 }

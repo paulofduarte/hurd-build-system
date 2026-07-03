@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Populate / reconcile the src/<name> working clones from the nix source pins.
 #
-# The pins come from the flake's `.#devSrcs` output (the *-dev-src aliases that
-# in-tree overrides rebind, derived from flake.lock via flakes/sources), so the
-# src/<name> clone tracks exactly the source an in-tree build uses - which may be a
-# dev branch even while the frozen `*-src` pin stays on a release tag.  Per source:
+# The sources come from the flake's `.#srcs` output (the master-tracking `*-src`
+# WORK inputs, derived from flake.lock via flakes/sources) - the same source the
+# in-tree AND shipped nix builds use.  The frozen `*-toolchain-src` bootstrap pins
+# are NOT cloned (they feed the toolchain only).  Per source:
 #
 #   absent          -> clone the pin's url, then RENAME git's default `origin`
 #                     to a stable host-named remote (e.g. github.<owner>.<repo>,
@@ -44,7 +44,7 @@ _expr=$(
     (builtins.attrNames srcs))
 NIXEXPR
 )
-lines=$(nix --extra-experimental-features 'nix-command flakes' eval --raw .#devSrcs --apply "$_expr")
+lines=$(nix --extra-experimental-features 'nix-command flakes' eval --raw .#srcs --apply "$_expr")
 [ -n "$lines" ] || {
   echo "src: .#srcs is empty" >&2
   exit 1

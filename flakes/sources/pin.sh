@@ -48,7 +48,7 @@ wanted_src() {
   case "$wanted" in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
-# Derive *-src input names from .#srcs keys (e.g. gnumach -> gnumach-src),
+# Derive *-src input names from .#srcs keys (e.g. gnumach -> gnumach-toolchain-src),
 # restricted to the requested source(s).
 src_inputs=()
 while IFS=$'\t' read -r src _; do

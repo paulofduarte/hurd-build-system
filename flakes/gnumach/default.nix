@@ -17,7 +17,7 @@
 #                 wrapped cross toolchain, the pname, and the cross-MIG lookup.
 #   platform    : "at" / "xen" - fed to gnumach's --enable-platform= flag.
 #
-# Source comes from the pinned `gnumach-src` flake input, NOT the local
+# Source comes from the pinned `gnumach-toolchain-src` flake input, NOT the local
 # src/gnumach working clone (a `make src` dev convenience).
 #
 # `mig` is the attrset from flakes/mig; "mig-<name>" goes into nativeBuildInputs.
@@ -84,7 +84,7 @@ let
       # binary's PACKAGE_VERSION - same string, traceable on both sides.
       version = fullVersion;
 
-      # The pinned `gnumach-src` input, never the local src/gnumach clone, so the
+      # The pinned `gnumach-toolchain-src` input, never the local src/gnumach clone, so the
       # built bytes match the version string's `srcInput.shortRev`.
       src = srcInput;
 
@@ -197,11 +197,13 @@ let
       # both links lay out identically.
       hardeningDisable = [ "all" ];
 
-      # `make install` produces $out/boot/gnumach plus the public headers +
-      # .defs.  stdenv's default buildPhase handles the kernel link.
+      # `make install` produces $out/boot/gnumach plus the public headers + .defs.
+      # includedir/datarootdir -> /usr/include, /usr/share (FHS, matching everyone
+      # else); the kernel stays at $out/boot (bootdir is not under includedir/datadir).
+      # stdenv's default buildPhase handles the kernel link.
       installPhase = ''
         runHook preInstall
-        make install
+        make install includedir=$out/usr/include datarootdir=$out/usr/share
         runHook postInstall
       '';
 

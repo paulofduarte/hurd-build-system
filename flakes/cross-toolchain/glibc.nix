@@ -3,7 +3,7 @@
 # glibc-hurd - per-target Hurd C library derivation.
 # (See .claude/docs/build/HURD-TOOLCHAIN-DESIGN.md for the overall plan.)
 #
-# Builds vanilla upstream glibc 2.43 from the pinned `glibc-src` flake input,
+# Builds vanilla upstream glibc 2.43 from the pinned `glibc-toolchain-src` flake input,
 # configured for the Hurd target via `--host=<cpu>-gnu`.  glibc 2.43 has the htl
 # (Hurd Threading Library) port built in - no separate `libpthread` add-on.
 #
@@ -14,16 +14,17 @@
 # derivation anyway; a fresh one against vanilla glibc is cleaner - the standard
 # build dance is ~20 lines (out-of-tree build dir, configure, make + make install).
 #
-# Outputs:
-#   $out/lib/libc.so.0.3                 the Hurd libc SONAME
+# Outputs (usr-merged: physical under /usr, with /lib /bin /sbin compat symlinks):
+#   $out/usr/lib/libc.so.0.3             the Hurd libc SONAME
 #                                        (vs Linux's libc.so.6)
-#   $out/lib/libpthread.so.0.3           Hurd pthread
-#   $out/lib/ld.so.1 (i686) /            dynamic linker, per-arch
+#   $out/usr/lib/libpthread.so.0.3       Hurd pthread
+#   $out/usr/lib/ld.so.1 (i686) /        dynamic linker, per-arch
 #     ld-x86-64.so.1 (x86_64)
-#   $out/lib/{crt1.o,crti.o,crtn.o}      C runtime startup objects
-#   $out/include/{stdio.h,stdlib.h,...}  the full glibc header tree
-#   $out/include/hurd/, mach/             headers propagated from
+#   $out/usr/lib/{crt1.o,crti.o,crtn.o}  C runtime startup objects
+#   $out/usr/include/{stdio.h,...}       the full glibc header tree
+#   $out/usr/include/hurd/, mach/         headers propagated from
 #                                        hurd-headers + gnumach-headers
+#   $out/{lib,bin,sbin} -> usr/*         usr-merge compat symlinks
 #
 # Toolchain inputs come from the from-source cross toolchain:
 #   bootstrap-gcc (gcc.nix) + cross-binutils (binutils.nix)
@@ -68,27 +69,33 @@ let
   # glibc configure extras (inlined - glibc-config.nix had no other consumer):
   #  - libc_cv_ctors_header=yes: skip a crt ctor-section link test that needs a
   #    working libc (unavailable on the first cross pass).
-  #  - the rest pin the DEPLOYABLE /-rooted install layout: with --prefix=/ alone
-  #    glibc derives //lib, //etc, ...; pin every install dir + glibc's own libc_cv_*
-  #    path cache vars to clean /-paths.  NOT wrapper-related (unaffected by the
-  #    wrapper removal) - this is the Hurd-system layout the dist ships: libc.so /
-  #    ld.so in /lib, locales in /lib/locale, headers in /include.
+  #  - the rest pin the DEPLOYABLE usr-merged install layout: with --prefix=/usr
+  #    alone glibc still splits some dirs onto /lib (FHS root-partition rule); we
+  #    pin every install dir + glibc's own libc_cv_* path cache vars to clean
+  #    /usr-paths so the whole userland is physically under /usr and /lib, /bin,
+  #    /sbin become compat symlinks -> /usr/* (created in postInstall).  This is the
+  #    fully usr-merged Hurd-system layout the dist ships: libc.so / ld.so in
+  #    /usr/lib, locales in /usr/lib/locale, headers in /usr/include.  The baked
+  #    interp /lib/ld.so.1 resolves via the /lib -> /usr/lib symlink.
   glibcConfigFlags = [
     "libc_cv_ctors_header=yes"
-    "--libdir=/lib"
+    "--libdir=/usr/lib"
     "--sysconfdir=/etc"
-    "--datarootdir=/share"
+    "--datarootdir=/usr/share"
     "--localstatedir=/var"
-    "--sbindir=/sbin"
-    "--bindir=/bin"
-    "--libexecdir=/libexec"
-    "--includedir=/include"
-    "libc_cv_slibdir=/lib"
-    "libc_cv_rtlddir=/lib"
-    "libc_cv_complocaledir=/lib/locale"
+    "--sbindir=/usr/sbin"
+    "--bindir=/usr/bin"
+    "--libexecdir=/usr/libexec"
+    "--includedir=/usr/include"
+    "libc_cv_slibdir=/usr/lib"
+    "libc_cv_rtlddir=/usr/lib"
+    "libc_cv_complocaledir=/usr/lib/locale"
     "libc_cv_sysconfdir=/etc"
     "libc_cv_localstatedir=/var"
-    "libc_cv_rootsbindir=/sbin"
+    # NB: rootsbindir is deliberately NOT set here.  glibc's sysdeps/gnu/configure
+    # force-pins libc_cv_rootsbindir=/sbin for GNU (sln/ldconfig = early-boot root-
+    # partition tools), so a flag would be a clobbered no-op anyway; the resulting real
+    # /sbin is folded into /usr/sbin by the usr-merge loop in postInstall.
   ];
 
   # Patched (deterministic) install-info - the SAME one the dev-shell uses
@@ -185,14 +192,16 @@ let
         configurePhase = ''
           runHook preConfigure
 
-          # Combined headers sysroot - glibc's --with-headers wants ONE
-          # path containing both Mach + Hurd .h files.  Using cp -rs
-          # (symlink farm) keeps the closure size down vs cp -r.
-          mkdir -p $TMPDIR/sysroot/include
-          cp -rs ${gnumach-headers}/include/. $TMPDIR/sysroot/include/
-          chmod -R u+w $TMPDIR/sysroot/include
-          cp -rs ${hurd-headers}/include/.    $TMPDIR/sysroot/include/
-          chmod -R u+w $TMPDIR/sysroot/include
+          # Combined headers sysroot - glibc's --with-headers wants ONE path
+          # containing both Mach + Hurd .h files.  Using cp -rs (symlink farm) keeps
+          # the closure size down vs cp -r.  /usr/include throughout: gnumach-headers +
+          # hurd-headers now install to /usr/include, so the farm + --with-headers use
+          # $TMPDIR/sysroot/usr/include (FHS-consistent with everything else).
+          mkdir -p $TMPDIR/sysroot/usr/include
+          cp -rs ${gnumach-headers}/usr/include/. $TMPDIR/sysroot/usr/include/
+          chmod -R u+w $TMPDIR/sysroot/usr/include
+          cp -rs ${hurd-headers}/usr/include/.    $TMPDIR/sysroot/usr/include/
+          chmod -R u+w $TMPDIR/sysroot/usr/include
 
           # Cross toolchain - glibc's configure honours these explicit env vars
           # (matches cross-hurd's bootstrap-funcs.sh).  The from-source cc is unwrapped
@@ -259,8 +268,8 @@ let
           $src/configure \
             --build=${buildTriple} \
             --host=${tp} \
-            --prefix=/ \
-            --with-headers=$TMPDIR/sysroot/include \
+            --prefix=/usr \
+            --with-headers=$TMPDIR/sysroot/usr/include \
             --with-binutils=${crossBinu}/bin \
             ${lib.concatStringsSep " " glibcConfigFlags}
 
@@ -315,9 +324,10 @@ let
           # mach/machine -> <arch> symlink; -n keeps glibc's own on any
           # overlap).  chmod between copies because each cp finalises the
           # dirs it creates read-only, which would block the next one.
-          chmod -R u+w $out/include
-          cp -an ${gnumach-headers}/include/. $out/include/ ; chmod -R u+w $out/include
-          cp -an ${hurd-headers}/include/.    $out/include/ ; chmod -R u+w $out/include
+          # usr-merged layout: prefix=/usr + DESTDIR=$out installs under $out/usr.
+          chmod -R u+w $out/usr/include
+          cp -an ${gnumach-headers}/usr/include/. $out/usr/include/ ; chmod -R u+w $out/usr/include
+          cp -an ${hurd-headers}/usr/include/.    $out/usr/include/ ; chmod -R u+w $out/usr/include
 
           # Augment the libc.so linker script so `-lc` also pulls the Mach
           # + Hurd RPC stub libraries.  libc.so.0.3 has undefined refs to
@@ -326,21 +336,41 @@ let
           # every Hurd userland link fails on those undefined references.
           # (Same step as Guix's augment-libc.so.)  Restrict the sed to
           # the GROUP line so OUTPUT_FORMAT(...) - which also ends in ')'
-          # - is untouched.
-          sed -i "/^GROUP/ s|)\$| /lib/libmachuser.so /lib/libhurduser.so )|" \
-            $out/lib/libc.so
+          # - is untouched.  Paths are /usr/lib (usr-merged slibdir).
+          sed -i "/^GROUP/ s|)\$| /usr/lib/libmachuser.so /usr/lib/libhurduser.so )|" \
+            $out/usr/lib/libc.so
 
           # i386: gcc's vanilla interpreter is /lib/ld.so (config/i386/gnu.h
           # GNU_USER_DYNAMIC_LINKER) but glibc names the loader ld.so.1, and
-          # upstream installs no /lib/ld.so.  Add the bridge symlink - the same
-          # packaging step Debian/Gentoo glibc do.  Self-gated on ld.so.1, so it's
-          # a no-op on x86_64 (loader is ld-x86-64.so.1, which gcc emits directly).
-          [ -e $out/lib/ld.so.1 ] && ln -sf ld.so.1 $out/lib/ld.so || true
+          # upstream installs no ld.so.  Add the bridge symlink next to the real
+          # loader in /usr/lib - the same packaging step Debian/Gentoo glibc do.
+          # Self-gated on ld.so.1, so it's a no-op on x86_64 (loader is
+          # ld-x86-64.so.1, which gcc emits directly).  The baked interp
+          # /lib/ld.so[.1] then resolves via the /lib -> /usr/lib symlink below.
+          [ -e $out/usr/lib/ld.so.1 ] && ln -sf ld.so.1 $out/usr/lib/ld.so || true
 
-          ls $out/lib/libc.so.0.3               || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
-          ls $out/include/stdio.h               || { echo "ERROR: stdio.h missing"; exit 1; }
-          ls $out/include/mach/machine/fp_reg.h || { echo "ERROR: mach kernel headers not merged"; exit 1; }
-          grep -q libmachuser $out/lib/libc.so  || { echo "ERROR: libc.so not augmented"; exit 1; }
+          # usr-merge: /lib, /bin, /sbin, /libexec become compat symlinks -> usr/*
+          # (relative, so the tree stays relocatable).  glibc installs under /usr for
+          # most, but forces rootsbindir=/sbin for GNU (sln/ldconfig were historically
+          # root-partition early-boot tools, needed before a separate /usr mounts; moot
+          # under usr-merge, where /usr is always present).  So if a real top-level dir
+          # exists (the forced /sbin, holding sln), fold its contents into /usr/<d>
+          # first, then symlink - uniformly with the rest, in this one place.  Keeps
+          # baked /lib/ld.so.1 interps + /bin,/sbin PATH resolving; matches a usr-merged
+          # Debian target for the overlay path.
+          for d in lib bin sbin libexec; do
+            if [ -e $out/$d ] && [ ! -L $out/$d ]; then
+              mkdir -p $out/usr/$d
+              cp -a $out/$d/. $out/usr/$d/
+              rm -rf $out/$d
+            fi
+            [ -d $out/usr/$d ] && ln -s usr/$d $out/$d || true
+          done
+
+          ls $out/usr/lib/libc.so.0.3               || { echo "ERROR: libc.so.0.3 missing"; exit 1; }
+          ls $out/usr/include/stdio.h               || { echo "ERROR: stdio.h missing"; exit 1; }
+          ls $out/usr/include/mach/machine/fp_reg.h || { echo "ERROR: mach kernel headers not merged"; exit 1; }
+          grep -q libmachuser $out/usr/lib/libc.so  || { echo "ERROR: libc.so not augmented"; exit 1; }
 
           # Second output (buildtree): the build/ OBJDIR ONLY, for hurd-stubs' fast
           # stub re-link.  $PWD is the build dir.  We deliberately DON'T ship the

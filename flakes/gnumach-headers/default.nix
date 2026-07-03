@@ -2,20 +2,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # GNU Mach public headers - per-target derivations (autoreconf + configure +
 # make install-data), one `gnumach-headers-<name>` per entry in `targets`.
-# Output ($out/include/...) is what downstream consumers (MIG cpu.sym, the
+# Output ($out/usr/include/...) is what downstream consumers (MIG cpu.sym, the
 # kernel build) include.
 #
-# Output layout (gnumach's `make install-data`):
-#   $out/include/mach/...        (public Mach RPC + type headers)
-#   $out/include/mach/<arch>/... (per-arch public headers)
-#   $out/share/...               (.defs files MIG can import, .msgids)
+# Output layout (gnumach's `make install-data`, FHS /usr):
+#   $out/usr/include/mach/...        (public Mach RPC + type headers)
+#   $out/usr/include/mach/<arch>/... (per-arch public headers)
+#   $out/usr/share/...               (.defs files MIG can import, .msgids)
 #
 # Per-target attrset fields (see target-archs.nix + flake.nix):
 #   crossTarget : nixpkgs cross-system config ("i686-gnu" etc.) - drives the
 #                 cross-toolchain selection and the pname.
 #   platform    : "at" / "xen" - fed to gnumach's --enable-platform= flag.
 #
-# Source comes from the pinned `gnumach-src` flake input, NOT the local
+# Source comes from the pinned `gnumach-toolchain-src` flake input, NOT the local
 # src/gnumach clone.
 #
 # Side-stepped concerns: install-data compiles no kernel objects, so the
@@ -63,7 +63,7 @@ let
         pname = "gnumach-headers-${tp}";
         version = "src";
 
-        # The pinned `gnumach-src` input, never the local src/gnumach clone.
+        # The pinned `gnumach-toolchain-src` input, never the local src/gnumach clone.
         src = srcInput;
 
         # autoreconfHook supplies autoconf/automake/libtool/m4.  texinfo: `make
@@ -95,9 +95,12 @@ let
         # We only want the headers - skip the kernel build entirely.
         dontBuild = true;
 
+        # install-data -> $out/usr/include (+ /usr/share for mach.info): the FHS /usr
+        # layout, matching glibc/hurd/gcc and the shipped gnumach.  configure's
+        # --prefix=$out default puts includedir=$out/include; override to /usr/include.
         installPhase = ''
           runHook preInstall
-          make install-data
+          make install-data includedir=$out/usr/include datarootdir=$out/usr/share
           runHook postInstall
         '';
 

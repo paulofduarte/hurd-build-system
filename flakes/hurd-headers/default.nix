@@ -4,10 +4,10 @@
 # per entry in `targets`.  Outputs the include tree downstream consumers
 # (glibc-hurd, the hurd userland) need:
 #
-#   $out/include/hurd/...        (Hurd-side type/RPC headers + .defs)
-#   $out/include/hurd_types.h    (the AC_CONFIG_SRCDIR sentinel)
-#   $out/share/msgids/...        (debugger msgid tables - only if MIG
-#                                 generation succeeds at configure time)
+#   $out/usr/include/hurd/...        (Hurd-side type/RPC headers + .defs)
+#   $out/usr/include/hurd_types.h    (the AC_CONFIG_SRCDIR sentinel)
+#   $out/usr/share/msgids/...        (debugger msgid tables - only if MIG
+#                                     generation succeeds at configure time)
 #
 # Uses the **native** host stdenv, NOT a Hurd cross-toolchain: `make
 # install-headers` is a pure file-copy walk (no compilation), so configure
@@ -21,7 +21,7 @@
 # mig-<crossTarget> so autoconf's host-prefixed search finds it via PATH.  It's
 # never invoked (no .defs -> .h codegen happens), just needs to be discoverable.
 #
-# Source comes from the pinned `hurd-src` flake input.
+# Source comes from the pinned `hurd-toolchain-src` flake input.
 
 {
   nixpkgs,
@@ -65,7 +65,7 @@ let
         inherit pname;
         version = fullVersion;
 
-        # The pinned `hurd-src` input, never the local src/hurd clone.
+        # The pinned `hurd-toolchain-src` input, never the local src/hurd clone.
         src = srcInput;
 
         # autoreconfHook regenerates configure (the shipped script is older than
@@ -113,9 +113,11 @@ let
         # Headers-only - skip the kernel-and-userland compile entirely.
         dontBuild = true;
 
+        # prefix=$out/usr -> headers land in $out/usr/include/hurd (FHS /usr layout,
+        # matching glibc/gnumach-headers and the shipped hurd), not top-level /include.
         installPhase = ''
           runHook preInstall
-          make install-headers prefix=$out no_deps=t
+          make install-headers prefix=$out/usr no_deps=t
           runHook postInstall
         '';
 

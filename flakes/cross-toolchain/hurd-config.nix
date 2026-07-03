@@ -3,8 +3,13 @@
 # Shared GNU Hurd configure flags (nix build + in-tree dev shell, kept in lockstep);
 # `--host=<tp>` is added by the caller.
 #
-# deployFlags - root-relative install dirs; --prefix=/ makes the tree relocatable.
-# Same set as glibc, minus its libc_cv_*.
+# deployFlags - usr-merged install dirs under /usr; the tree stays relocatable via
+# DESTDIR.  Same set as glibc, minus its libc_cv_*.  NOTE the servers dir is NOT
+# under /usr: config.make.in sets `hurddir = ${exec_prefix}/hurd` -> /usr/hurd under
+# --prefix=/usr, but the boot chain + distro overlays expect servers at top-level
+# /hurd (Debian keeps /hurd real, unmerged), so the caller pins `hurddir=/hurd` as a
+# make-var override at build+install time (see flakes/hurd/default.nix + Makefile).
+# The /lib,/bin,/sbin -> /usr/* compat symlinks are added at dist-tree assembly.
 #
 # coreFlags - disables the optional external-dependency components (parted, rump,
 # nfs/libtirpc, lwip, xkbcommon, libgcrypt, libdaemon, libcrypt) so only the core
@@ -15,14 +20,14 @@
 
 {
   deployFlags = [
-    "--prefix=/"
-    "--libexecdir=/libexec"
-    "--bindir=/bin"
-    "--sbindir=/sbin"
+    "--prefix=/usr"
+    "--libexecdir=/usr/libexec"
+    "--bindir=/usr/bin"
+    "--sbindir=/usr/sbin"
     "--sysconfdir=/etc"
     "--localstatedir=/var"
-    "--libdir=/lib"
-    "--includedir=/include"
+    "--libdir=/usr/lib"
+    "--includedir=/usr/include"
   ];
 
   coreFlags = [

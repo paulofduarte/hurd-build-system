@@ -16,7 +16,7 @@
 # core ext2fs-bootable userland.  They configure off cleanly (empty
 # PKG_CONFIG_PATH + --without-* flags); driver/filesystem extras are a follow-up.
 #
-# Source comes from the pinned `hurd-src` flake input.  Filtered to the non-xen
+# Source comes from the pinned `hurd-toolchain-src` flake input.  Filtered to the non-xen
 # userland targets (i686, x86_64).
 
 {
@@ -139,10 +139,16 @@ let
       # non-Linux host the host ar/ranlib can't index i686-gnu ELF, so the static
       # archives come out empty and every .static program fails to link.
       # Command-line make vars override the built-ins and propagate.
+      # hurddir=/hurd pins the servers dir to top-level /hurd: config.make.in sets
+      # `hurddir = ${exec_prefix}/hurd`, which under --prefix=/usr would install
+      # servers to /usr/hurd, but the boot chain (/hurd/ext2fs.static ...) and distro
+      # overlays expect /hurd (Debian keeps it unmerged).  A command-line make var
+      # overrides the config.make assignment at both build + install.
       makeFlags = [
         "AR=${tp}-ar"
         "RANLIB=${tp}-ranlib"
         "NM=${tp}-nm"
+        "hurddir=/hurd"
       ];
 
       # Flag set shared with the in-tree dev shell via hurd-config.nix (see that

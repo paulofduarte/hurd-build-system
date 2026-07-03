@@ -3,13 +3,19 @@
 # Source-repo helpers - shared by the version composer (the fork-id) and the
 # Makefile `src` targets (clone url + pinned rev).
 #
-# Single source of truth is the `*-src` flake inputs.  Nix doesn't expose
-# owner/repo/ref on a fetched input (only rev / shortRev / dates), so we read
-# them back out of flake.lock (itself generated from those inputs), dispatching
-# on the `original.type` nix already parsed instead of writing our own URL parser.
+# Two kinds of `*-src` root flake input:
+#  - `<name>-src`            the master-tracking WORK source: cloned by `make src`,
+#                            used by the shipped nix builds AND the in-tree builds,
+#                            bumped by `make pin-src`.  This is the normal shape.
+#  - `<name>-toolchain-src`  the frozen toolchain-bootstrap pin: feeds the glibc ->
+#                            cross-gcc chain (binutils/gcc/glibc are toolchain-only
+#                            and have ONLY this).  Bumped ONLY by a deliberate manual
+#                            `nix flake update <name>-toolchain-src`, never `pin-src`.
 #
-# Barrel; the bulk of `info` lives in ./info.nix.  `all` is a thin loop over the
-# `*-src` inputs and stays here.
+# Nix doesn't expose owner/repo/ref on a fetched input (only rev / shortRev /
+# dates), so we read them back out of flake.lock (itself generated from those
+# inputs), dispatching on the `original.type` nix already parsed instead of
+# writing our own URL parser.  Barrel; the bulk of `info` lives in ./info.nix.
 
 { lib }:
 
@@ -20,64 +26,38 @@ let
 
   inherit (import ./info.nix { inherit lib flakeLib; }) info;
 
-  # `*-src` inputs that are NOT in-tree source projects: never cloned into src/
-  # by `make src`.  glibc is nix-only (the gcc model) - version picking = edit
-  # the input in flake.nix; patches live in flakes/cross-toolchain/glibc.nix.
-  # The pins themselves stay clone sources (src/<m> baselines = the pinned
-  # tags); in-tree overrides rebind the *-dev-src ALIASES, which are filtered
-  # out below (follows refs - no lock node of their own).
-  toolchainOnly = [
-    "binutils-src"
-    "gcc-src"
-    "glibc-src"
-  ];
-
-  # { <dir> = info; ... } for every in-tree source, keyed by src/<dir> (input
-  # "gnumach-src" -> dir "gnumach").  Auto-discovered from flake.lock's root node
-  # minus `toolchainOnly`, so adding an in-tree `<name>-src` input makes it appear
-  # with no list to maintain.  `inputs` is the outputs-fn attrset, used only so
-  # `info` can read `.lastModifiedDate`.  `pick lock <name>-src` selects which input
-  # to actually read - the pin, or its *-dev-src alias - so one loop backs both views.
-  mkAll =
-    pick: self: inputs:
+  # { <name> = info; ... } for every root `*-src` input matching `keep`, keyed by
+  # the input name minus its trailing `-src` (so `gnumach-src` -> "gnumach",
+  # `gnumach-toolchain-src` -> "gnumach-toolchain").  Auto-discovered from
+  # flake.lock's root node, so adding an input makes it appear with no list to
+  # maintain.  `inputs` is the outputs-fn attrset, used only so `info` can read
+  # `.lastModifiedDate`.
+  mkView =
+    keep: self: inputs:
     let
       lock = builtins.fromJSON (builtins.readFile (self.outPath + "/flake.lock"));
       rootInputs = lock.nodes.${lock.root}.inputs or { };
-      srcNames = builtins.filter (
-        n: lib.hasSuffix "-src" n && !(lib.hasSuffix "-dev-src" n) && !(builtins.elem n toolchainOnly)
-      ) (builtins.attrNames rootInputs);
+      names = builtins.filter keep (builtins.attrNames rootInputs);
     in
     lib.listToAttrs (
-      map (
-        n:
-        let
-          chosen = pick lock n;
-        in
-        {
-          name = lib.removeSuffix "-src" n;
-          value = info self chosen inputs.${chosen};
-        }
-      ) srcNames
+      map (n: {
+        name = lib.removeSuffix "-src" n;
+        value = info self n inputs.${n};
+      }) names
     );
 in
 
 {
   inherit info;
 
-  # PIN side: the frozen `*-src` inputs.  Backs `.#srcs` - what `make pin-src` bumps
-  # and `make show-src-pins` reports.
-  all = mkAll (_lock: n: n);
+  # WORK sources (master-tracking): the plain `*-src` inputs, EXCLUDING the frozen
+  # `*-toolchain-src` pins.  Backs `.#srcs` - what `make src` clones, `make pin-src`
+  # bumps, and `make show-src-pins` reports; also the source the shipped nix builds
+  # + the in-tree builds actually use.
+  all = mkView (n: lib.hasSuffix "-src" n && !(lib.hasSuffix "-toolchain-src" n));
 
-  # IN-TREE side: the `*-dev-src` ALIAS each in-tree override rebinds (e.g. mig-dev-src
-  # may track master while mig-src stays on a release tag).  Backs `.#devSrcs` - what
-  # `make src` clones, so src/<m> matches the source the in-tree build actually uses.
-  # A follows-only alias has no lock node of its own, so fall back to its pin (which
-  # it resolves to anyway - identical rev).
-  allDev = mkAll (
-    lock: n:
-    let
-      dev = "${lib.removeSuffix "-src" n}-dev-src";
-    in
-    if lock.nodes ? ${dev} then dev else n
-  );
+  # TOOLCHAIN pins (frozen): the `*-toolchain-src` inputs feeding the glibc ->
+  # cross-gcc bootstrap.  Backs `.#toolchainSrcs`; bumped only by a deliberate
+  # manual `nix flake update <name>-toolchain-src`, never by `make pin-src`.
+  toolchain = mkView (n: lib.hasSuffix "-toolchain-src" n);
 }

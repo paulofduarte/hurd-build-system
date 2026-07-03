@@ -20,15 +20,15 @@
   targets,
   crossToolchain,
   buildRevToken ? null,
+  gnumach-toolchain-src,
+  mig-toolchain-src,
+  hurd-toolchain-src,
+  binutils-toolchain-src,
+  gcc-toolchain-src,
+  glibc-toolchain-src,
   gnumach-src,
   mig-src,
   hurd-src,
-  binutils-src,
-  gcc-src,
-  glibc-src,
-  gnumach-dev-src,
-  mig-dev-src,
-  hurd-dev-src,
 }:
 
 let
@@ -36,9 +36,9 @@ let
   # Fork-id metadata (owner/repo/ref) from the `*-src` inputs via flake.lock;
   # feeds the version string's fork field.  See flakes/sources.
   sourcesLib = import ./flakes/sources { inherit lib; };
-  gnumachInfo = sourcesLib.info self "gnumach-src" gnumach-src;
-  migInfo = sourcesLib.info self "mig-src" mig-src;
-  hurdInfo = sourcesLib.info self "hurd-src" hurd-src;
+  gnumachInfo = sourcesLib.info self "gnumach-toolchain-src" gnumach-toolchain-src;
+  migInfo = sourcesLib.info self "mig-toolchain-src" mig-toolchain-src;
+  hurdInfo = sourcesLib.info self "hurd-toolchain-src" hurd-toolchain-src;
 
   # Userland targets (those that get a full toolchain): the non-xen ones.
   # The xen variants are kernel-only.
@@ -73,7 +73,7 @@ in
         # sibling's cross-gcc), so map crossTarget -> sibling name first, exactly as
         # bootstrapGccByName does for the default path.
         buildCC = _name: target: crossGccByName.${toolchainNameByCrossTarget.${target.crossTarget}};
-        srcInput = gnumach-dev-src;
+        srcInput = gnumach-src;
         includeOnly = true;
       };
       hurdHeaders = import ./flakes/hurd-headers {
@@ -83,7 +83,7 @@ in
           targets
           mig
           ;
-        srcInput = hurd-dev-src;
+        srcInput = hurd-src;
         inherit (hurdInfo) forkUrl;
         includeOnly = true;
       };
@@ -94,7 +94,7 @@ in
         inherit
           system
           targets
-          binutils-src
+          binutils-toolchain-src
           ;
       };
 
@@ -107,7 +107,7 @@ in
         inherit
           system
           targets
-          gcc-src
+          gcc-toolchain-src
           ownBinutils
           ;
       };
@@ -147,7 +147,7 @@ in
         nixpkgs = nixpkgs-toolchain;
         inherit system targets;
         bootstrapGcc = bootstrapGccByName;
-        srcInput = gnumach-src;
+        srcInput = gnumach-toolchain-src;
         # Match the alias instance's includeOnly (line ~62): without it the pin
         # headers keep $out/share and the alias drops it, so the two chains diverge
         # by input hash and produce two byte-identical-but-distinct migs.  With it
@@ -162,14 +162,14 @@ in
         inherit system targets;
         bootstrapGcc = bootstrapGccByName;
         gnumachHeaders = gnumachHeadersBootstrap;
-        srcInput = mig-src;
+        srcInput = mig-toolchain-src;
         inherit (migInfo) forkUrl;
       };
       hurdHeadersBootstrap = import ./flakes/hurd-headers {
         nixpkgs = nixpkgs-toolchain;
         inherit system targets;
         mig = bootstrapMig;
-        srcInput = hurd-src;
+        srcInput = hurd-toolchain-src;
         inherit (hurdInfo) forkUrl;
       };
 
@@ -188,7 +188,7 @@ in
         hurdHeaders = hurdHeadersBootstrap;
         binutils = ownBinutils;
         bootstrapGcc = ownGcc.bootstrap;
-        srcInput = glibc-src;
+        srcInput = glibc-toolchain-src;
       };
       hurdStubs = import ./flakes/cross-toolchain/hurd-stubs.nix {
         nixpkgs = nixpkgs-toolchain;
@@ -204,7 +204,7 @@ in
         # (these stubs are overlaid into the dist by dist-glibc) may pull the seed.
         buildCC = name: _: crossGccByName.${name};
         base = glibc;
-        srcInput = glibc-src;
+        srcInput = glibc-toolchain-src;
       };
       # IR-emitting variant (hurd-stubs-ir-<arch>) for the rpc-wire-drift gate: same
       # stub build, plus the stub TUs as one LLVM-IR module (all.ll) for the
@@ -222,7 +222,7 @@ in
         binutils = ownBinutils;
         buildCC = name: _: crossGccByName.${name};
         base = glibc;
-        srcInput = glibc-src;
+        srcInput = glibc-toolchain-src;
         emitIR = true;
       };
       # The rpc-wire-drift gate's comparator (the wire-fact manifest tool, an LLVM-API
@@ -266,7 +266,7 @@ in
       # on the mig tests by construction (no separate "checked" artifact, no marker).
       # Byte-identical to the bootstrap mig (migcom is native-host-cc, cpu.h
       # -ffreestanding in both), so a green check also proves the bootstrap mig that
-      # built glibc is sound.  Overridable (mig-dev-src) so `make src-mig` reaches the
+      # built glibc is sound.  Overridable (mig-src) so `make src-mig` reaches the
       # whole post-glibc surface (dev shell, hurd-stubs, gnumach, hurd).  Per-
       # crossTarget; re-keyed to every target (incl. xen) just below.
       migChecked = import ./flakes/mig {
@@ -275,11 +275,13 @@ in
           system
           targets
           gnumachHeaders
+          self
+          buildRevToken
           ;
         bootstrapGcc = ownGcc.bootstrap; # unused when checkCC is set (CHECKED path)
-        srcInput = mig-dev-src;
+        srcInput = mig-src;
         inherit (migInfo) forkUrl;
-        checkCC = crossGccByName;
+        checkCC = crossGccByName; # CHECKED -> full +build.g<rev> version tag
       };
 
       # THE consumer-facing `mig`: the per-crossTarget checked mig re-keyed to every
@@ -314,11 +316,11 @@ in
           buildRevToken
           ;
         inherit mig; # the one post-glibc, checked mig everything downstream shares
-        # Work side (like migChecked's mig-dev-src): the shipped kernel tracks the
+        # Work side (like migChecked's mig-src): the shipped kernel tracks the
         # overridable alias, so `make src-gnumach` reaches it and the in-tree==nix
         # matrix compares like-for-like.  The bootstrap twin (gnumachHeadersBootstrap)
-        # stays on gnumach-src to pin glibc's sysroot headers - no toolchain rebuild.
-        srcInput = gnumach-dev-src;
+        # stays on gnumach-toolchain-src to pin glibc's sysroot headers - no toolchain rebuild.
+        srcInput = gnumach-src;
         inherit (gnumachInfo) forkUrl;
       };
 
@@ -336,8 +338,8 @@ in
         inherit mig; # the one post-glibc, checked mig everything downstream shares
         # Work side (mirrors gnumach + migChecked): shipped userland tracks the alias
         # so `make src-hurd` reaches it and in-tree==nix compares like-for-like; the
-        # bootstrap twin (hurdHeadersBootstrap) stays on hurd-src for glibc's sysroot.
-        srcInput = hurd-dev-src;
+        # bootstrap twin (hurdHeadersBootstrap) stays on hurd-toolchain-src for glibc's sysroot.
+        srcInput = hurd-src;
         inherit (hurdInfo) forkUrl;
       };
     in

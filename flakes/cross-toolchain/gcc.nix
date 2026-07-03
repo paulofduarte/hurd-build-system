@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Own from-source cross GCC - built from the pinned `gcc-src` release tarball on
+# Own from-source cross GCC - built from the pinned `gcc-toolchain-src` release tarball on
 # the NATIVE nixpkgs stdenv + `--target=<cpu>-gnu`, UNWRAPPED (no nix cc-wrapper),
 # wired to our from-source cross-binutils (binutils.nix) via --with-as/--with-ld.
 #
@@ -32,7 +32,7 @@
   nixpkgs,
   system,
   targets,
-  gcc-src,
+  gcc-toolchain-src,
   ownBinutils,
 }:
 
@@ -43,7 +43,7 @@ let
 
   # gcc keeps its version in gcc/BASE-VER (e.g. "16.1.0") - parse it so a tarball
   # bump in flake.nix is the only edit needed (matches the binutils/glibc model).
-  version = lib.removeSuffix "\n" (builtins.readFile (gcc-src + "/gcc/BASE-VER"));
+  version = lib.removeSuffix "\n" (builtins.readFile (gcc-toolchain-src + "/gcc/BASE-VER"));
 
   # gcc 16's math/host prerequisites (the in-tree contrib/download_prerequisites
   # set) + zlib for LTO.  As buildInputs, stdenv exposes their include/lib so gcc's
@@ -102,7 +102,7 @@ let
     pkgs.stdenv.mkDerivation (
       {
         inherit pname version;
-        src = gcc-src;
+        src = gcc-toolchain-src;
 
         # Build the HOST compiler (cc1/cc1plus/lto1/lto-dump/the driver) WITHOUT debug
         # info (-O2, no -g; gcc's configure defaults to -g -O2).  These are build tools,
@@ -205,10 +205,11 @@ let
     };
 
   # The final compiler, bound to the glibc-hurd `glibcDrv` as its sysroot.
-  #   --with-sysroot          glibc-hurd is the cross sysroot (crt/libs in /lib,
-  #                           libc.so /lib GROUP resolved under it - no bare rewrite).
-  #   --with-native-system-header-dir=/include   glibc-hurd is --prefix=/ (headers in
-  #                           include/, not the default usr/include).
+  #   --with-sysroot          glibc-hurd is the cross sysroot (crt/libs in /usr/lib,
+  #                           libc.so /usr/lib GROUP resolved under it; /lib -> /usr/lib
+  #                           compat symlink covers any bare /lib lookup).
+  #   --with-native-system-header-dir=/usr/include   glibc-hurd is --prefix=/usr
+  #                           (usr-merged; headers in usr/include - gcc's normal default).
   #   --enable-shared         shapes libgcc's baked link SPEC (-lgcc -lgcc_eh static /
   #                           -lgcc_s dynamic) to match the shipped runtime's layout.
   #   --enable-threads=posix  Hurd htl provides posix pthreads (glibc sysroot has
@@ -229,7 +230,7 @@ let
       extraConfigure = [
         "--enable-languages=c,c++"
         "--with-sysroot=${glibcDrv}"
-        "--with-native-system-header-dir=/include" # config.gcc's *-gnu default; explicit for the sysroot
+        "--with-native-system-header-dir=/usr/include" # usr-merged glibc-hurd sysroot (gcc's normal default)
         "--enable-shared" # libtool default, but load-bearing: the shipped runtime must be shared
         "--enable-__cxa_atexit" # NOT a *-gnu default (config.gcc: no) - required for C++ static dtors
         # Dropped as redundant (verified in gcc-16 source): --enable-threads=posix

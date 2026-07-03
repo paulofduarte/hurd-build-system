@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Paulo Duarte <paulofernandobd@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Own from-source cross binutils - the target-prefixed as/ld/ar/nm/... for the
-# Hurd targets, built from the pinned upstream release tarball (binutils-src),
+# Hurd targets, built from the pinned upstream release tarball (binutils-toolchain-src),
 # replacing nixpkgs' binutils-unwrapped.  Stage 1 of the from-source toolchain;
 # stage 2 (gcc.nix) configures the from-source gcc with `--with-as`/`--with-ld`
 # pointing here, and downstream consumers invoke `<triple>-as`/`-ld` UNWRAPPED
@@ -16,7 +16,7 @@
   nixpkgs,
   system,
   targets,
-  binutils-src,
+  binutils-toolchain-src,
 }:
 
 let
@@ -30,7 +30,7 @@ let
   version =
     let
       m = builtins.match ".*BFD_VERSION], \\[([0-9.]+)].*" (
-        builtins.readFile (binutils-src + "/bfd/version.m4")
+        builtins.readFile (binutils-toolchain-src + "/bfd/version.m4")
       );
     in
     if m == null then "unknown" else builtins.head m;
@@ -44,7 +44,7 @@ let
       {
         pname = "cross-binutils-${tp}";
         inherit version;
-        src = binutils-src;
+        src = binutils-toolchain-src;
 
         # Build the HOST binaries without debug info (-O2, no -g; configure's default
         # is -g -O2).  They are build-host tools - never shipped to the target dist -

@@ -33,11 +33,11 @@
 #                 name (<crossTarget>-mig + <crossTarget>-migcom).
 #   platform    : unused by MIG (a gnumach-side concern).
 #
-# Source comes from the pinned `mig-src` flake input, NOT the local src/mig clone.
+# Source comes from the pinned `mig-toolchain-src` flake input, NOT the local src/mig clone.
 #
 # `gnumachHeaders` is the attrset from flakes/gnumach-headers; "gnumach-headers-
 # <name>" gives cpu.sym its <mach/message.h>.  TARGET_CPPFLAGS points at
-# $gnumach-headers/include.
+# $gnumach-headers/usr/include (the FHS /usr layout gnumach-headers installs to).
 
 {
   nixpkgs,
@@ -47,6 +47,11 @@
   bootstrapGcc,
   srcInput,
   forkUrl,
+  # `self` + `buildRevToken` are used ONLY in CHECKED mode, to compose the full
+  # `+build.g<rev>[-dirty]` shipped version like gnumach/hurd.  BOOTSTRAP mig omits
+  # them (frozen toolchain block, no build-rev field).
+  self ? null,
+  buildRevToken ? null,
   # CHECKED mode: a `name -> cross-gcc` attrset (the from-source cross-gcc, whose
   # --with-sysroot=glibc-hurd gives the test stubs their <string.h>).  null = BOOTSTRAP.
   checkCC ? null,
@@ -65,10 +70,26 @@ let
   # Upstream version parsed from configure.ac (AC_INIT line).
   upstreamVersion = helpers.parseAcInitVersion (srcInput + "/configure.ac");
 
-  # PACKAGE_VERSION composed at eval time.
-  fullVersion = helpers.composeToolchainVersion {
-    inherit upstreamVersion srcInput forkUrl;
-  };
+  # PACKAGE_VERSION composed at eval time.  CHECKED mig is a shipped, hackable
+  # artifact (tracks the mig-src WORK source, not cached as a frozen toolchain
+  # block), so it carries the full `+build.g<rev>[-dirty]` tag like gnumach/hurd.
+  # BOOTSTRAP mig stays on the toolchain version (no build-rev) - it's the frozen
+  # glibc-building block.
+  fullVersion =
+    if checked then
+      helpers.composeVersion {
+        inherit
+          upstreamVersion
+          srcInput
+          forkUrl
+          self
+          buildRevToken
+          ;
+      }
+    else
+      helpers.composeToolchainVersion {
+        inherit upstreamVersion srcInput forkUrl;
+      };
 
   mkOne =
     name: target:
@@ -113,7 +134,7 @@ let
         #       [2026-05]
         #   04  test harness preprocesses .defs with the target compiler.  [2026-05]
         # All five are in current pins, so this is a no-op for the working source;
-        # it only fires for an older mig-src rev.  Guarded by the input's commit date.
+        # it only fires for an older mig-toolchain-src rev.  Guarded by the input's commit date.
         patches =
           lib.optionals (builtins.substring 0 8 (srcInput.lastModifiedDate or "00000000") < "20260524")
             [
@@ -157,7 +178,7 @@ let
         # symbols are sed-extracted into cpu.h.  Without TARGET_CPPFLAGS
         # pointing at gnumach's headers, that step can't find <mach/message.h>.
         preConfigure = ''
-          export TARGET_CPPFLAGS="-I${gnumach-headers}/include"
+          export TARGET_CPPFLAGS="-I${gnumach-headers}/usr/include"
           export TARGET_CC=${cc}/bin/${toolPrefix}gcc
         '';
 
@@ -201,7 +222,7 @@ let
         # gnumach-headers include via an exported CFLAGS (NOT -ffreestanding - the
         # stubs genuinely need the wrapped cc's hosted <string.h>).
         preCheck = ''
-          export CFLAGS="-I${gnumach-headers}/include"
+          export CFLAGS="-I${gnumach-headers}/usr/include"
         '';
       }
       // helpers.mkReproAttrs {
