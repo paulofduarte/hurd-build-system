@@ -133,10 +133,10 @@ in
       #   python3/gettext/gawk/bison/perl/texinfo  glibc's host build tools, for the
       #              opt-in `make glibc` (mirrors glibc.nix); the dedup handles the
       #              overlap with inferredBuildInputs.
-      #   lint/format tools (nixfmt, statix, deadnix, clang-tools, shfmt, shellcheck,
-      #              mdformat, yamlfmt, yamllint, reuse) come from flakes/lint/tools.nix
-      #              - the SAME set the `lint-tools` package / `make lint` / the
-      #              pre-commit hook use - so in-shell linting matches CI exactly.
+      #   lint/format tools are NOT here - they live in the lean `.#lint` shell
+      #              (`nix develop .#lint`) so this build shell stays free of the
+      #              branch-nixpkgs churn they carry.  `make lint`/`fmt` + the
+      #              pre-commit hook resolve the same set via the `lint-tools` package.
       # gnumake + awk + coreutils come from stdenv.  `lib.remove pkgs.texinfo` strips
       # the unpatched texinfo wherever it appears, then texinfoDet is added once - so
       # the only install-info on PATH is the deterministic one.
@@ -146,6 +146,14 @@ in
             cc
             binutils
             mig
+            # glibc's build tree - hurd-stubs' base (it reuses this glibc's build dir
+            # instead of reconfiguring).  Kept in the shell closure so the dev-shell's
+            # .gcroots/<variant><arch> profile PINS it (nothing else references it at
+            # runtime, so a `nix gc` would otherwise reap it and force a from-source
+            # glibc rebuild the next time hurd-stubs/push-cache needs it) AND so it
+            # rides the devShell's inputDerivation into push-cache.  Its top level is
+            # only `build/` (no bin/include/lib), so no setup-hook touches PATH/CFLAGS.
+            sysroot.buildtree
           ]
           ++ inferredBuildInputs
           # FROZEN (nixpkgs-toolchain): build tools the nix modules also use, so a
@@ -172,7 +180,6 @@ in
             fakeroot
             jq
           ])
-          ++ import ../lint/tools.nix pkgs
           # Sidekick-required Linux-only tools (localedef/abidiff/abidw/pahole/
           # grub-mkrescue + the directly-used xorriso/mtools/mke2fs).  On LINUX they
           # run natively; on DARWIN, where libabigail/pahole/grub2/glibc have no

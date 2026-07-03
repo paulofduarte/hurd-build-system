@@ -314,7 +314,20 @@
             }
           ) targets;
         in
-        shells // { default = shells.${crossToolchain.defaultTargetName system targets}; }
+        shells
+        // {
+          default = shells.${crossToolchain.defaultTargetName system targets};
+          # Lean lint/format shell: ONLY the pinned lint-tools (flakes/lint/tools.nix),
+          # no toolchain / qemu / buildtree.  These tools ride the BRANCH nixpkgs and
+          # churn on every `nix flake update`, so keeping them OUT of the build shells
+          # stops that churn from bloating push-cache (which no longer needs to subtract
+          # them).  `make lint`/`fmt` + the pre-commit hook resolve the SAME tools via
+          # the `lint-tools` package; this shell is for interactive `nix develop .#lint`.
+          # mkShellNoCC - linting needs no compiler.
+          lint = nixpkgs.legacyPackages.${system}.mkShellNoCC {
+            packages = [ pkgsFor.lint-tools ];
+          };
+        }
       );
 
       # packages.<system> and apps.<system> (`nix run .#<arch>`) - mostly defined
