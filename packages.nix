@@ -345,6 +345,24 @@ in
           ;
         srcInput = libpciaccess-dep-src;
       };
+      # hurd's libirqhelp as a standalone lib-only pre-pass (Guix-style),
+      # breaking the hurd <-> rumpkernel circular dep.  WORK pin (hurd-src),
+      # like the full hurd build: only the glibc -> cross-gcc chain is frozen;
+      # everything else tracks the work pins so in-tree hacking reaches its
+      # consumers (rumpkernel, libacpica).  See flakes/libirqhelp.
+      libirqhelp = import ./flakes/libirqhelp {
+        nixpkgs = nixpkgs-toolchain;
+        inherit
+          system
+          targets
+          mig
+          self
+          toolchainFor
+          buildRevToken
+          ;
+        srcInput = hurd-src;
+        inherit (hurdInfo) forkUrl;
+      };
 
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
@@ -372,6 +390,7 @@ in
     // hurd
     // zlib # zlib-<arch>: cross target zlib (rump-stack dep)
     // libpciaccess # libpciaccess-<arch>: pci-arbiter/acpi/rumpkernel dep
+    // libirqhelp # libirqhelp-<arch>: hurd lib pre-pass (rumpkernel/libacpica dep)
     // ownBinutils # cross-binutils-<arch>
     // ownGcc.bootstrap # bootstrap-gcc-<arch> (libc-free stage-1 cc)
     // glibc
