@@ -28,11 +28,15 @@ let
   inherit (nixpkgs) lib;
   buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
-  # Upstream version from zlib.h's ZLIB_VERSION define (pure eval).
+  # Upstream version from zlib.h's ZLIB_VERSION define (pure eval).  Matched
+  # over only the first 4KB (the define sits at byte ~1476): builtins.match is
+  # a recursive std::regex, and backtracking over the whole 100KB header can
+  # stack-overflow the Linux nix binary at eval time (it DID for libacpica's
+  # unbounded twin of this parse).
   version =
     let
       match = builtins.match ".*#define ZLIB_VERSION \"([0-9.]+)\".*" (
-        builtins.readFile (srcInput + "/zlib.h")
+        builtins.substring 0 4096 (builtins.readFile (srcInput + "/zlib.h"))
       );
     in
     if match == null then "unknown" else builtins.head match;

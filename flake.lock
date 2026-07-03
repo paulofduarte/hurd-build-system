@@ -121,6 +121,24 @@
         "url": "https://git.savannah.gnu.org/git/hurd/hurd.git"
       }
     },
+    "libacpica-dep-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783032626,
+        "narHash": "sha256-O7P3pMRUIRitLvRJ9j5w72wt0OTnJ9ue2ZI0vH40uIo=",
+        "ref": "master",
+        "rev": "d4c8339690a8dd8fa850387910a8e574c4f66d5e",
+        "revCount": 55,
+        "type": "git",
+        "url": "https://salsa.debian.org/hurd-team/libacpica.git"
+      },
+      "original": {
+        "ref": "master",
+        "rev": "d4c8339690a8dd8fa850387910a8e574c4f66d5e",
+        "type": "git",
+        "url": "https://salsa.debian.org/hurd-team/libacpica.git"
+      }
+    },
     "libpciaccess-dep-src": {
       "flake": false,
       "locked": {
@@ -232,6 +250,7 @@
         "gnumach-toolchain-src": "gnumach-toolchain-src",
         "hurd-src": "hurd-src",
         "hurd-toolchain-src": "hurd-toolchain-src",
+        "libacpica-dep-src": "libacpica-dep-src",
         "libpciaccess-dep-src": "libpciaccess-dep-src",
         "microvm": "microvm",
         "mig-src": "mig-src",

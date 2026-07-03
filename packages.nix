@@ -28,6 +28,7 @@
   glibc-toolchain-src,
   zlib-dep-src,
   libpciaccess-dep-src,
+  libacpica-dep-src,
   gnumach-src,
   mig-src,
   hurd-src,
@@ -363,6 +364,20 @@ in
         srcInput = hurd-src;
         inherit (hurdInfo) forkUrl;
       };
+      # Intel ACPICA as a library (Debian hurd-team repackaging) - the acpi
+      # translator's backend + rumpdisk boot-chain dep.  Links our cross
+      # libpciaccess + the libirqhelp pre-pass.  See flakes/libacpica.
+      libacpica = import ./flakes/libacpica {
+        nixpkgs = nixpkgs-toolchain;
+        inherit
+          system
+          targets
+          toolchainFor
+          libpciaccess
+          libirqhelp
+          ;
+        srcInput = libacpica-dep-src;
+      };
 
       # The Hurd userland (core servers + libraries), built with the
       # wrapped toolchain + mig + the ABI-gated glibc-hurd sysroot.
@@ -391,6 +406,7 @@ in
     // zlib # zlib-<arch>: cross target zlib (rump-stack dep)
     // libpciaccess # libpciaccess-<arch>: pci-arbiter/acpi/rumpkernel dep
     // libirqhelp # libirqhelp-<arch>: hurd lib pre-pass (rumpkernel/libacpica dep)
+    // libacpica # libacpica-<arch>: ACPICA library (acpi translator/rumpdisk chain dep)
     // ownBinutils # cross-binutils-<arch>
     // ownGcc.bootstrap # bootstrap-gcc-<arch> (libc-free stage-1 cc)
     // glibc

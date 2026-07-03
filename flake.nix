@@ -120,6 +120,19 @@
       url = "https://www.x.org/releases/individual/lib/libpciaccess-0.17.tar.xz";
       flake = false;
     };
+    # Intel ACPICA (20220331) repackaged as a library by the Debian Hurd team -
+    # the acpi translator's + rumpkernel chain's ACPI backend.  The salsa repo
+    # IS the source (ACPICA drivers/ + include/ subset, quilt patches with the
+    # Hurd glue incl. the whole Makefile).  Git pin like the gnumach/mig tags:
+    # explicit rev so the lock resolves offline; bump = edit the rev (tracks
+    # hurd-team master, which co-evolves with hurd master's acpi work).
+    libacpica-dep-src = {
+      type = "git";
+      url = "https://salsa.debian.org/hurd-team/libacpica.git";
+      ref = "master";
+      rev = "d4c8339690a8dd8fa850387910a8e574c4f66d5e";
+      flake = false;
+    };
 
     # Overridable ALIASES of the pins - what the Makefile's in-tree overrides
     # rebind (--override-input <m>-dev-src src/<m>).  Each tracks upstream
@@ -185,6 +198,7 @@
       gcc-toolchain-src,
       glibc-toolchain-src,
       zlib-dep-src,
+      libacpica-dep-src,
       libpciaccess-dep-src,
       gnumach-src,
       mig-src,
@@ -241,6 +255,7 @@
           gcc-toolchain-src
           glibc-toolchain-src
           zlib-dep-src
+          libacpica-dep-src
           libpciaccess-dep-src
           gnumach-src
           mig-src

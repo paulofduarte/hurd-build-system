@@ -29,6 +29,7 @@ Pinned in `flake.nix` (the `*-src` inputs) and built by the flakes under
 | GNU C Library (glibc) | sourceware.org/git/glibc | LGPL-2.1-or-later, with BSD/permissive portions (see glibc `LICENSES`) |
 | zlib | zlib.net (madler/zlib) | Zlib |
 | libpciaccess | gitlab.freedesktop.org/xorg/lib/libpciaccess | MIT/X11 |
+| libacpica (Intel ACPICA) | salsa.debian.org/hurd-team/libacpica (ACPICA 20220331 + Hurd glue) | GPL-2.0 / Intel BSD-style dual; glue GPL-2.0-or-later |
 
 GNU Mach contains files marked "version 2" with no "or later" clause, so the
 kernel as a whole is effectively GPL-2.0-only and cannot be relicensed to
