@@ -27,7 +27,18 @@ NIX_INSTALL_URL := https://nix.dev/install-nix
 # ============================================================
 
 # Tooling detection
-NIX := $(shell command -v nix 2>/dev/null)
+#
+# NIX_SYSTEM: build/eval FOR a non-native system (e.g. drive an x86_64 target from an
+# aarch64 host via Rosetta / nix `extra-platforms`) WITHOUT the `nix develop --system`
+# dance - which anyway doesn't reach child nix commands (proven: a child
+# `builtins.currentSystem` returns the native system).  `--system <X>` here sets the
+# `system` option on EVERY nix invocation (so builtins.currentSystem == X, the `.#<name>`
+# shorthand resolves under X, and builds target X).  Threaded via the base $(NIX) so all
+# of $(NIX)/$(NIX_FLAKE)/$(NIX_BUILD) inherit it; `nix-store` is system-agnostic and
+# stays untouched.  Empty => native.  Forwarded to the dispatched inner make below.
+NIX_SYSTEM ?=
+_NIX_SYSTEM_FLAG := $(if $(strip $(NIX_SYSTEM)),--system $(strip $(NIX_SYSTEM)))
+NIX := $(shell command -v nix 2>/dev/null) $(_NIX_SYSTEM_FLAG)
 
 # Enables nix-command + flakes per invocation so no global nix.conf is needed.
 # (ca-derivations dropped: the toolchain is input-addressed now - cachix can't serve
@@ -76,11 +87,27 @@ WORK          := $(PROJ)/work
 FLAKES        := $(PROJ)/flakes
 DIST_ROOT     := $(PROJ)/dist
 
-# Boolean-knob normalizer: $(call _bool,VALUE) -> "1" if truthy, "" if falsey
-# (empty/0/no/off/false, any case).  Needed because bare $(if)/ifdef treat ANY
-# non-empty string - incl. "0" - as true.  $(_lc) lowercases via tr.
-_lc   = $(shell printf %s '$(1)' | tr 'A-Z' 'a-z')
-_bool = $(if $(filter-out 0 no off false,$(call _lc,$(strip $(1)))),1)
+# Boolean-knob normalizer: $(call _bool,VALUE[,NAME]) -> "1" (truthy) or "" (falsy/empty).
+# Truthy: 1 y yes on true.  Falsy (and empty): 0 n no off false.  ANY OTHER value is a HARD
+# ERROR (naming NAME when given) - NOT a silent default-to-true (bare $(if)/ifdef would take
+# "0"/"no"/a typo alike as true).  $(_lc) lowercases via tr; the error names the bad value.
+_lc     = $(shell printf %s '$(1)' | tr 'A-Z' 'a-z')
+_truthy := 1 y yes on true
+_falsy  := 0 n no off false
+_bool  = $(call _boolv,$(strip $(1)),$(call _lc,$(strip $(1))),$(2))
+_boolv = $(if $(2),$(if $(filter $(2),$(_truthy)),1,$(if $(filter $(2),$(_falsy)),,$(error invalid boolean value$(if $(3), for $(3)): '$(1)' - accepted (any case): $(_truthy) / $(_falsy) / empty))),)
+
+# $(eval $(call _declare_bool,NAME[,DEFAULT])): declare a boolean knob (default DEFAULT,
+# blank if omitted) and normalize ANY value through _bool - so EVERY boolean flag accepts
+# the same truthy set (1/y/yes/on/true/...) and falsy set (0/n/no/off/false/empty, any
+# case), not just 0/1.  `override` beats a "0" passed on the command line ("0" is truthy to bare
+# $(if)); idempotent across the make dispatch (re-normalizing "1"/"" is a no-op).  NOT for
+# *_IN_TREE (empty == AUTO there, resolved by _detect_in_tree BEFORE _bool) nor value
+# knobs (RUN_KEEP_OVERLAY = integer overlay slot, ALT_BUILD = variant tag, RUN_ARGS).
+define _declare_bool
+$(1) ?= $(2)
+override $(1) := $$(call _bool,$$($(1)),$(1))
+endef
 
 # ---- Compilation cache (ccache) for the in-tree builds ----
 # The in-tree gnumach/hurd/mig builds are raw configure+make under work/ (NOT the
@@ -94,8 +121,7 @@ _bool = $(if $(filter-out 0 no off false,$(call _lc,$(strip $(1)))),1)
 # nix builds DON'T use ccache, the existing in-tree==nix identity check also proves
 # ccache leaks nothing.  Store = a gitignored dot-dir in the repo.  On by default;
 # disable with CCACHE=0.  (The nix-sandbox builds are a separate, future opt-in.)
-CCACHE        ?= 1
-override CCACHE := $(call _bool,$(CCACHE))
+$(eval $(call _declare_bool,CCACHE,1))
 CCACHE_DIR    := $(PROJ)/.ccache
 export CCACHE_DIR
 # Splice before a compiler in a recipe: $(CC_WRAP)$$CC -> "ccache <cc>" / "<cc>".
@@ -110,25 +136,38 @@ define _detect_in_tree
 ifeq ($$(origin $(1)),undefined)
 $(1) := $$(if $$(wildcard $(2)/.git),1)
 endif
-override $(1) := $$(call _bool,$$($(1)))
+override $(1) := $$(call _bool,$$($(1)),$(1))
 endef
 
-# MULTI_HOST_BUILDS (boolean) + ALT_BUILD (tag): optional path segments inserted
-# before the target arch in BOTH work/ and dist/, so builds sharing one checkout
-# don't collide.  Both off by default -> normal layout unchanged.
-#   MULTI_HOST_BUILDS : truthy splits per BUILD HOST (auto-resolved nix system),
-#                       for cross-host determinism testing where orb mounts the
-#                       same checkout over 9p.
-#   ALT_BUILD         : variant tag (e.g. nix / in-tree) to keep two configs'
-#                       trees side by side on ONE host.
-MULTI_HOST_BUILDS ?=
+# SPLIT_BY_NIX_SYSTEM (boolean) + ALT_BUILD (tag): optional path segments inserted before
+# the target arch in BOTH work/ and dist/, so builds that would otherwise share one tree
+# don't clobber each other.  It ONLY changes the output directory layout - it does not make
+# anything deterministic by itself.  Both off by default -> normal layout unchanged.
+#   SPLIT_BY_NIX_SYSTEM : truthy prefixes work//dist/ with the build's NIX SYSTEM
+#                         ($(NIX_SYSTEM) if set, else the host's, from uname).  Use when one
+#                         checkout is built for/on more than one system: several HOSTS
+#                         sharing it (orb 9p-mounts the mac's repo -> aarch64-darwin/ vs
+#                         aarch64-linux/), or one machine building native + a Rosetta sibling
+#                         (aarch64-darwin/ vs x86_64-darwin/ via NIX_SYSTEM).
+#   ALT_BUILD           : variant tag (e.g. nix / in-tree) to keep two configs' trees side
+#                         by side under ONE system.
+$(eval $(call _declare_bool,SPLIT_BY_NIX_SYSTEM))
 ALT_BUILD         ?=
-override MULTI_HOST_BUILDS := $(call _bool,$(MULTI_HOST_BUILDS))
-# Resolve the host's nix system tuple only when MULTI_HOST_BUILDS is on (lazy
-# $(shell) under the conditional).  From uname, no `nix eval`: arm64 -> aarch64;
-# uname -s lowercased is the OS half.
-ifneq ($(MULTI_HOST_BUILDS),)
-_HOST_SYSTEM := $(subst arm64,aarch64,$(shell uname -m))-$(shell uname -s | tr A-Z a-z)
+
+# The remaining boolean knobs, same _bool semantics.  RUN_* drive the `run` target (the
+# dispatch forwards the RESOLVED "1"/"" to the inner make + the flakes/run/ scripts, which
+# test = "1"); HEADER_DRIFT_WARN_ONLY downgrades the header-drift gate to a warning.
+# Declared here so they're normalized before first use.
+$(eval $(call _declare_bool,RUN_VANILLA))
+$(eval $(call _declare_bool,RUN_ACCEL))
+$(eval $(call _declare_bool,RUN_REFRESH))
+$(eval $(call _declare_bool,HEADER_DRIFT_WARN_ONLY))
+# Resolve the split's nix system only when SPLIT_BY_NIX_SYSTEM is on (lazy $(shell) under
+# the conditional): NIX_SYSTEM if set (building FOR a non-native target), else derived from
+# uname (arm64 -> aarch64; uname -s lowercased is the OS half) - no `nix eval`.  (_HOST_SYSTEM
+# keeps its name for the passthrough; it now holds the build's system, host or NIX_SYSTEM.)
+ifneq ($(SPLIT_BY_NIX_SYSTEM),)
+_HOST_SYSTEM := $(or $(strip $(NIX_SYSTEM)),$(subst arm64,aarch64,$(shell uname -m))-$(shell uname -s | tr A-Z a-z))
 endif
 # $(_VARIANT) = "<host-system>/<alt>/" infix (empty parts dropped), spliced before
 # $(ARCH)/$(_TC_ARCH) in every work + dist path, forwarded across the dispatch so
@@ -190,9 +229,12 @@ DIST_HURD_TREE_STAMP    := $(WORK)/dist-hurd-tree/$(_VARIANT)$(ARCH).stamp
 # (gcc runtime, tzdata) have no pinned commit, so they use the `nixpkgs` snapshot
 # date.  Parsed with jq; empty if flake.lock/jq absent -> mtime left as-is.
 _src_epoch      = $(shell jq -r '.nodes["$(1)"].locked.lastModified' flake.lock 2>/dev/null)
+# EPOCH_* stamp the dist mtimes; read the WORK source's lastModified (the source the
+# shipped/in-tree dist is actually built from).  glibc is toolchain-only (no work
+# -src), so its epoch reads the toolchain pin.
 EPOCH_GNUMACH    := $(call _src_epoch,gnumach-src)
 EPOCH_HURD    := $(call _src_epoch,hurd-src)
-EPOCH_GLIBC   := $(call _src_epoch,glibc-src)
+EPOCH_GLIBC   := $(call _src_epoch,glibc-toolchain-src)
 EPOCH_NIXPKGS := $(call _src_epoch,nixpkgs)
 
 # Wall-clock when this make started - the cut between "written by this build"
@@ -321,7 +363,7 @@ HURD_HDR_STAMP := $(HURD_HDR_BUILD)/.headers-installed
 # outside the dev shell would compile with empty maps/flags and silently diverge).
 _req_env = $(foreach v,$(1),[ -n "$($(v))" ] || { echo "ERROR: $(v) unset - build via the dev shell (make dispatches into nix develop)"; exit 1; }; )
 
-# glibc is nix-only (the gcc model): the pinned `glibc-src` flake input + patches in
+# glibc is nix-only (the gcc model): the pinned `glibc-toolchain-src` flake input + patches in
 # flakes/cross-toolchain/glibc.nix.  Version picking = edit the input in flake.nix.
 # No in-tree build; the toolchain (wrapped cc) always carries the nix glibc sysroot.
 # In-tree gnumach/hurd/mig changes still reach it: their scoped --override-input set
@@ -370,7 +412,7 @@ _FLAG.gnumach := GNUMACH_IN_TREE
 _FLAG.hurd    := HURD_IN_TREE
 # $(call _override1,MODULE): override <m>-src iff <M>_IN_TREE is truthy.  No
 # clone-existence test - a truthy flag with absent src/<m> is caught by _need_src below.
-_override1 = $(if $($(_FLAG.$(1))),--override-input $(1)-dev-src $(SRC)/$(1))
+_override1 = $(if $($(_FLAG.$(1))),--override-input $(1)-src $(SRC)/$(1))
 # $(call _overrides,TARGET): the scoped --override-input set for a nix TARGET.
 # When any module override is active, the build-rev input rides along: overriding
 # unmatches the lock and nix drops self's rev, so composeVersion needs the real
@@ -532,11 +574,14 @@ $(shell mkdir -p $(BUILD_REV_DIR) 2>/dev/null; [ "`cat $(BUILD_REV_DIR)/rev 2>/d
 define _bake_version
 	@$(call _nix_version,$(1),$(2)); \
 	echo "  STAMP-VERSION   $(2) = $$ver"; \
-	sed -E -i \
+	sed -E \
 	  -e "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION='$$ver'/" \
 	  -e "s/^VERSION=.*/VERSION='$$ver'/" \
 	  -e "s/^(PACKAGE_STRING='.*) [^ ']*'/\1 $$ver'/" \
-	  $(3)/configure
+	  $(3)/configure > $(3)/configure.vbake$$$$ && \
+	  chmod +x $(3)/configure.vbake$$$$ && \
+	  touch -r $(3)/configure $(3)/configure.vbake$$$$ && \
+	  mv -f $(3)/configure.vbake$$$$ $(3)/configure
 endef
 
 
@@ -568,7 +613,7 @@ help:
 	@echo "                   if opted in (make src-hurd), else the nix userland"
 	@echo "  mig              build MIG in-tree - opt-in for iterating on MIG (run 'make src-mig' first;"
 	@echo "                   otherwise a no-op, MIG is always available)"
-	@echo "  glibc            realize the nix glibc (nix-only; version = the glibc-src input"
+	@echo "  glibc            realize the nix glibc (nix-only; version = the glibc-toolchain-src input"
 	@echo "                   in flake.nix, patches in flakes/cross-toolchain/glibc.nix)"
 	@echo "  dist-glibc       install the nix deployable glibc into ./dist/$(ARCH)/"
 	@echo "  dist-gcc         install the gcc runtime libs into ./dist/$(ARCH)/lib"
@@ -593,6 +638,24 @@ help:
 	@echo "  clean            per-subdir 'make clean' - preserves configure state"
 	@echo "  clean-dist       rm -rf dist/$(ARCH)/ (just this target)"
 	@echo "  mrproper         rm -rf work/ + all dist/ + cached build links (src/ left intact)"
+	@echo ""
+	@echo "Knobs (VAR=value on the command line OR as an environment variable):"
+	@echo "  ARCH=<arch>              target: x86_64 (default), i686, x86_64-xen, i686-xen"
+	@echo "  NIX_SYSTEM=<system>      build/eval FOR a non-native host (e.g. x86_64-darwin from"
+	@echo "                           an aarch64 mac via Rosetta); empty = native"
+	@echo "  CCACHE=0                 disable the in-tree compile cache (default on)"
+	@echo "  MIG_IN_TREE= / GNUMACH_IN_TREE= / HURD_IN_TREE="
+	@echo "                           force the in-tree build on/off (default: AUTO - on iff"
+	@echo "                           src/<m> exists via 'make src-<m>'; =1 forces, =0 disables)"
+	@echo "  DIST_GCC_LIBS=\"lib ...\"  extra gcc runtime libs for dist-gcc (e.g. \"libstdc++\")"
+	@echo "  HEADER_DRIFT_WARN_ONLY=1 downgrade the header-drift gate from fail to a warning"
+	@echo "  SPLIT_BY_NIX_SYSTEM=1    prefix work/ + dist/ with the build's nix system, so"
+	@echo "                           builds for/on different systems (or hosts sharing one"
+	@echo "                           checkout) don't clobber each other's trees"
+	@echo "  ALT_BUILD=<tag>          variant tag to keep two configs' trees side by side"
+	@echo "  SCENARIO=<s> RUN_*=...   run-target knobs - see 'make run-help'"
+	@echo "  (booleans accept 1/y/yes/on/true and 0/n/no/off/false, ANY case; empty = off,"
+	@echo "   except *_IN_TREE where empty = auto)"
 	@if [ -z "$(NIX)" ]; then \
 	  echo ""; \
 	  echo "Warning: nix is not installed. Targets require it."; \
@@ -605,7 +668,7 @@ help:
 # preserving config.status + autoconf setup, so the next `make` skips ./configure.
 # $(MAKE) is whatever's in scope (macOS 3.81 / GNU 4.x); both handle `make clean`.
 clean:
-	@# The CURRENT variant's gnumach build (MULTI_HOST_BUILDS/ALT_BUILD-scoped);
+	@# The CURRENT variant's gnumach build (SPLIT_BY_NIX_SYSTEM/ALT_BUILD-scoped);
 	@# `mrproper` nukes every variant.
 	@if [ -f $(GNUMACH_BUILD)/Makefile ]; then \
 	  echo "  CLEAN  $(GNUMACH_BUILD)"; \
@@ -675,10 +738,20 @@ mrproper:
 # cached artifact at runtime: the lint-tools build closure (deadnix/statix/... -
 # branch-nixpkgs tools that churn with `nix flake update`, and whose darwin builds
 # Hydra lags on, so they'd otherwise leak un-substitutable), and the working
-# mig-<arch> (tracks the mig-dev-src pin, often master, so it would re-stale the
+# mig-<arch> (tracks the mig-src pin, often master, so it would re-stale the
 # cache on every pin bump for a marginal saving).  The cache stays toolchain-only.
 # `cachix push` skips already-cached paths, so re-pushes are cheap.  Mirrors a fresh
-# CI build, keeping local + CI caches consistent.  Single-target (use ARCH=...).
+# CI build, keeping local + CI caches consistent.  Single TARGET per run (ARCH=...).
+#
+# HOST system: the toolchain (cross-gcc/binutils/bootstrap) is INPUT-ADDRESSED, so its
+# store path differs PER HOST - an x86_64-host cross-gcc-x86_64 is NOT the aarch64-host
+# one.  The roots are fully-qualified `.#packages.<system>.<name>` (NOT the `.#<name>`
+# shorthand, which silently means the NATIVE host), where <system> is the resolved
+# builtins.currentSystem - which honours the global NIX_SYSTEM knob (the $(NIX) commands
+# carry `--system <NIX_SYSTEM>`).  So from ONE aarch64 machine (with the x86_64 sibling
+# in extra-platforms / Rosetta) you cache every host: `make push-cache ARCH=x86_64`
+# (native) AND `make push-cache ARCH=x86_64 NIX_SYSTEM=x86_64-darwin` (the emulated
+# sibling - built via Rosetta and pushed, so the x86_64 host pulls instead of rebuilding).
 # Requires `cachix authtoken <token>` once per host.  Top level - no dispatch.
 _CACHE_NAME := hurd-build-system
 
@@ -687,28 +760,21 @@ push-cache:
 	@command -v cachix >/dev/null 2>&1 || \
 	  { echo "push-cache: cachix not on PATH (install via home-manager or 'nix profile install nixpkgs#cachix')" >&2; exit 1; }
 	@system=$$($(NIX) eval --raw --impure --expr 'builtins.currentSystem' 2>/dev/null); \
-	roots=".#cross-gcc-$(_TC_ARCH) .#glibc-hurd-$(_TC_ARCH).buildtree .#devShells.$$system.$(ARCH).inputDerivation"; \
+	roots=".#packages.$$system.cross-gcc-$(_TC_ARCH) .#devShells.$$system.$(ARCH).inputDerivation"; \
 	: "sidekick guest (darwin's Linux-tool VM) is built on Linux CI so darwin can substitute it"; \
 	case "$$system" in *-linux) roots="$$roots .#packages.$$system.sidekick-guest";; esac; \
 	echo "==> Pushing build closure of toolchain + dev shell for $$system / $(ARCH) to '$(_CACHE_NAME)'"; \
 	echo "  realising $$roots"; \
-	$(NIX) --accept-flake-config build --no-link $$roots 2>/dev/null || \
+	$(NIX) --accept-flake-config build --no-link $$roots || \
 	  { echo "    build failed (is ARCH=$(ARCH) a valid flake output?)" >&2; exit 1; }; \
 	echo "  collecting build closure"; \
 	drvs=$$($(NIX) --accept-flake-config path-info --derivation $$roots) || \
 	  { echo "    could not resolve derivations" >&2; exit 1; }; \
 	echo "  pushing (built input-addressed outputs only; sources/flake-inputs/patches re-fetch from upstream)"; \
-	: "--include-outputs LISTS glibc's buildtree output (the hurd-stubs stub base), but cross-gcc only REALISES glibc's .out (its sysroot), never .buildtree; an unrealised .out-substituted glibc leaves .buildtree absent locally => unpushable, and 'make dist' would then rebuild glibc just to get it.  So realise .buildtree as its own root above (free when glibc builds from source, one build when .out is a cache hit)"; \
+	: "glibc's .buildtree (the hurd-stubs stub base) rides in via the devShell inputDerivation - dev-shell.nix lists sysroot.buildtree as a nativeBuildInput, so realising the shell realises it, --include-outputs lists it here for the push, and the shell's .gcroots/<variant><arch> profile PINS it locally (nothing else references it at runtime, so without that pin a 'nix gc' would reap it and 'make dist'/push-cache would rebuild glibc from source to regenerate it).  No dedicated .buildtree root needed."; \
 	closure=$$(nix-store --query --requisites --include-outputs $$drvs | grep -v '\.drv$$'); \
-	: "Compute the lint-tools BUILD closure (the deadnix/statix/nixfmt/shellcheck/... binaries AND their input-addressed cargo vendor dirs - deadnix's vendor is ca==null, so it survives the deriver-filter and leaked next to the bin) to SUBTRACT below.  These dev tools ride the BRANCH nixpkgs (dev-shell.nix imports flakes/lint/tools.nix from 'pkgs'), so a 'nix flake update' churns their hashes; until Hydra rebuilds each per system they aren't substitutable and leak into the push - deadnix on aarch64-darwin is the live example (its branch-rev hash isn't on cache.nixos.org; the same tool on linux is).  BUILD (not runtime) closure precisely to catch the vendor/staging paths.  GUARD: strip the kept artifact roots' runtime requisites first, so the drop can only ever remove lint-only paths - never something cross-gcc/glibc need (today the two sets are disjoint, so the guard removes nothing; it's insurance against branch drift).  Tolerant: any build/query failure leaves an empty subtraction file, dropping nothing (today's behaviour)."; \
-	$(NIX) --accept-flake-config build --no-link .#lint-tools 2>/dev/null || true; \
-	lintbuild=$$(mktemp); keptkeep=$$(mktemp); lintclosure=$$(mktemp); trap 'rm -f "$$lintbuild" "$$keptkeep" "$$lintclosure"' EXIT; \
-	lintdrv=$$($(NIX) --accept-flake-config path-info --derivation .#lint-tools 2>/dev/null); \
-	{ [ -n "$$lintdrv" ] && nix-store --query --requisites --include-outputs $$lintdrv 2>/dev/null | grep -v '\.drv$$' > "$$lintbuild"; } || : > "$$lintbuild"; \
-	keptpaths=$$($(NIX) --accept-flake-config path-info .#cross-gcc-$(_TC_ARCH) .#glibc-hurd-$(_TC_ARCH).buildtree 2>/dev/null); \
-	{ [ -n "$$keptpaths" ] && nix-store --query --requisites $$keptpaths 2>/dev/null > "$$keptkeep"; } || : > "$$keptkeep"; \
-	grep -vFf "$$keptkeep" "$$lintbuild" > "$$lintclosure" 2>/dev/null || cp "$$lintbuild" "$$lintclosure"; \
-	: "Keep ONLY genuinely-built artifacts: ca==null (input-addressed; drops content-addressed fetches) AND deriver!=null (built; drops flake-input sources such as glibc's unpacked tarball, which is ca==null with NO deriver - it must re-fetch from upstream, not bloat the cache by 250+MiB).  Then drop, by name, the build-time-only SEEDS/intermediates that NO pushed artifact references at runtime (so a grep is safe - cachix can't re-add them via a closure), costing a rebuild only for someone rebuilding the toolchain from scratch, which the cache exists to avoid: the dev-shell inputDerivation stub (its CLOSURE - the shell tools - is already listed); the project's gnumach/hurd -headers- (re-derived from the git pins; build-deps of glibc only - nixpkgs cups-headers etc. are runtime deps, matched precisely so they stay); and the bootstrap seeds bootstrap-mig + bootstrap-gcc (they build glibc, which is cached, so consumers never need them); and the working mig-<arch>-gnu - a dev-shell tool for in-tree 'make mach'/'make hurd', NOT a runtime dep of any cached artifact (glibc/cross-gcc use bootstrap-mig).  mig tracks the mig-dev-src pin (often master), so caching it would churn the cache on every pin bump for a marginal saving; consumers rebuild it (or pull the few stable revs cache.nixos.org never had anyway).  Only cross-gcc-<arch> stays from the post-glibc set.  NOTE: bootstrap-gcc is droppable only because glibc.nix canonicalises its path out of the buildtree (@GLIBC_CC@); without that the buildtree's runtime closure would re-add it here."; \
+	: "No lint-tools subtraction needed: the lint/format tools live in the lean '.#lint' shell (flake.nix), NOT the build devShells, so they no longer ride the shell's inputDerivation into this closure.  Nothing branch-nixpkgs (deadnix/statix/... whose hashes churn on 'nix flake update' and aren't on cache.nixos.org) to strip - the deriver-filter + cache.nixos.org drop below cover the rest."; \
+	: "Keep ONLY genuinely-built artifacts: ca==null (input-addressed; drops content-addressed fetches) AND deriver!=null (built; drops flake-input sources such as glibc's unpacked tarball, which is ca==null with NO deriver - it must re-fetch from upstream, not bloat the cache by 250+MiB).  Then drop, by name, the build-time-only SEEDS/intermediates that NO pushed artifact references at runtime (so a grep is safe - cachix can't re-add them via a closure), costing a rebuild only for someone rebuilding the toolchain from scratch, which the cache exists to avoid: the dev-shell inputDerivation stub (its CLOSURE - the shell tools - is already listed); the project's gnumach/hurd -headers- (re-derived from the git pins; build-deps of glibc only - nixpkgs cups-headers etc. are runtime deps, matched precisely so they stay); and the bootstrap seeds bootstrap-mig + bootstrap-gcc (they build glibc, which is cached, so consumers never need them); and the working mig-<arch>-gnu - a dev-shell tool for in-tree 'make mach'/'make hurd', NOT a runtime dep of any cached artifact (glibc/cross-gcc use bootstrap-mig).  mig tracks the mig-src pin (often master), so caching it would churn the cache on every pin bump for a marginal saving; consumers rebuild it (or pull the few stable revs cache.nixos.org never had anyway).  Only cross-gcc-<arch> stays from the post-glibc set.  NOTE: bootstrap-gcc is droppable only because glibc.nix canonicalises its path out of the buildtree (@GLIBC_CC@); without that the buildtree's runtime closure would re-add it here."; \
 	: "FINAL stage drops anything cache.nixos.org already serves - the stock nixpkgs build-deps the deriver-filter keeps (stdenv-linux et al.) plus the content-addressed setup-hooks in their closures (audit-tmpdir.sh leaked in purely via cachix re-expanding stdenv's closure).  Per-path probe because the batch path-info forms misreport presence; our custom artifacts (cross-gcc/glibc/buildtree/binutils + the deterministic-texinfo override) are NOT on cache.nixos.org so they stay - giving the SAME custom-only set on every host.  Fallback: if cache.nixos.org is unreachable every probe fails and the full set is pushed (today's behaviour)."; \
 	$(NIX) path-info --json --json-format 1 $$closure \
 	  | $(NIX) run --inputs-from . nixpkgs#jq -- -r 'if type=="array" then .[]|select(.ca==null and .deriver!=null)|.path else to_entries[]|select(.value.ca==null and .value.deriver!=null)|.key end' \
@@ -716,7 +782,6 @@ push-cache:
 	  | grep -vE -- '-(gnumach|hurd)-headers-' \
 	  | grep -vE -- '-bootstrap-(mig|gcc)-' \
 	  | grep -vE -- '-mig-[a-z0-9_]+-gnu-' \
-	  | grep -vFf "$$lintclosure" \
 	  | xargs -P16 -I{} sh -c '$(NIX) path-info --store https://cache.nixos.org/ "$$1" >/dev/null 2>&1 || printf "%s\n" "$$1"' _ {} \
 	  | cachix push $(_CACHE_NAME)
 	@echo "==> push-cache done"
@@ -767,7 +832,10 @@ ifneq ($(filter lint lint-% fmt fmt-% fmt-check fmt-check-% install-hooks,$(MAKE
   # exec ignores a makefile-exported PATH for the lookup.  _LB = the lint-tools/bin/
   # prefix (built once, cached); empty when the tools are already on PATH (dev shell),
   # where the bare name resolves.
-  ifeq ($(shell command -v nixfmt 2>/dev/null),)
+  # Probe the FULL tool set, not one proxy: a stray profile nixfmt (with none of
+  # the others) must still resolve _LB, and the build shells no longer carry the
+  # lint tools (they live in the lean `.#lint` shell / the lint-tools package).
+  ifeq ($(shell command -v nixfmt >/dev/null 2>&1 && command -v reuse >/dev/null 2>&1 && command -v statix >/dev/null 2>&1 && command -v deadnix >/dev/null 2>&1 && command -v shellcheck >/dev/null 2>&1 && command -v yamllint >/dev/null 2>&1 && command -v shfmt >/dev/null 2>&1 && command -v mdformat >/dev/null 2>&1 && command -v yamlfmt >/dev/null 2>&1 && command -v clang-format >/dev/null 2>&1 && echo all),)
     _LB := $(shell $(NIX_BUILD) --no-link --print-out-paths $(PROJ)\#lint-tools 2>/dev/null)/bin/
   endif
   _nopatch  = $(filter-out %/patches/% %.patch,$(1))
@@ -813,8 +881,8 @@ lint-cpp:
 lint-licenses:
 	@echo "  LINT   licenses (third-party *-src documented)"
 	@set -e; miss=; \
-	for n in $$(sed -nE 's/^[[:space:]]+([a-z0-9-]+-src) = \{.*/\1/p' flake.nix | grep -v -- '-dev-src'); do \
-	  grep -qi -- "$${n%-src}" THIRD-PARTY-LICENSES.md || miss="$$miss $$n"; \
+	for b in $$(sed -nE 's/^[[:space:]]+([a-z0-9-]+-src) = \{.*/\1/p' flake.nix | sed -E 's/-(toolchain-)?src$$//' | sort -u); do \
+	  grep -qi -- "$$b" THIRD-PARTY-LICENSES.md || miss="$$miss $$b"; \
 	done; \
 	[ -z "$$miss" ] || { echo "    FAIL: *-src component(s) missing from THIRD-PARTY-LICENSES.md:$$miss" >&2; \
 	  echo "    -> add a row documenting each upstream + its license" >&2; exit 1; }
@@ -876,7 +944,7 @@ endif
 # ---- glibc (nix-only; always-on, arch-independent) ----
 # glibc comes from the toolchain (wrapped cc's sysroot); `make glibc` realizes the
 # nix package - with the scoped overrides, so in-tree gnumach/hurd/mig changes
-# rebuild it (RPC stubs).  No in-tree glibc build: version picking = the glibc-src
+# rebuild it (RPC stubs).  No in-tree glibc build: version picking = the glibc-toolchain-src
 # input in flake.nix; patches live in flakes/cross-toolchain/glibc.nix.
 .PHONY: glibc
 glibc:
@@ -1104,14 +1172,19 @@ else
 .DEFAULT_GOAL := _dispatch
 .PHONY: _dispatch
 
-# Forward the parent make's flags to the inner make.  Can't use $(MAKEFLAGS): macOS's
-# GNU Make 3.81 doesn't expose `-j` there at all.  So read the parent's argv via `ps`
-# and filter option-like tokens (starting with `-`); goals + overrides pass separately.
+# Forward the parent make's parallelism/behaviour flags to the inner make (which runs
+# under `nix develop -i`, an isolated env that DROPS make's jobserver - so we must
+# re-pass an explicit -jN or the inner build goes serial).  Two sources, unioned:
+#   - $(MAKEFLAGS): on modern GNU Make (4.x - the nix/Linux make) this exposes `-j` from
+#     BOTH the command line AND the `MAKEFLAGS` env var, so `MAKEFLAGS=-j12 make` works.
+#   - the parent's argv via `ps`: macOS's ancient GNU Make 3.81 does NOT expose `-j` in
+#     MAKEFLAGS at all, so scrape the command line as a fallback (catches cmdline -j only;
+#     the env-var form can't work on 3.81 - use a newer make or pass -j on the cmdline).
+# Whitelist real make flags (a bare `-%` filter would also catch a wrapper's -f, terms of
+# a compound command, or make's own --jobserver-auth); goals + overrides pass separately.
+# sort dedups when both sources carry the same -j.
 _PARENT_ARGV  := $(shell ps -p $$PPID -o args= 2>/dev/null)
-# Whitelist, not every dash token: the argv can contain option-like words that
-# are NOT make flags (a -f from a wrapper script, terms of a compound command);
-# forward only the flags worth propagating into the inner make.
-_PARENT_FLAGS := $(filter -j -j% -k -l% -n -q -s -B,$(filter -%,$(_PARENT_ARGV)))
+_PARENT_FLAGS := $(sort $(filter -j -j% -k -l% -n -q -s -B,$(filter -%,$(_PARENT_ARGV)) $(MAKEFLAGS)))
 
 # Two things about the recipe below:
 #   - bare `make` (not $(MAKE)) inside the shell resolves via PATH to the nix-provided
@@ -1162,7 +1235,9 @@ _DIST_PASSTHROUGH := \
   MIG_IN_TREE=$(MIG_IN_TREE) \
   GNUMACH_IN_TREE=$(GNUMACH_IN_TREE) \
   HURD_IN_TREE=$(HURD_IN_TREE) \
-  HEADER_DRIFT_WARN_ONLY=$(HEADER_DRIFT_WARN_ONLY)
+  HEADER_DRIFT_WARN_ONLY=$(HEADER_DRIFT_WARN_ONLY) \
+  NIX_SYSTEM=$(NIX_SYSTEM) \
+  CCACHE=$(CCACHE)
 # _HOST_SYSTEM + ALT_BUILD: forward the variant infix's inputs so the inner make
 # computes the SAME work/ paths.  Forwarding the RESOLVED _HOST_SYSTEM means the inner
 # needn't re-run `nix eval` and can't disagree.  The *_IN_TREE flags: forward the
@@ -1219,7 +1294,7 @@ all: gnumach hurd
 # only its slice of the shared $(DIST_STAGE) via $(call _dist_finalize,...); then
 # dist-split (LAST - it reads the finished staging tree) classifies it into the
 # deployable $(DIST)/{runtime,dev,doc,dbg} trees.
-dist: dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-split
+dist: dist-glibc dist-gnumach dist-hurd dist-gcc dist-tzdata dist-split
 
 # Serialize dist's components under `make -j` - they contend on a shared resource
 # and otherwise corrupt each other:
@@ -1247,14 +1322,39 @@ _tracked_files = $(addprefix $(1)/,$(shell cd $(1) 2>/dev/null && git ls-files))
 _MACH_HDR_SRC := $(filter %.h %.defs,$(call _tracked_files,$(GNUMACH_SRC)))
 _HURD_HDR_SRC := $(filter %.h %.defs,$(call _tracked_files,$(HURD_SRC)))
 
-# `autoreconf -i` (no -f): install missing aux files and regenerate ONLY when inputs
-# are newer than outputs, so `configure`'s mtime stays stable and the downstream
-# ./configure chain doesn't fire spuriously (-fi would touch every output).  Run on
-# demand.  (_bake_version then stamps the rich build-rev version into the
-# freshly-generated configure, matching the nix artefacts.)
-$(GNUMACH_SRC)/configure: $(GNUMACH_SRC)/configure.ac $(GNUMACH_SRC)/version.m4 $(VERSION_FP_STAMP)
+# The TRACKED autoconf/automake inputs whose edits genuinely require re-running
+# `autoreconf` (configure.ac, version.m4, every Makefile.am/Makefrag.am, any m4 macro).
+# Generated aux (configure, aclocal.m4) is untracked upstream, so git ls-files omits it -
+# no self-trigger.  These are the ONLY prereqs of `$(SRC)/configure`; the version-fp
+# sentinel drives the SEPARATE _bake_version stamp, so a mrproper (which wipes work/ and
+# thus VERSION_FP_STAMP, bumping its mtime) no longer spuriously re-fires autoreconf.
+_GNUMACH_AC_SRC := $(filter %.ac %.am %.m4,$(call _tracked_files,$(GNUMACH_SRC)))
+_HURD_AC_SRC    := $(filter %.ac %.am %.m4,$(call _tracked_files,$(HURD_SRC)))
+_MIG_AC_SRC     := $(filter %.ac %.am %.m4,$(call _tracked_files,$(MIG_SRC)))
+
+# Per-module "version has been baked into the generated configure" stamps.  Split out
+# of the configure rule so a version-fp change (a repo commit / dirty-flag flip) re-bakes
+# WITHOUT re-running autoreconf; the build-configure consumers depend on THIS, the header
+# configures stay on the raw (version-independent) `configure`.  Under work/ (mrproper
+# re-establishes them via the cheap idempotent sed - _bake_version is mtime-preserving,
+# so re-baking never bumps configure's mtime into the header->sysroot->glibc cascade).
+GNUMACH_VERSION_STAMP := $(WORK)/version-baked/gnumach.stamp
+HURD_VERSION_STAMP    := $(WORK)/version-baked/hurd.stamp
+MIG_VERSION_STAMP     := $(WORK)/version-baked/mig.stamp
+
+# `autoreconf -i` (no -f): install missing aux files and regenerate ONLY when the tracked
+# autoconf/automake inputs ($(_*_AC_SRC): configure.ac, version.m4, *.am, m4 macros) are
+# newer than `configure`, so its mtime stays stable and the downstream ./configure chain
+# doesn't fire spuriously (-fi would touch every output).  The version bake is a SEPARATE
+# stamp ($(*_VERSION_STAMP)) keyed on the version-fp sentinel - so a mrproper (which wipes
+# work/ and re-touches VERSION_FP_STAMP) or a repo commit re-bakes the version WITHOUT
+# re-running autoreconf.  Mirrored for hurd + mig below.
+$(GNUMACH_SRC)/configure: $(_GNUMACH_AC_SRC)
 	cd $(GNUMACH_SRC) && autoreconf -i
+
+$(GNUMACH_VERSION_STAMP): $(GNUMACH_SRC)/configure $(VERSION_FP_STAMP)
 	$(call _bake_version,gnumach,gnumach-$(ARCH),$(GNUMACH_SRC))
+	@mkdir -p $(dir $@) && touch $@
 
 # ---- gnumach-headers (private: populates the build sysroot for in-tree mig) ----
 # Install the public Mach headers into the build-only sysroot via gnumach's `make
@@ -1361,7 +1461,7 @@ MIG_SRC_FILES := $(call _tracked_files,$(MIG_SRC))
 # tracked src/hurd edit makes $(HURD_BUILD)/.built stale -> inner make re-runs.
 HURD_SRC_FILES := $(call _tracked_files,$(HURD_SRC))
 ifdef MIG_IN_TREE
-$(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES) $(if $(call _fp_stale,mig),_FORCE)
+$(LOCAL_MIG): $(MIG_VERSION_STAMP) $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES) $(if $(call _fp_stale,mig),_FORCE)
 	@$(call _env_clean,mig,$(MIG_BUILD) $(MIG_INSTALL_DIR))
 	@mkdir -p $(MIG_BUILD)
 	@# MIG is a *native* host tool - runs on the build host, emits portable
@@ -1383,9 +1483,12 @@ $(LOCAL_MIG): $(MIG_SRC)/configure $(GNUMACH_HDR_STAMP) $(MIG_SRC_FILES) $(if $(
 	cd $(MIG_BUILD) && $(MAKE) CC="$(CC_WRAP)gcc" install
 	@$(call _fp_write,mig)
 
-$(MIG_SRC)/configure: $(MIG_SRC)/configure.ac $(VERSION_FP_STAMP)
+$(MIG_SRC)/configure: $(_MIG_AC_SRC)
 	cd $(MIG_SRC) && autoreconf -i
+
+$(MIG_VERSION_STAMP): $(MIG_SRC)/configure $(VERSION_FP_STAMP)
 	$(call _bake_version,mig,mig-$(_TC_ARCH),$(MIG_SRC))
+	@mkdir -p $(dir $@) && touch $@
 endif
 
 
@@ -1414,9 +1517,21 @@ _assert_file = ls $(1) >/dev/null || { echo "ERROR: $(2) missing"; exit 1; }
 # (its output is mtime-normalised by _dist_finalize, so it can't be the mark).  Touched
 # on EVERY run, copy or skip, so a confirmed-current dist out-dates its src.
 _dist_done   = mkdir -p $(dir $(1)) && touch $(1)
+# $(call _unstage_footprint,MANIFEST,DEST): self-healing staging.  The shared
+# $(DIST_STAGE) is populated by OVERLAY copies/installs, so a component that changes
+# its install LAYOUT (e.g. /include -> /usr/include) or its in-tree-vs-nix output would
+# STRAND its old-path files - overlay never deletes.  Each staging writer records the
+# set of paths it owns in a per-component manifest (<stamp>.mf) and, before repopulating,
+# deletes that PREVIOUS footprint here so moved/removed files can't linger.  rmdir -p
+# prunes the emptied ancestor dirs (stops at non-empty, so other components' dirs are
+# untouched).  The multi-component Info `dir` menu is never a footprint member (excluded).
+# A single-line var (not a define) so it expands INLINE inside _dist_nix_copy's shell
+# block; no-op when the manifest is absent (first run).  Generalises dist-tzdata's
+# long-standing `rm -rf zoneinfo`-before-copy self-clean to non-subtree footprints.
+_unstage_footprint = if [ -f "$(1)" ]; then while IFS= read -r _rel; do case "$$_rel" in usr/share/info/dir|share/info/dir) continue ;; esac; rm -f "$(2)/$$_rel" 2>/dev/null || true; _d="$(2)/$$(dirname "$$_rel")"; while [ "$$_d" != "$(2)" ] && rmdir "$$_d" 2>/dev/null; do _d="$$(dirname "$$_d")"; done; done < "$(1)"; fi
 # $(call _dist_nix_copy,target,DEST,attr,STAMP,keyfile,infofile): resolve the nix
 # package (with <target>'s scoped overrides), copy its tree into DEST (skip if the
-# store path is unchanged), preserve share/info/dir, re-register <infofile>, stamp,
+# store path is unchanged), preserve usr/share/info/dir, re-register <infofile>, stamp,
 # assert <keyfile>.  Per-module post-checks + _dist_finalize go in the caller.
 define _dist_nix_copy
 	@mkdir -p $(dir $(2)/$(5)) $(dir $(4)); \
@@ -1427,11 +1542,13 @@ define _dist_nix_copy
 	  echo "  unchanged ($$(basename $$pkg)) - skip copy"; \
 	else \
 	  echo "  copying $$pkg -> $(2)"; \
-	  acc=$$(mktemp); cp -a $(2)/share/info/dir "$$acc" 2>/dev/null || acc=; \
+	  $(call _unstage_footprint,$(4).mf,$(2)); \
+	  acc=$$(mktemp); cp -a $(2)/usr/share/info/dir "$$acc" 2>/dev/null || acc=; \
 	  cp -a $$pkg/. $(2); \
 	  $(call _make_writable,$(2)); \
-	  if [ -n "$$acc" ]; then cp -a "$$acc" $(2)/share/info/dir; rm -f "$$acc"; else rm -f $(2)/share/info/dir; fi; \
-	  [ -e $(2)/share/info/$(6) ] && install-info --quiet --info-dir=$(2)/share/info $(2)/share/info/$(6) || true; \
+	  if [ -n "$$acc" ]; then cp -a "$$acc" $(2)/usr/share/info/dir; rm -f "$$acc"; else rm -f $(2)/usr/share/info/dir; fi; \
+	  [ -e $(2)/usr/share/info/$(6) ] && install-info --quiet --info-dir=$(2)/usr/share/info $(2)/usr/share/info/$(6) || true; \
+	  ( cd $$pkg && find . \( -type f -o -type l \) | sed 's|^\./||' ) | LC_ALL=C sort > $(4).mf; \
 	  printf '%s' "$$pkg" > $(4); \
 	fi; \
 	$(call _fp_write,$(1)); \
@@ -1551,7 +1668,7 @@ dist-glibc: $(DIST_GLIBC_STAMP)
 # (every file the old explicit prereq lists named, and more), so the _FORCE
 # conditional is the single staleness source for the fp-covered stamp rules.
 $(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
-	$(call _dist_nix_copy,dist-glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_STAMP),lib/libc.so.0.3,libc.info)
+	$(call _dist_nix_copy,dist-glibc,$(DIST_GLIBC),glibc-hurd-$(_TC_ARCH),$(DIST_GLIBC_STAMP),usr/lib/libc.so.0.3,libc.info)
 	@# Overlay the FLOATING RPC stubs (hurd-stubs, alias headers) over glibc's pin
 	@# ones, so the deployable carries the in-tree RPC surface the userland linked
 	@# against.  Runs whenever dist-glibc runs; the fp (gnumach/hurd/mig deps)
@@ -1559,10 +1676,26 @@ $(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
 	@# off the matrix clones, so a no-override dist is byte-identical either way.)
 	@set -e; \
 	stubs=$$($(NIX_BUILD) $(call _overrides,dist-glibc) $(PROJ)\#hurd-stubs-$(_TC_ARCH) --no-link --print-out-paths); \
-	cp -a $$stubs/lib/libmachuser.* $$stubs/lib/libhurduser.* $(DIST_GLIBC)/lib/; \
-	$(call _make_writable,$(DIST_GLIBC)/lib)
-	@grep -q libmachuser $(DIST_GLIBC)/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
-	@$(call _assert_file,$(DIST_GLIBC)/lib/libmachuser.so.1,libmachuser.so.1)
+	cp -a $$stubs/lib/libmachuser.* $$stubs/lib/libhurduser.* $(DIST_GLIBC)/usr/lib/; \
+	$(call _make_writable,$(DIST_GLIBC)/usr/lib)
+	@# Ship glibc's OWN headers only.  glibc merges the gnumach + hurd headers into its
+	@# /usr/include to satisfy gcc's --with-sysroot; but in the dist those namespaces are
+	@# owned by dist-gnumach/dist-hurd (the WORK sources), like libc6-dev vs linux-libc-dev
+	@# on Linux.  So prune exactly what glibc merged (diffed against the header inputs -
+	@# not a hardcoded namespace list), and dist ships glibc-only here.  dist runs glibc
+	@# FIRST (see the `dist:` order + the order-only deps on dist-gnumach/dist-hurd), so
+	@# their work headers land on the pruned tree - and a header deleted upstream never
+	@# lingers, since the owning package is the sole source.
+	@set -e; \
+	gnh=$$($(NIX_BUILD) $(call _overrides,gnumach-headers) $(PROJ)\#gnumach-headers-$(ARCH) --no-link --print-out-paths); \
+	hdh=$$($(NIX_BUILD) $(call _overrides,hurd-headers) $(PROJ)\#hurd-headers-$(_TC_ARCH) --no-link --print-out-paths); \
+	for hp in "$$gnh" "$$hdh"; do \
+	  ( cd "$$hp/usr/include" && find . \( -type f -o -type l \) -print ) \
+	    | while IFS= read -r f; do rm -f "$(DIST_GLIBC)/usr/include/$$f"; done; \
+	done; \
+	find $(DIST_GLIBC)/usr/include -type d -empty -delete 2>/dev/null || true
+	@grep -q libmachuser $(DIST_GLIBC)/usr/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
+	@$(call _assert_file,$(DIST_GLIBC)/usr/lib/libmachuser.so.1,libmachuser.so.1)
 	@# Gate the pin glibc against the in-tree (alias) RPC surface it ships alongside:
 	@# header-surface drift (gnumach/hurd) + mig codegen drift (in-tree mig).
 	$(call _header_drift)
@@ -1598,35 +1731,40 @@ _RT_SHIP_BASE  = $(foreach l,$(DIST_GCC_SHIP),$(basename $(basename $(_RT_SO.$(l
 _RT_SHIP_SONAME = $(foreach l,$(DIST_GCC_SHIP),$(_RT_SO.$(l)))
 
 $(DIST_GCC_STAMP): $(if $(call _fp_stale,dist-gcc),_FORCE)
-	@mkdir -p $(DIST_STAGE)/lib $(dir $@)
+	@mkdir -p $(DIST_STAGE)/usr/lib $(dir $@)
 	@echo "  DIST-GCC     resolving nix cross-gcc-$(_TC_ARCH)..."
 	@set -e; \
 	out=$$($(NIX_BUILD) $(call _overrides,dist-gcc) $(PROJ)\#cross-gcc-$(_TC_ARCH) --no-link --print-out-paths); \
 	libdir=$$out/$(_TC_ARCH)-gnu/lib64; [ -e $$libdir/$(_RT_SO.libgcc) ] || libdir=$$out/$(_TC_ARCH)-gnu/lib; \
-	if $(call _stamp_skip,$@,$$out $(sort $(DIST_GCC_SHIP)),$(DIST_STAGE)/lib/$(_RT_SO.libgcc)); then \
+	if $(call _stamp_skip,$@,$$out $(sort $(DIST_GCC_SHIP)),$(DIST_STAGE)/usr/lib/$(_RT_SO.libgcc)); then \
 	  echo "  unchanged - skip copy"; \
 	else \
+	  $(call _unstage_footprint,$@.mf,$(DIST_STAGE)); \
+	  find $(DIST_STAGE) \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort > $@.pre; \
 	  for b in $(_RT_SHIP_BASE); do \
 	    for f in $$libdir/$$b.so*; do \
 	      case "$$f" in *-gdb.py) continue;; esac; \
-	      cp -a "$$f" $(DIST_STAGE)/lib/; \
+	      cp -a "$$f" $(DIST_STAGE)/usr/lib/; \
 	    done; \
 	  done; \
-	  $(call _make_writable,$(DIST_STAGE)/lib); \
-	  echo "  shipped: $(DIST_GCC_SHIP) -> $(DIST_STAGE)/lib"; \
-	  mkdir -p $(DIST_STAGE)/share/info; \
+	  $(call _make_writable,$(DIST_STAGE)/usr/lib); \
+	  echo "  shipped: $(DIST_GCC_SHIP) -> $(DIST_STAGE)/usr/lib"; \
+	  mkdir -p $(DIST_STAGE)/usr/share/info; \
 	  for l in $(DIST_GCC_SHIP); do \
-	    cp -L $$out/share/info/$$l.info* $(DIST_STAGE)/share/info/ 2>/dev/null || true; \
+	    cp -L $$out/share/info/$$l.info* $(DIST_STAGE)/usr/share/info/ 2>/dev/null || true; \
 	  done; \
-	  $(call _make_writable,$(DIST_STAGE)/share/info); \
-	  for inf in $(DIST_STAGE)/share/info/*.info; do \
-	    [ -e "$$inf" ] && install-info --quiet --info-dir=$(DIST_STAGE)/share/info "$$inf" || true; \
+	  $(call _make_writable,$(DIST_STAGE)/usr/share/info); \
+	  for inf in $(DIST_STAGE)/usr/share/info/*.info; do \
+	    [ -e "$$inf" ] && install-info --quiet --info-dir=$(DIST_STAGE)/usr/share/info "$$inf" || true; \
 	  done; \
+	  find $(DIST_STAGE) \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort > $@.post; \
+	  LC_ALL=C comm -13 $@.pre $@.post | sed 's|^$(DIST_STAGE)/||' > $@.mf; \
+	  rm -f $@.pre $@.post; \
 	  printf '%s' "$$out $(sort $(DIST_GCC_SHIP))" > $@; \
 	fi
 	@$(call _fp_write,dist-gcc)
 	@$(call _dist_done,$@)
-	@$(foreach so,$(_RT_SHIP_SONAME),$(call _assert_file,$(DIST_STAGE)/lib/$(so),$(so));)
+	@$(foreach so,$(_RT_SHIP_SONAME),$(call _assert_file,$(DIST_STAGE)/usr/lib/$(so),$(so));)
 	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
 
 # ---- dist-tzdata ----
@@ -1639,21 +1777,21 @@ $(DIST_GCC_STAMP): $(if $(call _fp_stale,dist-gcc),_FORCE)
 dist-tzdata: $(DIST_TZDATA_STAMP)
 
 $(DIST_TZDATA_STAMP): flake.lock
-	@mkdir -p $(DIST_STAGE)/share $(DIST_STAGE)/etc $(dir $(DIST_TZDATA_STAMP))
+	@mkdir -p $(DIST_STAGE)/usr/share $(DIST_STAGE)/etc $(dir $(DIST_TZDATA_STAMP))
 	@echo "  DIST-TZDATA  resolving nix tzdata..."
 	@set -e; \
 	tz=$$($(NIX_BUILD) $(PROJ)\#tzdata^out --no-link --print-out-paths); \
-	if $(call _stamp_skip,$(DIST_TZDATA_STAMP),$$tz,$(DIST_STAGE)/share/zoneinfo/UTC); then \
+	if $(call _stamp_skip,$(DIST_TZDATA_STAMP),$$tz,$(DIST_STAGE)/usr/share/zoneinfo/UTC); then \
 	  echo "  unchanged ($$(basename $$tz)) - skip copy"; \
 	else \
-	  echo "  copying zoneinfo ($$(find $$tz/share/zoneinfo -type f | grep -c .) files) -> $(DIST_STAGE)/share/zoneinfo"; \
-	  rm -rf $(DIST_STAGE)/share/zoneinfo; \
-	  cp -a $$tz/share/zoneinfo $(DIST_STAGE)/share/zoneinfo; \
-	  ln -sfn /share/zoneinfo/UTC $(DIST_STAGE)/etc/localtime; \
+	  echo "  copying zoneinfo ($$(find $$tz/share/zoneinfo -type f | grep -c .) files) -> $(DIST_STAGE)/usr/share/zoneinfo"; \
+	  rm -rf $(DIST_STAGE)/usr/share/zoneinfo; \
+	  cp -a $$tz/share/zoneinfo $(DIST_STAGE)/usr/share/zoneinfo; \
+	  ln -sfn /usr/share/zoneinfo/UTC $(DIST_STAGE)/etc/localtime; \
 	  printf '%s' "$$tz" > $(DIST_TZDATA_STAMP); \
 	fi
 	@$(call _dist_done,$(DIST_TZDATA_STAMP))
-	@$(call _assert_file,$(DIST_STAGE)/share/zoneinfo/UTC,zoneinfo/UTC)
+	@$(call _assert_file,$(DIST_STAGE)/usr/share/zoneinfo/UTC,zoneinfo/UTC)
 	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
 
 # ---- dist-split (classify the staging tree into deployable trees) ----
@@ -1661,7 +1799,10 @@ $(DIST_TZDATA_STAMP): flake.lock
 # $(DIST)/{runtime,dev,doc,dbg} per the rule table in
 # .claude/docs/build/DIST-SPLIT-DESIGN.md.  runtime is the DEFAULT (a full clone
 # minus what dev/doc claim); each runtime ELF is stripped with its debug split into
-# dbg via --add-gnu-debuglink.  Determinism: the clone preserves staging's finalised
+# dbg via --add-gnu-debuglink.  The .debug lands under dbg/usr/lib/debug/<rel>.debug -
+# gdb's default debug-file-directory (/usr/lib/debug) with the binary's install path
+# mirrored under it, so the basename debuglink resolves; matches Debian's dbgsym layout
+# and the usr-merge (/lib -> /usr/lib), not a real top-level /lib/debug.  Determinism: the clone preserves staging's finalised
 # mtimes; stripped ELFs + their .debug are touch'd back to the source ELF's mtime;
 # strip/objcopy + the basename debuglink carry no host path.  Each ELF is first
 # DE-HARDLINKED (cp+rename when its link count > 1) so its per-path debuglink is a
@@ -1689,20 +1830,20 @@ $(DIST_SPLIT_STAMP): $(DIST_GLIBC_STAMP) $(DIST_GCC_STAMP) $(DIST_TZDATA_STAMP) 
 	stage=$(DIST_STAGE); rt=$(DIST)/runtime; dev=$(DIST)/dev; doc=$(DIST)/doc; dbg=$(DIST)/dbg; \
 	rm -rf "$$rt" "$$dev" "$$doc" "$$dbg"; mkdir -p "$$rt" "$$dev" "$$doc" "$$dbg"; \
 	cp -a "$$stage"/. "$$rt"/; \
-	if [ -d "$$rt/include" ]; then mv "$$rt/include" "$$dev"/; fi; \
-	if [ -d "$$rt/lib" ]; then mkdir -p "$$dev/lib"; \
-	  for f in "$$rt"/lib/*.a "$$rt"/lib/*.o; do [ -e "$$f" ] || continue; mv "$$f" "$$dev/lib"/; done; \
-	  for f in "$$rt"/lib/*.so; do { [ -e "$$f" ] || [ -L "$$f" ]; } || continue; \
+	if [ -d "$$rt/usr/include" ]; then mkdir -p "$$dev/usr"; mv "$$rt/usr/include" "$$dev/usr"/; fi; \
+	if [ -d "$$rt/usr/lib" ]; then mkdir -p "$$dev/usr/lib"; \
+	  for f in "$$rt"/usr/lib/*.a "$$rt"/usr/lib/*.o; do [ -e "$$f" ] || continue; mv "$$f" "$$dev/usr/lib"/; done; \
+	  for f in "$$rt"/usr/lib/*.so; do { [ -e "$$f" ] || [ -L "$$f" ]; } || continue; \
 	    case "$$(basename "$$f")" in ld.so|ld-*.so) continue;; esac; \
-	    mv "$$f" "$$dev/lib"/; done; \
+	    mv "$$f" "$$dev/usr/lib"/; done; \
 	fi; \
-	for d in info man doc; do if [ -e "$$rt/share/$$d" ]; then mkdir -p "$$doc/share"; mv "$$rt/share/$$d" "$$doc/share"/; fi; done; \
+	for d in info man doc; do if [ -e "$$rt/usr/share/$$d" ]; then mkdir -p "$$doc/usr/share"; mv "$$rt/usr/share/$$d" "$$doc/usr/share"/; fi; done; \
 	list=$$(mktemp); find "$$rt" -type f | LC_ALL=C sort > "$$list"; \
 	while IFS= read -r f; do \
 	  [ "$$(od -An -tx1 -N4 "$$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] || continue; \
 	  if [ "$$(stat -c %h "$$f")" -gt 1 ]; then cp -p "$$f" "$$f.dh" && mv -f "$$f.dh" "$$f"; fi; \
 	  rel=$${f#$$rt/}; mt=$$(stat -c %Y "$$f"); \
-	  dfile="$$dbg/lib/debug/$$rel.debug"; mkdir -p "$$(dirname "$$dfile")"; \
+	  dfile="$$dbg/usr/lib/debug/$$rel.debug"; mkdir -p "$$(dirname "$$dfile")"; \
 	  $(OBJCOPY) --only-keep-debug "$$f" "$$dfile"; \
 	  $(STRIP) --strip-unneeded "$$f"; \
 	  $(OBJCOPY) --add-gnu-debuglink="$$dfile" "$$f"; \
@@ -1722,23 +1863,31 @@ $(DIST_SPLIT_STAMP): $(DIST_GLIBC_STAMP) $(DIST_GCC_STAMP) $(DIST_TZDATA_STAMP) 
 # by runtime's ld.so->ld.so.1 symlink; x86_64 emits /lib/ld-x86-64.so.1 directly) -
 # we just require it to resolve under the overlay.  Per-$(ARCH); needs the dev shell.
 #
-# The overlay is a HARDLINK farm (cp -al), NOT a symlink farm: GNU ld only sysroot-
-# prefixes the absolute /lib paths inside the libc.so GROUP script when it loaded
-# that script from WITHIN the sysroot.  A symlink would point the script's real path
-# back into dist/dev (outside the overlay), so ld would skip the prefixing and look
-# for a literal /lib/libc.so.0.3 - hardlinks keep the entry genuinely inside the
-# overlay with no data copy.  dist/ + work/ share a filesystem, so the links hold.
-SYSROOT_OVERLAY := $(WORK)/sysroot/$(_VARIANT)$(ARCH)
+# The overlay is a real merge (cp -a --reflink=auto), NOT a symlink farm: GNU ld only
+# sysroot-prefixes the absolute /lib paths inside the libc.so GROUP script when it
+# loaded that script from WITHIN the sysroot.  A symlink would point the script's real
+# path back into dist/dev (outside the overlay), so ld would skip the prefixing and
+# look for a literal /lib/libc.so.0.3 - a copy keeps the entry genuinely inside the
+# overlay.  --reflink=auto makes it a CoW clone (no data copy) on APFS/btrfs and a plain
+# copy elsewhere.  We do NOT `cp -al`: the dist is now full of symlinks (usr-merge
+# bin/sbin/libexec, ld.so, etc/localtime, zoneinfo), and hardlinking a symlink fails
+# with ENOENT on virtiofs mounts (the OrbStack-mounted repo under Linux) - link() there
+# refuses symlink targets.  A copy sidesteps that (symlinks are recreated, not link()'d).
+#
+# Own path, distinct from the build SYSROOT (:= .../sysroot/<_TC_ARCH>): for a non-xen
+# ARCH, ARCH==_TC_ARCH, so a shared name would make check-sysroot's `rm -rf` DESTROY the
+# in-tree header-farm sysroot.  Keyed by $(ARCH) so xen/non-xen variants don't collide.
+SYSROOT_OVERLAY := $(WORK)/sysroot-overlay/$(_VARIANT)$(ARCH)
 .PHONY: check-sysroot
 check-sysroot: dist
 	@$(call _req_env,CC READELF)
-	@$(call _assert_file,$(DIST)/dev/lib/libc.so,dev/lib/libc.so)
-	@$(call _assert_file,$(DIST)/runtime/lib/libc.so.0.3,runtime/lib/libc.so.0.3)
+	@$(call _assert_file,$(DIST)/dev/usr/lib/libc.so,dev/usr/lib/libc.so)
+	@$(call _assert_file,$(DIST)/runtime/usr/lib/libc.so.0.3,runtime/usr/lib/libc.so.0.3)
 	@echo "  CHECK-SYSROOT  overlay $(DIST)/{dev,runtime} -> --sysroot link test ($(ARCH))"
 	@set -e; \
 	ov=$(SYSROOT_OVERLAY); rm -rf "$$ov"; mkdir -p "$$ov"; \
-	cp -al $(abspath $(DIST))/runtime/. "$$ov"/; \
-	cp -al $(abspath $(DIST))/dev/. "$$ov"/; \
+	cp -a --reflink=auto $(abspath $(DIST))/runtime/. "$$ov"/; \
+	cp -a --reflink=auto $(abspath $(DIST))/dev/. "$$ov"/; \
 	t=$$(mktemp -d); \
 	printf '#include <stdio.h>\nint main(void){ printf("hello from the %s hurd dist sysroot\\n"); return 0; }\n' "$(_TC_ARCH)" > "$$t/hello.c"; \
 	$$CC --sysroot="$$ov" -o "$$t/hello" "$$t/hello.c"; \
@@ -1769,7 +1918,7 @@ check-sysroot: dist
 ifdef GNUMACH_IN_TREE
 gnumach: $(GNUMACH_KERNEL)
 
-$(GNUMACH_CONFIGURED): $(GNUMACH_SRC)/configure $(MIG) $(if $(call _fp_stale,gnumach),_FORCE)
+$(GNUMACH_CONFIGURED): $(GNUMACH_VERSION_STAMP) $(MIG) $(if $(call _fp_stale,gnumach),_FORCE)
 	@$(call _req_env,BASE_CFLAGS)
 	@$(call _env_clean,gnumach,$(GNUMACH_BUILD))
 	mkdir -p $(GNUMACH_BUILD)
@@ -1816,12 +1965,26 @@ $(GNUMACH_KERNEL): $(MIG) $(GNUMACH_CONFIGURED) $(GNUMACH_SRC_FILES)
 	@$(call _fp_write,gnumach)
 
 # In-tree install: `make install` the work/ build into $(DIST_GNUMACH); kernel under
-# boot/ + share/ docs.  gnumach's install is plain (no setuid), no fakeroot.
+# boot/, headers under usr/include, docs+msgids under usr/share.  includedir/datarootdir
+# are overridden to /usr (FHS, matching gnumach/default.nix's nix install + the shipped
+# hurd/glibc) - WITHOUT them, prefix=$(DIST_GNUMACH) defaults them to top-level
+# /include + /share (the pre-/usr layout).  bootdir=$(prefix)/boot is untouched, so the
+# kernel stays at boot/.  gnumach's install is plain (no setuid), no fakeroot.
 dist-gnumach-tree: $(DIST_GNUMACH_TREE_STAMP)
 
 # Stamp target, not the epoch-stamped dist kernel (mtime-normalised by _dist_finalize).
-$(DIST_GNUMACH_TREE_STAMP): $(GNUMACH_KERNEL) $(if $(call _fp_stale,dist-gnumach-tree),_FORCE)
-	$(call _gnumach_make,install prefix=$(DIST_GNUMACH))
+$(DIST_GNUMACH_TREE_STAMP): $(GNUMACH_KERNEL) $(if $(call _fp_stale,dist-gnumach-tree),_FORCE) | $(DIST_GLIBC_STAMP)
+	@# self-heal: drop the previous footprint, then snapshot the staging tree so the
+	@# post-install diff below captures exactly what THIS install owns.  Mtime-independent
+	@# (reliable even with install -C skipping unchanged files) because the pre-delete
+	@# forces install to rewrite every path it owns.  See _unstage_footprint.
+	@mkdir -p $(dir $@) $(DIST_GNUMACH); \
+	  $(call _unstage_footprint,$@.mf,$(DIST_GNUMACH)); \
+	  find $(DIST_GNUMACH) \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort > $@.pre
+	$(call _gnumach_make,install prefix=$(DIST_GNUMACH) includedir=$(DIST_GNUMACH)/usr/include datarootdir=$(DIST_GNUMACH)/usr/share)
+	@find $(DIST_GNUMACH) \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort > $@.post; \
+	  LC_ALL=C comm -13 $@.pre $@.post | sed 's|^$(DIST_GNUMACH)/||' > $@.mf; \
+	  rm -f $@.pre $@.post
 	@$(call _assert_file,$(DIST_GNUMACH)/boot/gnumach,boot/gnumach)
 	@$(call _fp_write,dist-gnumach-tree)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
@@ -1838,7 +2001,7 @@ dist-gnumach: $(if $(GNUMACH_IN_TREE),dist-gnumach-tree,dist-gnumach-nix)
 # else.  Store-path-stamped; share/info/dir stashed/restored + merged (see dist-glibc).
 dist-gnumach-nix: $(DIST_GNUMACH_NIX_STAMP)
 
-$(DIST_GNUMACH_NIX_STAMP): $(if $(call _fp_stale,dist-gnumach-nix),_FORCE)
+$(DIST_GNUMACH_NIX_STAMP): $(if $(call _fp_stale,dist-gnumach-nix),_FORCE) | $(DIST_GLIBC_STAMP)
 	$(call _dist_nix_copy,dist-gnumach-nix,$(DIST_GNUMACH),gnumach-$(ARCH),$(DIST_GNUMACH_NIX_STAMP),boot/gnumach,mach.info)
 	@$(call _dist_finalize,$(EPOCH_GNUMACH))
 
@@ -1912,11 +2075,14 @@ $(HURD_BUILD)/.built: $(MIG) $(HURD_CONFIGURED) $(HURD_SRC_FILES)
 
 # _bake_version stamps the SAME composed build-rev version the nix build bakes, so
 # nix == in-tree; a dirty src/hurd additionally gets `-dirty` (nix can't see that).
-$(HURD_SRC)/configure: $(HURD_SRC)/configure.ac $(VERSION_FP_STAMP)
+$(HURD_SRC)/configure: $(_HURD_AC_SRC)
 	cd $(HURD_SRC) && autoreconf -i
-	$(call _bake_version,hurd,hurd-$(_TC_ARCH),$(HURD_SRC))
 
-$(HURD_CONFIGURED): $(MIG) $(HURD_SRC)/configure $(if $(call _fp_stale,hurd),_FORCE)
+$(HURD_VERSION_STAMP): $(HURD_SRC)/configure $(VERSION_FP_STAMP)
+	$(call _bake_version,hurd,hurd-$(_TC_ARCH),$(HURD_SRC))
+	@mkdir -p $(dir $@) && touch $@
+
+$(HURD_CONFIGURED): $(MIG) $(HURD_VERSION_STAMP) $(if $(call _fp_stale,hurd),_FORCE)
 	@$(call _req_env,BASE_CFLAGS HURD_EXTRA_CFLAGS HURD_DEPLOY_FLAGS)
 	@$(call _env_clean,hurd,$(HURD_BUILD))
 	mkdir -p $(HURD_BUILD)
@@ -1937,12 +2103,21 @@ dist-hurd-tree: $(DIST_HURD_TREE_STAMP)
 # fakeroot fakes the chown/setuid (cosmetic for a dev dist tree).  Keyed on the installed
 # ext2fs translator (headline output, analog of boot/gnumach) so dist/ holds only install
 # results, no completion stamp.  Stamp target, not the epoch-stamped ext2fs.
-$(DIST_HURD_TREE_STAMP): $(HURD_BUILD)/.built $(if $(call _fp_stale,dist-hurd-tree),_FORCE)
-	$(call _hurd_make,fakeroot,install DESTDIR=$(DIST_HURD))
+$(DIST_HURD_TREE_STAMP): $(HURD_BUILD)/.built $(if $(call _fp_stale,dist-hurd-tree),_FORCE) | $(DIST_GLIBC_STAMP)
+	@# self-heal: drop the previous footprint + snapshot, so the post-install diff owns
+	@# exactly this install's paths (mtime-independent).  See _unstage_footprint / the
+	@# dist-gnumach-tree twin.
+	@mkdir -p $(dir $@) $(DIST_HURD); \
+	  $(call _unstage_footprint,$@.mf,$(DIST_HURD)); \
+	  find $(DIST_HURD) \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort > $@.pre
+	$(call _hurd_make,fakeroot,install DESTDIR=$(DIST_HURD) hurddir=/hurd)
+	@find $(DIST_HURD) \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort > $@.post; \
+	  LC_ALL=C comm -13 $@.pre $@.post | sed 's|^$(DIST_HURD)/||' > $@.mf; \
+	  rm -f $@.pre $@.post
 	@# hurd's `make install` doesn't merge hurd.info into the shared Info dir, so
 	@# add the Hurd entry explicitly (as dist-gnumach-tree does for mach.info and
 	@# dist-hurd-nix for the nix path) or the merged index loses "* Hurd: (hurd)".
-	@[ -e $(DIST_HURD)/share/info/hurd.info ] && install-info --quiet --info-dir=$(DIST_HURD)/share/info $(DIST_HURD)/share/info/hurd.info || true
+	@[ -e $(DIST_HURD)/usr/share/info/hurd.info ] && install-info --quiet --info-dir=$(DIST_HURD)/usr/share/info $(DIST_HURD)/usr/share/info/hurd.info || true
 	@$(call _fp_write,dist-hurd-tree)
 	@$(call _dist_finalize,$(EPOCH_HURD))
 	@$(call _assert_file,$(DIST_HURD)/hurd/ext2fs,hurd/ext2fs)
@@ -1959,7 +2134,7 @@ dist-hurd: $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 # Store-path-stamped; share/info/dir stashed/restored + hurd.info merged (see dist-glibc).
 dist-hurd-nix: $(DIST_HURD_NIX_STAMP)
 
-$(DIST_HURD_NIX_STAMP): $(if $(call _fp_stale,dist-hurd-nix),_FORCE)
+$(DIST_HURD_NIX_STAMP): $(if $(call _fp_stale,dist-hurd-nix),_FORCE) | $(DIST_GLIBC_STAMP)
 	$(call _dist_nix_copy,dist-hurd-nix,$(DIST_HURD),hurd-$(_TC_ARCH),$(DIST_HURD_NIX_STAMP),hurd/ext2fs,hurd.info)
 	@$(call _dist_finalize,$(EPOCH_HURD))
 
@@ -2015,7 +2190,7 @@ check: check-gnumach check-mig
 # sidekick-mkrescue, resolved on the dev-shell PATH (native on Linux, sidekick-run
 # shim on darwin) - no make prereq.
 #   gnumach    - all non-vanilla scenarios.
-_RUN_PREREQS := $(if $(filter 1,$(RUN_VANILLA)),,gnumach)
+_RUN_PREREQS := $(if $(RUN_VANILLA),,gnumach)
 
 # Each run is NOT idempotent, so no _MARK entry - every invocation re-enters dispatch
 # and re-checks `gnumach` (skipped if fresh).

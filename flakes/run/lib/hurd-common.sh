@@ -12,7 +12,7 @@
 #   exists.
 #
 #   RUN_VARIANT (a "<host-system>/<alt>/" infix, may be empty) mirrors the
-#   Makefile's _VARIANT (MULTI_HOST_BUILDS / ALT_BUILD): it keeps the run cache
+#   Makefile's _VARIANT (SPLIT_BY_NIX_SYSTEM / ALT_BUILD): it keeps the run cache
 #   isolated per build-host and/or variant so a matrix sharing ONE checkout (e.g.
 #   darwin + rosetta-x86_64 over the same mount) doesn't clobber each other's
 #   images / ISOs / overlays.
