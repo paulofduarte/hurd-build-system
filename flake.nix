@@ -133,6 +133,21 @@
       rev = "d4c8339690a8dd8fa850387910a8e574c4f66d5e";
       flake = false;
     };
+    # Base userland for the self-built bootable system (phase 2): a shell and
+    # the core utilities.  runsystem/rc are shell scripts and login spawns a
+    # shell, so these are BLOCKING for reaching a prompt.  Frozen release
+    # tarball pins like the rump-stack deps (nix-only, cross-built against
+    # the glibc-hurd sysroot); bump = edit the url.
+    bash-dep-src = {
+      type = "tarball";
+      url = "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz";
+      flake = false;
+    };
+    coreutils-dep-src = {
+      type = "tarball";
+      url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.11.tar.xz";
+      flake = false;
+    };
     # IANA timezone database SOURCE (code+data; the tz project's github repo,
     # release-tag pinned) - dist-tzdata ships zoneinfo compiled by flakes/tz
     # with the build host's NATIVE zic (arch-neutral output) instead of
@@ -226,6 +241,8 @@
       zlib-dep-src,
       libacpica-dep-src,
       tz-dep-src,
+      bash-dep-src,
+      coreutils-dep-src,
       rumpkernel-src,
       libpciaccess-dep-src,
       gnumach-src,
@@ -285,6 +302,8 @@
           zlib-dep-src
           libacpica-dep-src
           tz-dep-src
+          bash-dep-src
+          coreutils-dep-src
           rumpkernel-src
           libpciaccess-dep-src
           gnumach-src

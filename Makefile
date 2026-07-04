@@ -213,6 +213,7 @@ DIST_GCC_STAMP_DIR   := $(WORK)/dist-gcc
 DIST_GCC_STAMP       := $(DIST_GCC_STAMP_DIR)/$(_VARIANT)$(ARCH).stamp
 DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(_VARIANT)$(ARCH).stamp
 DIST_RUMPLIBS_STAMP  := $(WORK)/dist-rumplibs/$(_VARIANT)$(ARCH).stamp
+DIST_BASE_STAMP      := $(WORK)/dist-base/$(_VARIANT)$(ARCH).stamp
 # dist-split: classifies the unified $(DIST_STAGE) into the deployable
 # $(DIST)/{runtime,dev,doc,dbg} trees.  Stamp under work/ (its outputs are
 # mtime-normalised, so they can't be the staleness baseline).
@@ -239,6 +240,7 @@ EPOCH_GLIBC   := $(call _src_epoch,glibc-toolchain-src)
 EPOCH_NIXPKGS := $(call _src_epoch,nixpkgs)
 EPOCH_RUMPKERNEL := $(call _src_epoch,rumpkernel-src)
 EPOCH_TZ      := $(call _src_epoch,tz-dep-src)
+EPOCH_BASE    := $(call _src_epoch,coreutils-dep-src)
 
 # Wall-clock when this make started - the cut between "written by this build"
 # (CURRENT mtime) and earlier components' already-stamped files (a past date).
@@ -453,7 +455,7 @@ _FORCE:
 # (Makefile/flakes/...) re-fires them.  MUST be listed or _fp_stale returns empty
 # and the rule never re-stages after its first build (e.g. a flakes/zlib
 # determinism fix stayed unstaged until mrproper).
-_OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix dist-gcc dist-rumplibs dist-tzdata
+_OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix dist-gcc dist-rumplibs dist-tzdata dist-base
 
 # The repo fingerprint is SCOPED to the flake-eval read surface - the root nix
 # files, flakes/, the build-rev input dir, and the Makefile (recipe semantics) -
@@ -631,6 +633,8 @@ help:
 	@echo "  dist-tzdata      install the IANA timezone db (zoneinfo compiled from the"
 	@echo "                   tz-dep-src pin by the host's zic) into ./dist/$(ARCH)/share"
 	@echo "  dist-rumplibs    stage the rump chain (zlib/libpciaccess/libacpica/rumpkernel)"
+	@echo "  dist-base        stage the base userland (bash incl. /usr/bin/sh, coreutils,"
+	@echo "                   and the /etc skeleton)"
 	@echo "  check            run the in-tree test suites (check-gnumach + check-mig)"
 	@echo "  check-gnumach    run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  check-mig        run MIG's 'make check' (pure-C tests, native everywhere)"
@@ -1062,6 +1066,7 @@ _MARK.dist-glibc        := $(DIST_GLIBC_STAMP)
 _MARK.dist-gcc          := $(DIST_GCC_STAMP)
 _MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
 _MARK.dist-rumplibs     := $(DIST_RUMPLIBS_STAMP)
+_MARK.dist-base         := $(DIST_BASE_STAMP)
 _MARK.dist-split        := $(DIST_SPLIT_STAMP)
 
 # Direct src watches (transitive src flows through _SDEPS).  The nix dist halves watch
@@ -1077,6 +1082,7 @@ _WATCH.dist-hurd-nix    := flakes/hurd $(call _intree_srcs,dist-hurd-nix)
 _WATCH.dist-glibc       := flakes/cross-toolchain $(call _intree_srcs,dist-glibc)
 _WATCH.dist-rumplibs    := flakes/zlib flakes/libpciaccess flakes/libacpica flakes/rumpkernel flakes/libirqhelp
 _WATCH.dist-tzdata      := flakes/tz
+_WATCH.dist-base        := flakes/bash flakes/coreutils flakes/base-files
 _WATCH.dist-gcc         := flakes/cross-toolchain $(call _intree_srcs,dist-gcc)
 # (dist-*-tree inherit src via _SDEPS.)
 
@@ -1092,8 +1098,8 @@ _SDEPS.dist-hurd         := $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 _SDEPS.all               := gnumach hurd
 # dist-split is stale iff its stamp is missing or any slice is stale; `dist`
 # carries it so a missing split (or a changed slice) re-dispatches the split.
-_SDEPS.dist-split        := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-rumplibs
-_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-rumplibs dist-split
+_SDEPS.dist-split        := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-rumplibs dist-base
+_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-rumplibs dist-base dist-split
 
 # `git ls-files` enumerates "real source" - generated files (configure, Makefile.in,
 # autom4te.cache/, ...) shouldn't trigger staleness.  Authoritative: exactly what
@@ -1306,7 +1312,7 @@ all: gnumach hurd
 # only its slice of the shared $(DIST_STAGE) via $(call _dist_finalize,...); then
 # dist-split (LAST - it reads the finished staging tree) classifies it into the
 # deployable $(DIST)/{runtime,dev,doc,dbg} trees.
-dist: dist-glibc dist-gnumach dist-hurd dist-gcc dist-tzdata dist-rumplibs dist-split
+dist: dist-glibc dist-gnumach dist-hurd dist-gcc dist-tzdata dist-rumplibs dist-base dist-split
 
 # Serialize dist's components under `make -j` - they contend on a shared resource
 # and otherwise corrupt each other:
@@ -1826,6 +1832,25 @@ $(DIST_RUMPLIBS_STAMP): $(if $(call _fp_stale,dist-rumplibs),_FORCE)
 	$(call _dist_nix_copy,dist-rumplibs,$(DIST_STAGE),rumpkernel-$(_TC_ARCH),$(basename $(DIST_RUMPLIBS_STAMP))-rumpkernel.stamp,usr/lib/librump.so.0,no.info)
 	@$(call _dist_done,$(DIST_RUMPLIBS_STAMP))
 	@$(call _dist_finalize,$(EPOCH_RUMPKERNEL))
+
+# ---- base userland (nix-only; arch-dependent) ----
+# What the self-built system needs to reach a prompt (phase 2): bash (=
+# /usr/bin/sh too - runsystem/rc are shell scripts, login spawns a shell),
+# coreutils, and the /etc skeleton (base-files: passwd/group/shells/profile/
+# nsswitch/hostname/fstab - arch-independent).  Frozen tarball pins
+# cross-built against the glibc-hurd sysroot; staged WHOLE, dist-split
+# classifies (bin -> runtime, man/info -> doc).  coreutils.info re-registers
+# in the shared info dir.
+.PHONY: dist-base
+dist-base: $(DIST_BASE_STAMP)
+
+$(DIST_BASE_STAMP): $(if $(call _fp_stale,dist-base),_FORCE)
+	$(call _dist_nix_copy,dist-base,$(DIST_STAGE),bash-$(_TC_ARCH),$(basename $(DIST_BASE_STAMP))-bash.stamp,usr/bin/bash,no.info)
+	$(call _dist_nix_copy,dist-base,$(DIST_STAGE),coreutils-$(_TC_ARCH),$(basename $(DIST_BASE_STAMP))-coreutils.stamp,usr/bin/ls,coreutils.info)
+	$(call _dist_nix_copy,dist-base,$(DIST_STAGE),base-files,$(basename $(DIST_BASE_STAMP))-etc.stamp,etc/passwd,no.info)
+	@$(call _dist_done,$(DIST_BASE_STAMP))
+	@$(call _assert_file,$(DIST_STAGE)/usr/bin/sh,usr/bin/sh)
+	@$(call _dist_finalize,$(EPOCH_BASE))
 
 # ---- dist-split (classify the staging tree into deployable trees) ----
 # Pure post-pass over the finished $(DIST_STAGE): partition it into

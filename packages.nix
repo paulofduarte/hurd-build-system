@@ -30,6 +30,8 @@
   libpciaccess-dep-src,
   libacpica-dep-src,
   tz-dep-src,
+  bash-dep-src,
+  coreutils-dep-src,
   rumpkernel-src,
   gnumach-src,
   mig-src,
@@ -381,6 +383,25 @@ in
           ;
         srcInput = libacpica-dep-src;
       };
+      # Base userland for the self-built bootable system (phase 2): the
+      # shell (bash = /bin/sh + /bin/bash) and coreutils.  Frozen tarball
+      # pins, cross-built against the glibc-hurd sysroot; per-target.
+      bash = import ./flakes/bash {
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets toolchainFor;
+        srcInput = bash-dep-src;
+      };
+      coreutils = import ./flakes/coreutils {
+        nixpkgs = nixpkgs-toolchain;
+        inherit system targets toolchainFor;
+        srcInput = coreutils-dep-src;
+      };
+      # The /etc skeleton (passwd/group/shells/profile/nsswitch/hostname/
+      # fstab) - arch-independent, staged by dist-base.  See flakes/base-files.
+      base-files = import ./flakes/base-files {
+        nixpkgs = nixpkgs-toolchain;
+        inherit system;
+      };
       # NetBSD rumpkernel (WORK pin) - the librump* set hurd's rumpdisk/
       # rumpnet link.  Debian rules driven through NetBSD build.sh with the
       # Guix-proven cross deltas; consumes our cross mig + libpciaccess +
@@ -435,6 +456,11 @@ in
     // libirqhelp # libirqhelp-<arch>: hurd lib pre-pass (rumpkernel/libacpica dep)
     // libacpica # libacpica-<arch>: ACPICA library (acpi translator/rumpdisk chain dep)
     // rumpkernel # rumpkernel-<arch>: NetBSD librump* set (rumpdisk/rumpnet dep)
+    // bash # bash-<arch>: the system shell (/bin/sh + /bin/bash)
+    // coreutils # coreutils-<arch>: the GNU core utilities
+    // {
+      inherit base-files; # the /etc skeleton (arch-independent)
+    }
     // ownBinutils # cross-binutils-<arch>
     // ownGcc.bootstrap # bootstrap-gcc-<arch> (libc-free stage-1 cc)
     // glibc

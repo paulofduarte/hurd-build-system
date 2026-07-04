@@ -32,6 +32,8 @@ Pinned in `flake.nix` (the `*-src` inputs) and built by the flakes under
 | libacpica (Intel ACPICA) | salsa.debian.org/hurd-team/libacpica (ACPICA 20220331 + Hurd glue) | GPL-2.0 / Intel BSD-style dual; glue GPL-2.0-or-later |
 | rumpkernel (NetBSD) | salsa.debian.org/hurd-team/rumpkernel (NetBSD-current snapshot + Hurd/Mach glue) | NetBSD hodgepodge - BSD-2/3/4, ISC, CDDL, GPL, others; see its debian/copyright |
 | tz (IANA time zone database) | github.com/eggert/tz | Public domain, with a few BSD-3-Clause files (see its LICENSE) |
+| GNU bash | ftp.gnu.org/gnu/bash | GPL-3.0-or-later |
+| GNU coreutils | ftp.gnu.org/gnu/coreutils | GPL-3.0-or-later |
 
 GNU Mach contains files marked "version 2" with no "or later" clause, so the
 kernel as a whole is effectively GPL-2.0-only and cannot be relicensed to

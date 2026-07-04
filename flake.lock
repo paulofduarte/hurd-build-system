@@ -1,5 +1,18 @@
 {
   "nodes": {
+    "bash-dep-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1753882072,
+        "narHash": "sha256-yDRoQcHzXgMUcaxNq9WMezU6zwzZp4Z4T2oD2qyfHK4=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"
+      }
+    },
     "binutils-toolchain-src": {
       "flake": false,
       "locked": {
@@ -24,6 +37,19 @@
         "type": "path"
       },
       "parent": []
+    },
+    "coreutils-dep-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1776690974,
+        "narHash": "sha256-jLnM1Xpw8pYLf8ICDF/EstxqkM46M2yxAx7mgESibXw=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.11.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.11.tar.xz"
+      }
     },
     "gcc-toolchain-src": {
       "flake": false,
@@ -242,8 +268,10 @@
     },
     "root": {
       "inputs": {
+        "bash-dep-src": "bash-dep-src",
         "binutils-toolchain-src": "binutils-toolchain-src",
         "build-rev": "build-rev",
+        "coreutils-dep-src": "coreutils-dep-src",
         "gcc-toolchain-src": "gcc-toolchain-src",
         "glibc-toolchain-src": "glibc-toolchain-src",
         "gnumach-src": "gnumach-src",
