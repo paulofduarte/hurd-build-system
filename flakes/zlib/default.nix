@@ -67,17 +67,22 @@ let
       # zlib's configure reads the toolchain from the environment: CHOST selects
       # the cross prefix, and AR/RANLIB/NM must be the cross ones or the static
       # archive is indexed by the host tools (unusable for i686/x86_64-gnu on a
-      # non-Linux host).  CFLAGS baseline matches the repo-wide "-g -O2"; the
-      # determinism maps ride CPPFLAGS (the raw cross-gcc has no wrapper
-      # channel).  srcdir=$PWD: zlib builds in-tree, so the single canon map
-      # covers both roots.
+      # non-Linux host).  srcdir=$PWD: zlib builds in-tree, so the single canon
+      # map covers both roots.
+      #
+      # DETERMINISM: zlib's hand-rolled Makefile compiles with `$(CC) $(CFLAGS)
+      # $(ZINC)` and NEVER consumes CPPFLAGS - so the -ffile-prefix-map set that
+      # detCppflagsUnwrapped exports into CPPFLAGS is silently ignored, leaking
+      # the (host-varying, input-addressed) cross-gcc / glibc-sysroot / build-dir
+      # store paths into libz's DWARF.  Fold the maps into CFLAGS so they reach
+      # the compiler (baseCflags "-g -O2" FIRST, maps last - LAST -ffile-prefix-
+      # map wins, matching the other builds' ordering).
       preConfigure = ''
         export CHOST=${tp}
         export CC=${tp}-gcc
         export AR=${tp}-ar
         export RANLIB=${tp}-ranlib
         export NM=${tp}-nm
-        export CFLAGS="${buildFlags.baseCflags}"
         srcdir=$PWD
         ${buildFlags.detCppflagsUnwrapped {
           gcc = cc;
@@ -85,6 +90,7 @@ let
           canonBuild = "/zlib-build";
           inherit (tc) sysroot;
         }}
+        export CFLAGS="${buildFlags.baseCflags} $CPPFLAGS"
       '';
 
       # Deployable prefix (see header comment); DESTDIR install below.

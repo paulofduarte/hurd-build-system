@@ -162,7 +162,14 @@ let
           canonBuild = buildFlags.hurdCanonBuild;
           inherit (tc) sysroot;
         }}
-        export CPPFLAGS="$CPPFLAGS -I${rumpPkg}/usr/include -I${pciPkg}/usr/include -I${acpicaPkg}/usr/include -I${zlibPkg}/usr/include"
+        # Rump-chain header search paths + their determinism maps.  The store
+        # paths are host-varying (input-addressed cross builds), so a bare -I
+        # leaks each header's absolute path into the DWARF of every server that
+        # includes it (pci-arbiter/acpi via pciaccess/acpica, libstore via
+        # zlib.h, rumpdisk/rumpnet via rump/*) - the same class the detCppflags
+        # maps above already cover for the toolchain.  Map each to a canonical
+        # root so the consuming servers stay byte-identical cross-host.
+        export CPPFLAGS="$CPPFLAGS -I${rumpPkg}/usr/include -I${pciPkg}/usr/include -I${acpicaPkg}/usr/include -I${zlibPkg}/usr/include -ffile-prefix-map=${rumpPkg}=/rump -ffile-prefix-map=${pciPkg}=/libpciaccess -ffile-prefix-map=${acpicaPkg}=/libacpica -ffile-prefix-map=${zlibPkg}=/zlib"
       '';
 
       # Force the cross archiver/ranlib/nm.  hurd's Makeconf archive rule uses
