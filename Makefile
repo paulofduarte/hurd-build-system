@@ -447,7 +447,12 @@ _FORCE:
 # recipe (which re-resolves; the store-path compare still guards the copy); a match
 # is a true "Nothing to be done".  Over-triggering (an irrelevant tracked edit ->
 # one cheap re-eval) is the only failure mode; a false skip cannot happen.
-_OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix dist-gcc
+# dist-rumplibs has no in-tree override (nix-only, empty _DEPS), so its fp is
+# just repo=_FP_REPO - a change under any _FP_SCOPE path (Makefile/flakes/...)
+# re-fires it.  MUST be listed or _fp_stale returns empty and the rule never
+# re-stages after its first build (e.g. a flakes/zlib determinism fix stayed
+# unstaged until mrproper).
+_OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix dist-gcc dist-rumplibs
 
 # The repo fingerprint is SCOPED to the flake-eval read surface - the root nix
 # files, flakes/, the build-rev input dir, and the Makefile (recipe semantics) -
