@@ -119,6 +119,16 @@ rec {
   gnumachCanonBuild = "/gnumach-build";
   hurdCanonBuild = "/hurd-build";
 
+  # Canonical replacement for the rumpkernel BUILD SANDBOX root ($NIX_BUILD_TOP -
+  # covers source/ AND the BSDOBJDIR under it).  Same darwin-vs-linux rationale
+  # as gccCanonRoot below: NetBSD compiles bake the absolute source path into
+  # .rodata (__KERNEL_RCSID / __FILE__ in KASSERT strings), so the darwin
+  # per-build sandbox dir made every librump* diverge per host AND per rebuild.
+  # Consumed by flakes/rumpkernel via a PATH-shadow cc wrapper (NetBSD's nbmake
+  # plumbing has no single flags channel that reaches every compile - kernel
+  # components, librumpuser and pci-userspace each pull different variables).
+  rumpCanonBuild = "/rump-build";
+
   # Canonical replacement for the from-source gcc BUILD SANDBOX root ($NIX_BUILD_TOP).
   # gcc unpacks its source + builds under there, and libgcc's DWARF bakes those paths
   # in.  The sandbox root is FIXED as /build on linux but PER-BUILD

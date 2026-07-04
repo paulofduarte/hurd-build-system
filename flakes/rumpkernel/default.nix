@@ -28,9 +28,16 @@
 # pci-userspace/src-gnu (Mach PCI glue - runs our mig over the sysroot's
 # gnumach defs, compiles against libpciaccess + libirqhelp headers).
 #
-# Determinism: deliberately NOT canonicalised yet (repo policy: working
-# first).  NetBSD's own rump version string is already reproducible
-# (newvers.sh -R); the DWARF/objdir path maps are the deferred det pass.
+# Determinism: NetBSD's own rump version string is already reproducible
+# (newvers.sh -R); archives come out identical via the deterministic cross
+# ar.  The one confirmed leak (2026-07-04 matrix) was the absolute source
+# path baked into .rodata (__KERNEL_RCSID / __FILE__ in KASSERT strings) -
+# fixed /build on Linux vs PER-BUILD /nix/var/nix/builds/nix-<pid>-<rand>
+# on darwin.  Canonicalised via a PATH-shadow cc wrapper (see buildPhase):
+# nbmake has no single flags channel that reaches every compile (kernel
+# components, librumpuser and pci-userspace each pull different variables),
+# but every TARGET compile resolves ${tp}-gcc/-g++ by name - so a shadow
+# wrapper appending the prefix-maps covers them all structurally.
 
 {
   nixpkgs,
@@ -50,6 +57,7 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   inherit (nixpkgs) lib;
   helpers = import ../lib { inherit lib; };
+  buildFlags = import ../cross-toolchain/build-flags.nix { inherit lib; };
 
   # WORK-pin version composition (like flakes/hurd), seeded from the Debian
   # changelog head (`rumpkernel (0~20250111-8) ...`); `~` is not a valid nix
@@ -191,6 +199,31 @@ let
         export PAWD=pwd
         export _GCC_CRTENDS= _GCC_CRTEND= _GCC_CRTBEGINS= _GCC_CRTBEGIN= _GCC_CRTI= _GCC_CRTN=
 
+        # DETERMINISM: PATH-shadow the cross cc with a wrapper appending the
+        # canonical prefix-maps (see header comment).  $NIX_BUILD_TOP ->
+        # rumpCanonBuild kills the .rodata/__FILE__ source-path leak (covers
+        # source/ AND the BSDOBJDIR); the gcc/binutils/sysroot/pciaccess/
+        # irqhelp maps canonicalise the host-varying store paths in DWARF
+        # (dbg split).  Appended AFTER "$@" so ours are the last-match
+        # winners; harmless on link-only lines (gcc ignores -f* there).
+        # Shadowing by NAME (not TARGET_CC swap) also covers librumpuser's
+        # nbmake compiles and pci-userspace's RUMPCOMP_USER_* compiles, which
+        # bypass the -V flag channels.
+        detflags="${
+          buildFlags.debugPrefixMapUnwrappedStr {
+            gcc = cc;
+            binutils = binu;
+          }
+        } -ffile-prefix-map=${tc.sysroot}=${buildFlags.glibcCanonSysroot} -ffile-prefix-map=${pciPkg}=/libpciaccess -ffile-prefix-map=${irqPkg}=/libirqhelp -ffile-prefix-map=$NIX_BUILD_TOP=${buildFlags.rumpCanonBuild}"
+        mkdir -p "$NIX_BUILD_TOP/detwrap"
+        for t in gcc g++; do
+          { echo "#!$HOST_SH"
+            echo "exec ${cc}/bin/${tp}-$t \"\$@\" $detflags"
+          } > "$NIX_BUILD_TOP/detwrap/${tp}-$t"
+          chmod +x "$NIX_BUILD_TOP/detwrap/${tp}-$t"
+        done
+        export PATH="$NIX_BUILD_TOP/detwrap:$PATH"
+
         mkdir -p obj
         top=$PWD
         # Pre-create the destdir METALOG: every consumer APPENDS (nbinstall -M,
@@ -287,6 +320,13 @@ let
         find buildrump.sh/src obj -type f -name "librump*.a" \
           -exec cp -an {} $out/usr/lib/ \;
         rm -f $out/usr/lib/*.map
+        # Mode canon: the build tree holds DUPLICATE copies of each lib (the
+        # raw ld output, mode 755, and nbinstall'd copies, mode 444), and
+        # cp -an keeps whichever one find's readdir order hits first - which
+        # is FILESYSTEM-dependent (APFS vs ext4), so the harvested mode bits
+        # diverged per host while the contents were byte-identical.  Nothing
+        # here needs an exec bit (headers, .a, .so); flatten to 644.
+        find $out -type f -exec chmod 644 {} +
         runHook postInstall
       '';
 
