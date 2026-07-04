@@ -1,0 +1,3 @@
+# /etc/profile: system-wide environment for login shells.
+PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export PATH

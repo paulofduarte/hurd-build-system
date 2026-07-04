@@ -1,0 +1,5 @@
+# /etc/fstab: static file system information.
+# The root filesystem is mounted by the boot ext2fs translator (from the
+# kernel command line / boot modules), not from this file; per-image entries
+# are appended by the image-assembly scenario.
+# <file system>  <mount point>  <type>  <options>  <dump>  <pass>

@@ -22,3 +22,11 @@ SPDX-License-Identifier = "CC0-1.0"
 path = "LICENSE"
 SPDX-FileCopyrightText = "2007 Free Software Foundation, Inc."
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# The shipped /etc skeleton (flakes/base-files): plain config data - passwd(5)
+# and group(5) have no comment syntax for inline SPDX headers, and the rest
+# stay header-free so the shipped bytes are exactly the authored config.
+[[annotations]]
+path = "flakes/base-files/etc/**"
+SPDX-FileCopyrightText = "2026 Paulo Duarte <paulofernandobd@gmail.com>"
+SPDX-License-Identifier = "CC0-1.0"
