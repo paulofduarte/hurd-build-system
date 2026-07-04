@@ -227,7 +227,7 @@ DIST_HURD_TREE_STAMP    := $(WORK)/dist-hurd-tree/$(_VARIANT)$(ARCH).stamp
 # Per-component deterministic dist mtimes: each dist-* stamps the files IT wrote
 # into the shared $(DIST) to ITS OWN source's commit date (flake.lock
 # `lastModified`) - true provenance, not nix's 1970 epoch.  Untracked nix packages
-# (gcc runtime, tzdata) have no pinned commit, so they use the `nixpkgs` snapshot
+# (the gcc runtime) have no pinned commit, so they use the `nixpkgs` snapshot
 # date.  Parsed with jq; empty if flake.lock/jq absent -> mtime left as-is.
 _src_epoch      = $(shell jq -r '.nodes["$(1)"].locked.lastModified' flake.lock 2>/dev/null)
 # EPOCH_* stamp the dist mtimes; read the WORK source's lastModified (the source the
@@ -238,6 +238,7 @@ EPOCH_HURD    := $(call _src_epoch,hurd-src)
 EPOCH_GLIBC   := $(call _src_epoch,glibc-toolchain-src)
 EPOCH_NIXPKGS := $(call _src_epoch,nixpkgs)
 EPOCH_RUMPKERNEL := $(call _src_epoch,rumpkernel-src)
+EPOCH_TZ      := $(call _src_epoch,tz-dep-src)
 
 # Wall-clock when this make started - the cut between "written by this build"
 # (CURRENT mtime) and earlier components' already-stamped files (a past date).
@@ -447,12 +448,12 @@ _FORCE:
 # recipe (which re-resolves; the store-path compare still guards the copy); a match
 # is a true "Nothing to be done".  Over-triggering (an irrelevant tracked edit ->
 # one cheap re-eval) is the only failure mode; a false skip cannot happen.
-# dist-rumplibs has no in-tree override (nix-only, empty _DEPS), so its fp is
-# just repo=_FP_REPO - a change under any _FP_SCOPE path (Makefile/flakes/...)
-# re-fires it.  MUST be listed or _fp_stale returns empty and the rule never
-# re-stages after its first build (e.g. a flakes/zlib determinism fix stayed
-# unstaged until mrproper).
-_OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix dist-gcc dist-rumplibs
+# dist-rumplibs/dist-tzdata have no in-tree override (nix-only, empty _DEPS), so
+# their fp is just repo=_FP_REPO - a change under any _FP_SCOPE path
+# (Makefile/flakes/...) re-fires them.  MUST be listed or _fp_stale returns empty
+# and the rule never re-stages after its first build (e.g. a flakes/zlib
+# determinism fix stayed unstaged until mrproper).
+_OVR_GOALS = dist-glibc dist-gnumach-nix dist-hurd-nix dist-gcc dist-rumplibs dist-tzdata
 
 # The repo fingerprint is SCOPED to the flake-eval read surface - the root nix
 # files, flakes/, the build-rev input dir, and the Makefile (recipe semantics) -
@@ -627,7 +628,8 @@ help:
 	@echo "                   (libgcc, libstdc++, libatomic, libitm, libquadmath,"
 	@echo "                   libssp, libgomp).  'make dist' ships only libgcc; opt the"
 	@echo "                   (libgcc by default; more via DIST_GCC_LIBS=\"libstdc++ ...\")"
-	@echo "  dist-tzdata      install the IANA timezone db (zoneinfo) into ./dist/$(ARCH)/share"
+	@echo "  dist-tzdata      install the IANA timezone db (zoneinfo compiled from the"
+	@echo "                   tz-dep-src pin by the host's zic) into ./dist/$(ARCH)/share"
 	@echo "  dist-rumplibs    stage the rump chain (zlib/libpciaccess/libacpica/rumpkernel)"
 	@echo "  check            run the in-tree test suites (check-gnumach + check-mig)"
 	@echo "  check-gnumach    run gnumach's 'make check' (kernel tests under QEMU)"
@@ -1074,9 +1076,9 @@ _WATCH.dist-gnumach-nix := flakes/gnumach $(call _intree_srcs,dist-gnumach-nix)
 _WATCH.dist-hurd-nix    := flakes/hurd $(call _intree_srcs,dist-hurd-nix)
 _WATCH.dist-glibc       := flakes/cross-toolchain $(call _intree_srcs,dist-glibc)
 _WATCH.dist-rumplibs    := flakes/zlib flakes/libpciaccess flakes/libacpica flakes/rumpkernel flakes/libirqhelp
+_WATCH.dist-tzdata      := flakes/tz
 _WATCH.dist-gcc         := flakes/cross-toolchain $(call _intree_srcs,dist-gcc)
-# (dist-*-tree inherit src via _SDEPS; dist-tzdata's only input is the
-# nixpkgs pin - flake.lock, the recipe's prereq - so a missing mark is its trigger.)
+# (dist-*-tree inherit src via _SDEPS.)
 
 # Dep graph - flag-gated: $(if X_IN_TREE,...) drops the edge when the module is nix
 # (the matching dist-*-nix half then watches the flake directly instead).
@@ -1779,14 +1781,15 @@ $(DIST_GCC_STAMP): $(if $(call _fp_stale,dist-gcc),_FORCE)
 
 # ---- dist-tzdata ----
 # Ship the IANA timezone database so glibc's TZ/localtime works (without it the target
-# has only UTC).  Copied from the pinned nixpkgs `tzdata` - arch-independent,
-# byte-identical cross-host (one package serves every target).  Lands in /share/zoneinfo
-# (glibc's compiled TZDIR under our --datarootdir=/share deploy prefix); also drops a
-# default /etc/localtime -> /share/zoneinfo/UTC.  Store-path-stamped.
+# has only UTC).  FROM SOURCE: flakes/tz compiles the `tz-dep-src` release pin with
+# the host's native zic - arch-independent, one package serves every target.  Lands
+# in /share/zoneinfo (glibc's compiled TZDIR under our --datarootdir=/share deploy
+# prefix); also drops a default /etc/localtime -> /share/zoneinfo/UTC.
+# Store-path-stamped + fp-gated (in _OVR_GOALS: a flakes/tz or pin edit re-fires).
 .PHONY: dist-tzdata
 dist-tzdata: $(DIST_TZDATA_STAMP)
 
-$(DIST_TZDATA_STAMP): flake.lock
+$(DIST_TZDATA_STAMP): $(if $(call _fp_stale,dist-tzdata),_FORCE)
 	@mkdir -p $(DIST_STAGE)/usr/share $(DIST_STAGE)/etc $(dir $(DIST_TZDATA_STAMP))
 	@echo "  DIST-TZDATA  resolving nix tzdata..."
 	@set -e; \
@@ -1800,9 +1803,10 @@ $(DIST_TZDATA_STAMP): flake.lock
 	  ln -sfn /usr/share/zoneinfo/UTC $(DIST_STAGE)/etc/localtime; \
 	  printf '%s' "$$tz" > $(DIST_TZDATA_STAMP); \
 	fi
+	@$(call _fp_write,dist-tzdata)
 	@$(call _dist_done,$(DIST_TZDATA_STAMP))
 	@$(call _assert_file,$(DIST_STAGE)/usr/share/zoneinfo/UTC,zoneinfo/UTC)
-	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
+	@$(call _dist_finalize,$(EPOCH_TZ))
 
 # ---- rump-chain libs (nix-only; arch-dependent) ----
 # The libraries the flipped hurd's rump servers need: zlib (libstore gunzip +

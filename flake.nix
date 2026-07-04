@@ -133,6 +133,18 @@
       rev = "d4c8339690a8dd8fa850387910a8e574c4f66d5e";
       flake = false;
     };
+    # IANA timezone database SOURCE (code+data; the tz project's github repo,
+    # release-tag pinned) - dist-tzdata ships zoneinfo compiled by flakes/tz
+    # with the build host's NATIVE zic (arch-neutral output) instead of
+    # nixpkgs' pkgs.tzdata, so the shipped timezone db is from-source like
+    # everything else.  Frozen like the tarball pins; bump = edit the ref.
+    tz-dep-src = {
+      type = "github";
+      owner = "eggert";
+      repo = "tz";
+      ref = "2026b";
+      flake = false;
+    };
     # NetBSD-as-rumpkernel for the Hurd (rumpdisk/rumpnet's librump* set) - a
     # WORK pin like gnumach/mig/hurd: rev lives in flake.lock only, bumped by
     # `make pin-src`; the in-tree build override arrives with the rumpkernel
@@ -213,6 +225,7 @@
       glibc-toolchain-src,
       zlib-dep-src,
       libacpica-dep-src,
+      tz-dep-src,
       rumpkernel-src,
       libpciaccess-dep-src,
       gnumach-src,
@@ -271,6 +284,7 @@
           glibc-toolchain-src
           zlib-dep-src
           libacpica-dep-src
+          tz-dep-src
           rumpkernel-src
           libpciaccess-dep-src
           gnumach-src

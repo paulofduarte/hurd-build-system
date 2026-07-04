@@ -258,6 +258,7 @@
         "nixpkgs": "nixpkgs",
         "nixpkgs-toolchain": "nixpkgs-toolchain",
         "rumpkernel-src": "rumpkernel-src",
+        "tz-dep-src": "tz-dep-src",
         "zlib-dep-src": "zlib-dep-src"
       }
     },
@@ -292,6 +293,23 @@
       "original": {
         "type": "git",
         "url": "https://spectrum-os.org/git/spectrum"
+      }
+    },
+    "tz-dep-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1776924459,
+        "narHash": "sha256-kJZXj0Fwc9dHA+mgqjZXk1HVdu7W+sPWlmYwAi5ikqo=",
+        "owner": "eggert",
+        "repo": "tz",
+        "rev": "48c25a1ba86cb602990c0573aba7795417931bb4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "eggert",
+        "ref": "2026b",
+        "repo": "tz",
+        "type": "github"
       }
     },
     "zlib-dep-src": {

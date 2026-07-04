@@ -13,7 +13,7 @@
 # sub-flake instantiates its own pkgs/lib and imports its own flakes/lib.
 
 {
-  nixpkgs, # branch-tracking: runtime/data only (the `nix run` apps' qemu, tzdata).
+  nixpkgs, # branch-tracking: runtime only (the `nix run` apps' qemu).
   nixpkgs-toolchain, # frozen: the whole toolchain + every cached build (incl. build tools).
   self,
   forAllSystems,
@@ -29,6 +29,7 @@
   zlib-dep-src,
   libpciaccess-dep-src,
   libacpica-dep-src,
+  tz-dep-src,
   rumpkernel-src,
   gnumach-src,
   mig-src,
@@ -446,10 +447,16 @@ in
     // crossGccFull # the merged from-source cross-gcc-<arch> (compiler + runtime)
     // bootstrapMigExposed # bootstrap-mig-<arch> (builds glibc only; not a downstream dep)
     # Timezone database for the dist (dist-tzdata copies its share/zoneinfo).
-    # arch-independent zic-compiled data, byte-identical cross-host; one package
-    # serves every target.
+    # From-source (flakes/tz, `tz-dep-src` release-tag pin) compiled by the
+    # host's native zic - arch-independent data, one package serves every
+    # target.  nixpkgs-toolchain (frozen) for the build env, like the other
+    # from-source builds.
     // {
-      tzdata = nixpkgs.legacyPackages.${system}.tzdata;
+      tzdata = import ./flakes/tz {
+        nixpkgs = nixpkgs-toolchain;
+        inherit system self;
+        srcInput = tz-dep-src;
+      };
     }
   );
 
