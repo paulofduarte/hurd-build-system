@@ -212,6 +212,7 @@ _RT_SO.libgomp      := libgomp.so.1
 DIST_GCC_STAMP_DIR   := $(WORK)/dist-gcc
 DIST_GCC_STAMP       := $(DIST_GCC_STAMP_DIR)/$(_VARIANT)$(ARCH).stamp
 DIST_TZDATA_STAMP    := $(WORK)/dist-tzdata/$(_VARIANT)$(ARCH).stamp
+DIST_RUMPLIBS_STAMP  := $(WORK)/dist-rumplibs/$(_VARIANT)$(ARCH).stamp
 # dist-split: classifies the unified $(DIST_STAGE) into the deployable
 # $(DIST)/{runtime,dev,doc,dbg} trees.  Stamp under work/ (its outputs are
 # mtime-normalised, so they can't be the staleness baseline).
@@ -236,6 +237,7 @@ EPOCH_GNUMACH    := $(call _src_epoch,gnumach-src)
 EPOCH_HURD    := $(call _src_epoch,hurd-src)
 EPOCH_GLIBC   := $(call _src_epoch,glibc-toolchain-src)
 EPOCH_NIXPKGS := $(call _src_epoch,nixpkgs)
+EPOCH_RUMPKERNEL := $(call _src_epoch,rumpkernel-src)
 
 # Wall-clock when this make started - the cut between "written by this build"
 # (CURRENT mtime) and earlier components' already-stamped files (a past date).
@@ -606,7 +608,7 @@ help:
 	@echo "                   opted in (make src-gnumach), else the nix kernel"
 	@echo "  dist             install kernel + Hurd userland + glibc + libgcc + tzdata"
 	@echo "                   into ./dist/$(ARCH)/ (= dist-gnumach + dist-hurd + dist-glibc +"
-	@echo "                   dist-gcc (libgcc) + dist-tzdata; mig is host-arch, not bundled)"
+	@echo "                   dist-gcc (libgcc) + dist-tzdata + dist-rumplibs; mig is host-arch, not bundled)"
 	@echo "  hurd             build the Hurd userland - in-tree under ./work/hurd/$(_TC_ARCH)/"
 	@echo "                   if opted in (make src-hurd), else the nix userland"
 	@echo "  dist-hurd        install the Hurd userland into ./dist/$(ARCH)/ - the in-tree build"
@@ -621,6 +623,7 @@ help:
 	@echo "                   libssp, libgomp).  'make dist' ships only libgcc; opt the"
 	@echo "                   (libgcc by default; more via DIST_GCC_LIBS=\"libstdc++ ...\")"
 	@echo "  dist-tzdata      install the IANA timezone db (zoneinfo) into ./dist/$(ARCH)/share"
+	@echo "  dist-rumplibs    stage the rump chain (zlib/libpciaccess/libacpica/rumpkernel)"
 	@echo "  check            run the in-tree test suites (check-gnumach + check-mig)"
 	@echo "  check-gnumach    run gnumach's 'make check' (kernel tests under QEMU)"
 	@echo "  check-mig        run MIG's 'make check' (pure-C tests, native everywhere)"
@@ -1051,6 +1054,7 @@ _MARK.dist-hurd-nix     := $(DIST_HURD_NIX_STAMP)
 _MARK.dist-glibc        := $(DIST_GLIBC_STAMP)
 _MARK.dist-gcc          := $(DIST_GCC_STAMP)
 _MARK.dist-tzdata       := $(DIST_TZDATA_STAMP)
+_MARK.dist-rumplibs     := $(DIST_RUMPLIBS_STAMP)
 _MARK.dist-split        := $(DIST_SPLIT_STAMP)
 
 # Direct src watches (transitive src flows through _SDEPS).  The nix dist halves watch
@@ -1064,6 +1068,7 @@ _WATCH.hurd             := $(HURD_SRC)
 _WATCH.dist-gnumach-nix := flakes/gnumach $(call _intree_srcs,dist-gnumach-nix)
 _WATCH.dist-hurd-nix    := flakes/hurd $(call _intree_srcs,dist-hurd-nix)
 _WATCH.dist-glibc       := flakes/cross-toolchain $(call _intree_srcs,dist-glibc)
+_WATCH.dist-rumplibs    := flakes/zlib flakes/libpciaccess flakes/libacpica flakes/rumpkernel flakes/libirqhelp
 _WATCH.dist-gcc         := flakes/cross-toolchain $(call _intree_srcs,dist-gcc)
 # (dist-*-tree inherit src via _SDEPS; dist-tzdata's only input is the
 # nixpkgs pin - flake.lock, the recipe's prereq - so a missing mark is its trigger.)
@@ -1080,8 +1085,8 @@ _SDEPS.dist-hurd         := $(if $(HURD_IN_TREE),dist-hurd-tree,dist-hurd-nix)
 _SDEPS.all               := gnumach hurd
 # dist-split is stale iff its stamp is missing or any slice is stale; `dist`
 # carries it so a missing split (or a changed slice) re-dispatches the split.
-_SDEPS.dist-split        := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata
-_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-split
+_SDEPS.dist-split        := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-rumplibs
+_SDEPS.dist              := dist-gnumach dist-hurd dist-glibc dist-gcc dist-tzdata dist-rumplibs dist-split
 
 # `git ls-files` enumerates "real source" - generated files (configure, Makefile.in,
 # autom4te.cache/, ...) shouldn't trigger staleness.  Authoritative: exactly what
@@ -1294,7 +1299,7 @@ all: gnumach hurd
 # only its slice of the shared $(DIST_STAGE) via $(call _dist_finalize,...); then
 # dist-split (LAST - it reads the finished staging tree) classifies it into the
 # deployable $(DIST)/{runtime,dev,doc,dbg} trees.
-dist: dist-glibc dist-gnumach dist-hurd dist-gcc dist-tzdata dist-split
+dist: dist-glibc dist-gnumach dist-hurd dist-gcc dist-tzdata dist-rumplibs dist-split
 
 # Serialize dist's components under `make -j` - they contend on a shared resource
 # and otherwise corrupt each other:
@@ -1794,6 +1799,25 @@ $(DIST_TZDATA_STAMP): flake.lock
 	@$(call _assert_file,$(DIST_STAGE)/usr/share/zoneinfo/UTC,zoneinfo/UTC)
 	@$(call _dist_finalize,$(EPOCH_NIXPKGS))
 
+# ---- rump-chain libs (nix-only; arch-dependent) ----
+# The libraries the flipped hurd's rump servers need: zlib (libstore gunzip +
+# rumpdisk -lz), libpciaccess (pci-arbiter/rump PCI), libacpica (acpi), and
+# the rumpkernel librump* set (rumpdisk/rumpnet DT_NEEDEDs).  Staged WHOLE
+# into the shared stage; dist-split classifies (.so.* -> runtime so the
+# dynamic servers resolve from /usr/lib, headers/.a/_pic.a/.so -> dev).
+# libirqhelp ships via dist-hurd (hurd's own install).  Nix-only packages -
+# no in-tree twins until the rumpkernel scaffolding task.
+.PHONY: dist-rumplibs
+dist-rumplibs: $(DIST_RUMPLIBS_STAMP)
+
+$(DIST_RUMPLIBS_STAMP): $(if $(call _fp_stale,dist-rumplibs),_FORCE)
+	$(call _dist_nix_copy,dist-rumplibs,$(DIST_STAGE),zlib-$(_TC_ARCH),$(basename $(DIST_RUMPLIBS_STAMP))-zlib.stamp,usr/lib/libz.so.1,no.info)
+	$(call _dist_nix_copy,dist-rumplibs,$(DIST_STAGE),libpciaccess-$(_TC_ARCH),$(basename $(DIST_RUMPLIBS_STAMP))-pciaccess.stamp,usr/lib/libpciaccess.so.0,no.info)
+	$(call _dist_nix_copy,dist-rumplibs,$(DIST_STAGE),libacpica-$(_TC_ARCH),$(basename $(DIST_RUMPLIBS_STAMP))-acpica.stamp,usr/lib/libacpica.so.0,no.info)
+	$(call _dist_nix_copy,dist-rumplibs,$(DIST_STAGE),rumpkernel-$(_TC_ARCH),$(basename $(DIST_RUMPLIBS_STAMP))-rumpkernel.stamp,usr/lib/librump.so.0,no.info)
+	@$(call _dist_done,$(DIST_RUMPLIBS_STAMP))
+	@$(call _dist_finalize,$(EPOCH_RUMPKERNEL))
+
 # ---- dist-split (classify the staging tree into deployable trees) ----
 # Pure post-pass over the finished $(DIST_STAGE): partition it into
 # $(DIST)/{runtime,dev,doc,dbg} per the rule table in
@@ -1823,7 +1847,7 @@ $(DIST_TZDATA_STAMP): flake.lock
 .PHONY: dist-split
 dist-split: $(DIST_SPLIT_STAMP)
 
-$(DIST_SPLIT_STAMP): $(DIST_GLIBC_STAMP) $(DIST_GCC_STAMP) $(DIST_TZDATA_STAMP) $(if $(GNUMACH_IN_TREE),$(DIST_GNUMACH_TREE_STAMP),$(DIST_GNUMACH_NIX_STAMP)) $(if $(HURD_IN_TREE),$(DIST_HURD_TREE_STAMP),$(DIST_HURD_NIX_STAMP))
+$(DIST_SPLIT_STAMP): $(DIST_GLIBC_STAMP) $(DIST_GCC_STAMP) $(DIST_TZDATA_STAMP) $(DIST_RUMPLIBS_STAMP) $(if $(GNUMACH_IN_TREE),$(DIST_GNUMACH_TREE_STAMP),$(DIST_GNUMACH_NIX_STAMP)) $(if $(HURD_IN_TREE),$(DIST_HURD_TREE_STAMP),$(DIST_HURD_NIX_STAMP))
 	@$(call _req_env,OBJCOPY STRIP)
 	@echo "  DIST-SPLIT   $(DIST_STAGE) -> runtime/dev/doc/dbg"
 	@set -e; \
