@@ -11,20 +11,19 @@
 # with the 5-module rumpdisk chain (phase 5), which also retires this hd0
 # path (the phase-5 kernel drops all in-kernel drivers at compile time).
 #
-# First-boot bootstrap facts this scenario RELIES on (no pre-seeded passive
-# translators - mke2fs cannot write Hurd translator records):
-#   - console-run falls back to the Mach console when /dev/console has no
-#     translator, setting FALLBACK_CONSOLE;
-#   - runsystem then goes SINGLE-USER directly (a bash prompt on the serial
-#     console) - which is exactly the controlled-test PASS surface;
-#   - runsystem self-heals /servers/socket/1 (settrans -c ... /hurd/pflocal),
-#     which needs the image's creator-OS to be `hurd` (mke2fs -o hurd
-#     enables the inode translator field).
+# The image comes out of assembly FULLY populated - /dev nodes, /servers
+# translator seats and root ownership are written OFFLINE with debugfs
+# (lib/hurd-image.sh: gnu.translator xattr records, the default store our
+# ext2fs reads) - so the one boot below goes straight to multi-user and a
+# `login>` prompt on the console getty (serial).  No guest-side bootstrap;
+# the earlier first-boot MAKEDEV flow lives in git history (5f72bda).
 set -euo pipefail
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
 # shellcheck source=lib/arch-flags.sh
 . "$(dirname "$0")/lib/arch-flags.sh"
+# shellcheck source=lib/hurd-image.sh
+. "$(dirname "$0")/lib/hurd-image.sh" # offline /dev + translator population
 
 scenario_check_target "hurd-self" "i686"
 arch_qemu_for_target "$ARCH"  # sets $QEMU, $QEMU_MACHINE, $QEMU_CPU, $QEMU_MEM, $QEMU_CONSOLE
@@ -128,64 +127,13 @@ qemu_base_args=(-nographic "${QEMU_MACHINE[@]}" -m "$QEMU_MEM" -cpu "$QEMU_CPU"
   -drive "file=$img,format=raw"
   -no-reboot)
 
-# ---- first boot: populate /dev (the passive-translator bootstrap) ----
-# /dev nodes are translator records only Hurd itself can write (mke2fs
-# can't), so every run does an automated single-user boot first: wait for
-# the shell prompt on serial, drive `MAKEDEV std` + a marker + halt, then
-# kill qemu once gnumach reports the clean shutdown (it spins forever - no
-# ACPI poweroff).  The records persist in the image; the real boot below
-# then goes MULTI-USER with a login: on the console getty.
-fb_log="$cache/firstboot.log"
-fb_fifo="$cache/firstboot.in"
-echo "  FIRSTBOOT populating /dev (automated single-user MAKEDEV; log: $fb_log)"
-rm -f "$fb_fifo" "$fb_log"
-mkfifo "$fb_fifo"
-(
-  exec 3>"$fb_fifo"
-  for _ in $(seq 1 240); do
-    grep -qE 'sh-[0-9.]+#' "$fb_log" 2>/dev/null && break
-    sleep 1
-  done
-  printf '\n' >&3
-  # chown -R 0:0: mke2fs -d stamps the ASSEMBLY HOST's uid on every inode,
-  # and a passive translator runs AS THE NODE'S OWNER - so the password
-  # server started as the build uid and auth_makeauth refused to mint root
-  # credentials ("Authentication failure: Operation not permitted" at
-  # login).  MAKEDEV std covers /dev; /servers/password additionally needs
-  # its translator or `login USER` dies with "(ipc/mig) bad request message
-  # ID" (the auth RPC lands on the bare node and ext2fs doesn't speak the
-  # password protocol).  The offline node-table task (#31) subsumes all of
-  # this, ownership normalisation included.
-  printf 'fsysopts / --update --writable && chown -R 0:0 / 2>/dev/null; cd /dev && /usr/sbin/MAKEDEV std && settrans -c /servers/password /hurd/password && cd / && touch /.firstboot-done && echo FIRSTBOOT-MAKEDEV-OK && /sbin/halt\n' >&3
-  # hold the fifo open until the guest halts (EOF would close its stdin)
-  for _ in $(seq 1 120); do
-    grep -q 'now in tight loop' "$fb_log" 2>/dev/null && break
-    sleep 1
-  done
-) &
-fb_feeder=$!
-"$QEMU" "${qemu_base_args[@]}" \
-  -append "root=device:hd0 console=$QEMU_CONSOLE -s" \
-  <"$fb_fifo" >"$fb_log" 2>&1 &
-fb_qemu=$!
-for _ in $(seq 1 360); do
-  grep -q 'Shutdown completed successfully, now in tight loop' "$fb_log" 2>/dev/null && break
-  kill -0 "$fb_qemu" 2>/dev/null || break
-  sleep 1
-done
-kill "$fb_qemu" 2>/dev/null || true
-wait "$fb_qemu" 2>/dev/null || true
-kill "$fb_feeder" 2>/dev/null || true
-wait "$fb_feeder" 2>/dev/null || true
-grep -q 'FIRSTBOOT-MAKEDEV-OK' "$fb_log" ||
-  die "first-boot MAKEDEV did not complete - see $fb_log"
-grep -q 'Shutdown completed successfully' "$fb_log" ||
-  die "first boot did not shut down cleanly (translator records may not have flushed) - see $fb_log"
-debugfs -R 'stat /.firstboot-done' "$img" >/dev/null 2>&1 ||
-  die "first-boot marker missing from the image - see $fb_log"
-echo "  FIRSTBOOT /dev populated, clean shutdown"
+# ---- offline population: /dev + /servers translators, ownership ----
+# Fully hostless (debugfs; no guest execution): see lib/hurd-image.sh.
+# Replaced the automated first-boot MAKEDEV bootstrap (5f72bda) - kept in
+# git history as the guest-side reference implementation.
+hurd_image_populate "$img" "$rootfs" "$cache"
 
-# ---- the real boot: multi-user, login on the console getty (serial) ----
+# ---- boot: multi-user, login on the console getty (serial) ----
 print_qemu_hint
 exec "$QEMU" "${qemu_base_args[@]}" \
   -append "root=device:hd0 console=$QEMU_CONSOLE" \
