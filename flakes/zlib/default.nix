@@ -83,6 +83,13 @@ let
         export AR=${tp}-ar
         export RANLIB=${tp}-ranlib
         export NM=${tp}-nm
+        # SONAME: zlib's hand-rolled configure only adds -soname on the uname
+        # branches it knows; the CHOST=<cpu>-gnu cross fell through WITHOUT it,
+        # so libz.so.1 shipped soname-less and every consumer's linker recorded
+        # the unversioned FILENAME as DT_NEEDED (libz.so) - which the runtime
+        # tree doesn't carry (dev-class symlink), so hurd's swapon/libstore
+        # failed to load at boot.  Pin LDSHARED with the explicit soname.
+        export LDSHARED="${tp}-gcc -shared -Wl,-soname,libz.so.1"
         srcdir=$PWD
         ${buildFlags.detCppflagsUnwrapped {
           gcc = cc;
