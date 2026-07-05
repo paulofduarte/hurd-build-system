@@ -17,8 +17,8 @@ Usage: make run [ARCH=<arch>] [SCENARIO=<name>] [opts]
 
 Options (all env-style; default in parens):
   ARCH=<arch>        aarch64|x86_64|i686 (host arch)
-  SCENARIO=<name>      boot|hurd-debian|hurd-gentoo|hurd-guix (boot)
-  RUN_VANILLA=1        boot the distro's bundled kernel (Hurd scenarios only)
+  SCENARIO=<name>      boot|hurd-self|hurd-debian|hurd-gentoo|hurd-guix (boot)
+  RUN_VANILLA=1        boot the distro's bundled kernel (distro scenarios only)
   RUN_ACCEL=1          enable -accel hvf/kvm when host arch matches ARCH
   RUN_KEEP_OVERLAY=1   reuse the per-run qcow2 overlay across invocations
   RUN_REFRESH=1        wipe the scenario's cached distro image and re-fetch

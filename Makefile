@@ -1714,6 +1714,14 @@ $(DIST_GLIBC_STAMP): $(if $(call _fp_stale,dist-glibc),_FORCE)
 	find $(DIST_GLIBC)/usr/include -type d -empty -delete 2>/dev/null || true
 	@grep -q libmachuser $(DIST_GLIBC)/usr/lib/libc.so || { echo "ERROR: libc.so GROUP not augmented"; exit 1; }
 	@$(call _assert_file,$(DIST_GLIBC)/usr/lib/libmachuser.so.1,libmachuser.so.1)
+	@# i686 interpreter alias: gcc's vanilla GNU/Hurd i386 ELF interp is /lib/ld.so,
+	@# but glibc names the loader ld.so.1 - FHS distros bridge with this symlink in
+	@# glibc packaging (Debian/Gentoo; decision: Option A, don't touch gcc).  x86_64
+	@# has no gap (interp ld-x86-64.so.1 is the real file) - guard on ld.so.1.
+	@if [ -e $(DIST_GLIBC)/usr/lib/ld.so.1 ] && [ ! -e $(DIST_GLIBC)/usr/lib/ld.so ]; then \
+	  ln -sfn ld.so.1 $(DIST_GLIBC)/usr/lib/ld.so; \
+	  echo "  ld.so -> ld.so.1 interpreter alias (i686)"; \
+	fi
 	@# Gate the pin glibc against the in-tree (alias) RPC surface it ships alongside:
 	@# header-surface drift (gnumach/hurd) + mig codegen drift (in-tree mig).
 	$(call _header_drift)
@@ -2257,6 +2265,7 @@ run: $(_RUN_PREREQS)
 	 GNUMACH_KERNEL="$(GNUMACH_KERNEL)" \
 	 ARCH="$(ARCH)" \
 	 WORK="$(WORK)" \
+	 DIST="$(DIST)" \
 	 RUN_VARIANT="$(_VARIANT)" \
 	 RUN_VANILLA="$(RUN_VANILLA)" \
 	 RUN_ACCEL="$(RUN_ACCEL)" \

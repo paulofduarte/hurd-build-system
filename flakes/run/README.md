@@ -21,6 +21,9 @@ flakes/run/
 |-- default.nix             # nix-app wrapper (per-arch writeShellApplication)
 |-- dispatch.sh             # entry point - validates env, exec's scenario
 |-- boot.sh                 # SCENARIO=boot: bare kernel wrapped in a GRUB ISO
+|-- hurd-self.sh            # SCENARIO=hurd-self: the SELF-BUILT system from the
+|                           #   dist runtime tree (mke2fs -o hurd image; i686
+|                           #   2-module hd0 chain - phase 3; x86_64 = phase 5)
 |-- hurd-debian.sh          # SCENARIO=hurd-debian: external-ISO boot (option 1)
 |-- hurd-gentoo.sh          # SCENARIO=hurd-gentoo: external-ISO boot (option 1)
 |-- hurd-guix.sh            # SCENARIO=hurd-guix: external-ISO boot (option 1)
