@@ -68,12 +68,27 @@ touch "$rootfs/servers/exec" "$rootfs/servers/startup" \
   "$rootfs/servers/password" "$rootfs/servers/crash" \
   "$rootfs/servers/crash-dump-core" "$rootfs/servers/crash-kill" \
   "$rootfs/servers/crash-suspend"
-# tty1-6 off: their /dev nodes are translator-backed and can only be created
-# ON Hurd (MAKEDEV at first boot - the parked passive-translator bootstrap,
-# #17); until then runttys would respawn-flood getty against the missing
-# nodes.  Image-copy edit, not a package change - hurd owns /etc/ttys.
+# tty1-6 off: MAKEDEV's tty[1-9] nodes use the hurdio backend into the Hurd
+# console SERVER (/hurd/console + vc machinery) - a whole subsystem beyond
+# nodes, not wired yet.  The login surface is the `console` getty (serial);
+# with tty1-6 on, runttys would respawn-flood getty.  Image-copy edit, not a
+# package change - hurd owns /etc/ttys.
 sed -i.orig -E 's|^(tty[1-6][[:space:]].*)\bon\b|\1off|' "$rootfs/etc/ttys"
 rm -f "$rootfs/etc/ttys.orig"
+# rw remount: upstream's runsystem WRAPPER flips / back READONLY right
+# before exec'ing init ("necessary to make stat / return the correct
+# device ids") and delegates the rw remount to rc's `fsck --preen
+# --writable` - where make_writable is gated PER CHECKED FSTAB ENTRY
+# (sutils/fsck.c: FSCK_F_WRITABLE && hasmntopt rw).  Our fstab is
+# header-only, and a real entry would need an fsck.ext2 backend the dist
+# doesn't ship yet (cross e2fsprogs = future package) - so nothing ever
+# remounts and the whole system runs EROFS (cost a boot iteration: utmp,
+# MAKEDEV, everything).  Until e2fsprogs lands, remount rw at the top of
+# the image copy's rc, like Debian's patched rc does.
+awk '{print} /^PATH=/ && !done {print "fsysopts / --update --writable || true # image-assembly patch (hurd-self.sh)"; done=1}' \
+  "$rootfs/libexec/rc" >"$rootfs/libexec/rc.new"
+mv "$rootfs/libexec/rc.new" "$rootfs/libexec/rc"
+chmod 755 "$rootfs/libexec/rc"
 
 # ext2 image: creator-OS `hurd` (see header), plain ext2, sized to the tree
 # + slack for first-boot writes (translator records, logs, root's shell
@@ -101,16 +116,77 @@ m1="$runtime/hurd/ext2fs.static"
 m2="$runtime/usr/lib/ld.so.1"
 [ -f "$m2" ] || die "dist runtime has no usr/lib/ld.so.1 (glibc dist missing?)"
 
-# -s: single-user - runsystem drops straight into a root shell on the boot
-# console (fully interactive over serial).  The multi-user path already works
-# up to runttys, but getty needs the translator-backed /dev/tty* nodes that
-# only first-boot MAKEDEV can create (parked with #17's passive-translator
-# bootstrap); single-user IS the phase-3 controlled-test surface.
-print_qemu_hint
-exec "$QEMU" -nographic "${QEMU_MACHINE[@]}" -m "$QEMU_MEM" -cpu "$QEMU_CPU" \
-  -kernel "$GNUMACH_KERNEL" \
-  -initrd "$m1 --multiboot-command-line=\${kernel-command-line} --host-priv-port=\${host-port} --device-master-port=\${device-port} --exec-server-task=\${exec-task} -T typed \${root} \$(task-create) \$(task-resume),$m2 /hurd/exec \$(exec-task=task-create)" \
+# -w (--writable): libdiskfs bootstraps READONLY by default and only
+# runsystem's pflocal-setup branch remounts rw - which a restarted init's
+# second runsystem pass skips (pflocal exists by then), leaving / read-only
+# at the shell (cost a first-boot iteration: every MAKEDEV settrans failed).
+# A fresh mke2fs image needs no fsck safety; rw from the start also lets
+# multi-user's utmp/wtmp writes work.
+qemu_base_args=(-nographic "${QEMU_MACHINE[@]}" -m "$QEMU_MEM" -cpu "$QEMU_CPU"
+  -kernel "$GNUMACH_KERNEL"
+  -initrd "$m1 --multiboot-command-line=\${kernel-command-line} --host-priv-port=\${host-port} --device-master-port=\${device-port} --exec-server-task=\${exec-task} -w -T typed \${root} \$(task-create) \$(task-resume),$m2 /hurd/exec \$(exec-task=task-create)"
+  -drive "file=$img,format=raw"
+  -no-reboot)
+
+# ---- first boot: populate /dev (the passive-translator bootstrap) ----
+# /dev nodes are translator records only Hurd itself can write (mke2fs
+# can't), so every run does an automated single-user boot first: wait for
+# the shell prompt on serial, drive `MAKEDEV std` + a marker + halt, then
+# kill qemu once gnumach reports the clean shutdown (it spins forever - no
+# ACPI poweroff).  The records persist in the image; the real boot below
+# then goes MULTI-USER with a login: on the console getty.
+fb_log="$cache/firstboot.log"
+fb_fifo="$cache/firstboot.in"
+echo "  FIRSTBOOT populating /dev (automated single-user MAKEDEV; log: $fb_log)"
+rm -f "$fb_fifo" "$fb_log"
+mkfifo "$fb_fifo"
+(
+  exec 3>"$fb_fifo"
+  for _ in $(seq 1 240); do
+    grep -qE 'sh-[0-9.]+#' "$fb_log" 2>/dev/null && break
+    sleep 1
+  done
+  printf '\n' >&3
+  # chown -R 0:0: mke2fs -d stamps the ASSEMBLY HOST's uid on every inode,
+  # and a passive translator runs AS THE NODE'S OWNER - so the password
+  # server started as the build uid and auth_makeauth refused to mint root
+  # credentials ("Authentication failure: Operation not permitted" at
+  # login).  MAKEDEV std covers /dev; /servers/password additionally needs
+  # its translator or `login USER` dies with "(ipc/mig) bad request message
+  # ID" (the auth RPC lands on the bare node and ext2fs doesn't speak the
+  # password protocol).  The offline node-table task (#31) subsumes all of
+  # this, ownership normalisation included.
+  printf 'fsysopts / --update --writable && chown -R 0:0 / 2>/dev/null; cd /dev && /usr/sbin/MAKEDEV std && settrans -c /servers/password /hurd/password && cd / && touch /.firstboot-done && echo FIRSTBOOT-MAKEDEV-OK && /sbin/halt\n' >&3
+  # hold the fifo open until the guest halts (EOF would close its stdin)
+  for _ in $(seq 1 120); do
+    grep -q 'now in tight loop' "$fb_log" 2>/dev/null && break
+    sleep 1
+  done
+) &
+fb_feeder=$!
+"$QEMU" "${qemu_base_args[@]}" \
   -append "root=device:hd0 console=$QEMU_CONSOLE -s" \
-  -drive file="$img",format=raw \
-  -no-reboot \
+  <"$fb_fifo" >"$fb_log" 2>&1 &
+fb_qemu=$!
+for _ in $(seq 1 360); do
+  grep -q 'Shutdown completed successfully, now in tight loop' "$fb_log" 2>/dev/null && break
+  kill -0 "$fb_qemu" 2>/dev/null || break
+  sleep 1
+done
+kill "$fb_qemu" 2>/dev/null || true
+wait "$fb_qemu" 2>/dev/null || true
+kill "$fb_feeder" 2>/dev/null || true
+wait "$fb_feeder" 2>/dev/null || true
+grep -q 'FIRSTBOOT-MAKEDEV-OK' "$fb_log" ||
+  die "first-boot MAKEDEV did not complete - see $fb_log"
+grep -q 'Shutdown completed successfully' "$fb_log" ||
+  die "first boot did not shut down cleanly (translator records may not have flushed) - see $fb_log"
+debugfs -R 'stat /.firstboot-done' "$img" >/dev/null 2>&1 ||
+  die "first-boot marker missing from the image - see $fb_log"
+echo "  FIRSTBOOT /dev populated, clean shutdown"
+
+# ---- the real boot: multi-user, login on the console getty (serial) ----
+print_qemu_hint
+exec "$QEMU" "${qemu_base_args[@]}" \
+  -append "root=device:hd0 console=$QEMU_CONSOLE" \
   "${extra_qemu_args[@]}"
